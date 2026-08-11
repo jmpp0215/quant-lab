@@ -1,0 +1,22 @@
+# dont commit!!
+.env
+*.pem
+*.key
+
+#log
+logs/
+*.log
+
+#python
+__pycache__/
+*.py[cod]
+.venv/
+
+#local data
+*.db
+data/
+
+#editor / OS
+.vscode/
+.DS_Store
+
