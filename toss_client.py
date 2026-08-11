@@ -33,7 +33,7 @@ class TossClient:
         self._token: str | None = None
         self._expires_at: float = 0.0
         self._session = requests.Session()
-        
+
     def _get_token(self) -> str:
         # Reuse the cached token until it is close to expiry.
         if self._token and time.time() < self._expires_at:
@@ -146,4 +146,5 @@ class TossClient:
         return self.post(f"/api/v1/orders/{order_id}/cancel", {},
                          need_account=True)
 
-
+    def market_calendar(self, country: str = "US") -> dict:
+        return self.get(f"/api/v1/market-calendar/{country}")

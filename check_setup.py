@@ -1,7 +1,7 @@
 """Read-only environment check. Never places an order."""
 
 import json
-
+import market
 from toss_client import TossClient, TossApiError
 
 
@@ -22,9 +22,9 @@ def main() -> None:
     show("holdings", client.holdings)
     show("price 005930", lambda: client.price("005930"))
     show("buying power USD", lambda: client.buying_power("USD"))
-    show("dry run order", lambda: client.create_order(
-        symbol="QCOM", side="BUY", order_type="LIMIT",
-        quantity=1, price="50.00",
-    ))
+    calendar = client.market_calendar("US")
+    show("market calendar US", lambda: calendar)
+    print(f"\ncurrent session: {market.current_session(calendar)}")
+    print(f"until regular: {market.seconds_until(calendar, 'regularMarket'):.0f}s")
 if __name__ == "__main__":
     main()
