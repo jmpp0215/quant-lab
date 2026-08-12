@@ -14,6 +14,15 @@ KR_TICK_SIZES = [
     (Decimal("200000"), Decimal("100")),
     (Decimal("500000"), Decimal("500")),
 ]
+
+SESSION_NAMES = ("preMarket", "regularMarket", "afterMarket", "dayMarket")
+
+
+def _sessions(calendar: dict) -> dict:
+    """Return today's session map, flattening the KR 'integrated' wrapper."""
+    today = calendar["result"]["today"]
+    return today.get("integrated", today)
+
 def kr_tick_size(price: str | Decimal) -> Decimal:
     """Return the KRX tick size for a given price level."""
     p = Decimal(price)
@@ -40,16 +49,12 @@ def to_decimal(value: str | None) -> Decimal | None:
 
 
 def current_session(calendar: dict, now: datetime | None = None) -> str | None:
-    """Return the name of the session we are currently in, or None if closed.
-
-    The calendar returns ISO timestamps already converted to KST, so we can
-    compare them directly without doing any timezone math ourselves.
-    """
-    today = calendar["result"]["today"]
+    """Return the name of the session we are currently in, or None if closed."""
+    sessions = _sessions(calendar)
     now = now or datetime.now(timezone.utc)
 
-    for name in ("preMarket", "regularMarket", "afterMarket", "dayMarket"):
-        window = today.get(name)
+    for name in SESSION_NAMES:
+        window = sessions.get(name)
         if not window:
             continue
 
@@ -65,7 +70,7 @@ def current_session(calendar: dict, now: datetime | None = None) -> str | None:
 def seconds_until(calendar: dict, session: str,
                   now: datetime | None = None) -> float:
     """Seconds remaining until the given session starts. Negative if passed."""
-    window = calendar["result"]["today"][session]
+    window = _sessions(calendar)[session]
     start = datetime.fromisoformat(window["startTime"])
     now = now or datetime.now(timezone.utc)
     return (start - now).total_seconds()
