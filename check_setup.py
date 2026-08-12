@@ -2,6 +2,8 @@
 
 import json
 import market
+import logging_config
+
 from toss_client import TossClient, TossApiError
 
 
@@ -15,6 +17,7 @@ def show(label: str, fn) -> None:
 
 
 def main() -> None:
+    logging_config.setup()
     client = TossClient()
 
     show("accounts", client.list_accounts)

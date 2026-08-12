@@ -3,13 +3,14 @@
 import os
 import time
 import uuid
-
+import logging
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BASE_URL = "https://openapi.tossinvest.com"
+log = logging.getLogger(__name__)
 
 class TossApiError(Exception):
     """Wraps the error envelope returned by the Toss API."""
@@ -55,6 +56,7 @@ class TossClient:
         self._token = body["access_token"]
         # Refresh 60s early to avoid using a token that expires mid-request.
         self._expires_at = time.time() + int(body["expires_in"]) - 60
+        log.info("access token issued, expires_in=%s", body["expires_in"])
         return self._token
 
     def _request(self, method: str, path: str, *,
@@ -79,8 +81,15 @@ class TossClient:
             timeout=15,
         )
 
+        log.debug("%s %s -> %d", method, path, response.status_code)
+
         if response.status_code >= 400:
             error = response.json().get("error", {})
+            log.error(
+                "%s %s failed: %d %s %s",
+                method, path, response.status_code,
+                error.get("code"), error.get("message"),
+            )
             raise TossApiError(
                 status=response.status_code,
                 code=error.get("code", "unknown"),
@@ -130,9 +139,10 @@ class TossClient:
             body["price"] = price
 
         if self.dry_run:
-            print(f"[DRY RUN] would POST /api/v1/orders {body}")
+            log.warning("[DRY RUN] order not sent: %s", body)
             return {"dryRun": True, "request": body}
 
+        log.info("placing order: %s", body)
         return self.post("/api/v1/orders", body, need_account=True)
 
     def list_orders(self, status: str = "OPEN") -> dict:
@@ -141,8 +151,10 @@ class TossClient:
 
     def cancel_order(self, order_id: str) -> dict:
         if self.dry_run:
-            print(f"[DRY RUN] would cancel {order_id}")
+            log.warning("[DRY RUN] cancel not sent: %s", order_id)
             return {"dryRun": True}
+
+        log.info("cancelling order: %s", order_id)
         return self.post(f"/api/v1/orders/{order_id}/cancel", {},
                          need_account=True)
 
