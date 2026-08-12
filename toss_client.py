@@ -6,11 +6,14 @@ import uuid
 import logging
 import requests
 import market
+import random
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BASE_URL = "https://openapi.tossinvest.com"
+MAX_RETRIES = 3
+BACKOFF_BASE = 1.0
 log = logging.getLogger(__name__)
 
 class TossApiError(Exception):
@@ -73,32 +76,71 @@ class TossClient:
         if body is not None:
             headers["Content-Type"] = "application/json"
 
-        response = self._session.request(
-            method,
-            f"{BASE_URL}{path}",
-            headers=headers,
-            params=params,
-            json=body,
-            timeout=15,
-        )
+        # Retrying a POST can duplicate an order, so only GET retries on
+        # network errors. Both retry on 429, which means nothing was processed.
+        retry_network = method == "GET"
 
-        log.debug("%s %s -> %d", method, path, response.status_code)
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                response = self._session.request(
+                    method,
+                    f"{BASE_URL}{path}",
+                    headers=headers,
+                    params=params,
+                    json=body,
+                    timeout=15,
+                )
+            except (requests.Timeout, requests.ConnectionError) as e:
+                if not retry_network or attempt == MAX_RETRIES:
+                    raise
+                delay = self._backoff(attempt)
+                log.warning("%s %s network error (%s), retry in %.1fs",
+                            method, path, type(e).__name__, delay)
+                time.sleep(delay)
+                continue
 
-        if response.status_code >= 400:
-            error = response.json().get("error", {})
-            log.error(
-                "%s %s failed: %d %s %s",
-                method, path, response.status_code,
-                error.get("code"), error.get("message"),
-            )
-            raise TossApiError(
-                status=response.status_code,
-                code=error.get("code", "unknown"),
-                message=error.get("message", response.text[:200]),
-                field=(error.get("data") or {}).get("field"),
-            )
+            log.debug("%s %s -> %d", method, path, response.status_code)
 
-        return response.json()
+            if response.status_code == 429 and attempt < MAX_RETRIES:
+                delay = self._retry_after(response) or self._backoff(attempt)
+                log.warning("%s %s rate limited, retry in %.1fs",
+                            method, path, delay)
+                time.sleep(delay)
+                continue
+
+            if response.status_code >= 400:
+                error = response.json().get("error", {})
+                log.error(
+                    "%s %s failed: %d %s %s",
+                    method, path, response.status_code,
+                    error.get("code"), error.get("message"),
+                )
+                raise TossApiError(
+                    status=response.status_code,
+                    code=error.get("code", "unknown"),
+                    message=error.get("message", response.text[:200]),
+                    field=(error.get("data") or {}).get("field"),
+                )
+
+            return response.json()
+
+        raise RuntimeError("unreachable: retry loop exited without returning")
+
+    @staticmethod
+    def _backoff(attempt: int) -> float:
+        """Exponential backoff with jitter to avoid synchronised retries."""
+        return BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 0.5)
+
+    @staticmethod
+    def _retry_after(response: requests.Response) -> float | None:
+        """Honour the server's Retry-After header when present."""
+        value = response.headers.get("Retry-After")
+        if not value:
+            return None
+        try:
+            return float(value)
+        except ValueError:
+            return None
 
     def get(self, path: str, params: dict | None = None,
             need_account: bool = False) -> dict:
