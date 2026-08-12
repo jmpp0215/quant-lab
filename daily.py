@@ -10,7 +10,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from decimal import _Decimal
+from decimal import Decimal
 import candles
 import config
 import logging_config
@@ -21,6 +21,22 @@ from toss_client import TossClient, TossApiError
 SIGNAL_LOG = Path(__file__).parent / "data" / "signals.jsonl"
 
 log = logging.getLogger("daily")
+
+LAST_RUN = Path(__file__).parent / "data" / "last_run.txt"
+
+
+def already_ran_today(today: str) -> bool:
+    """Guard against double runs - a duplicate rebalance would double the
+    position size, since unfilled orders leave holdings unchanged.
+    """
+    if not LAST_RUN.exists():
+        return False
+    return LAST_RUN.read_text().strip() == today
+
+
+def mark_ran(today: str) -> None:
+    LAST_RUN.parent.mkdir(parents=True, exist_ok=True)
+    LAST_RUN.write_text(today)
 
 
 def record(signal: strategy.Signal, session: str | None) -> None:
@@ -53,6 +69,14 @@ def record(signal: strategy.Signal, session: str | None) -> None:
 
 def main() -> int:
     logging_config.setup()
+
+    today = datetime.now().astimezone().date().isoformat()
+
+    if already_ran_today(today) and "--force" not in sys.argv:
+        log.info("already ran today (%s), skipping. use --force to override",
+                 today)
+        return 0
+
     log.info("daily run start")
 
     try:
@@ -78,6 +102,7 @@ def main() -> int:
         log.exception("daily run failed")
         return 1
 
+    mark_ran(today)
     log.info("daily run done")
     return 0
 

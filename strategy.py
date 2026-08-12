@@ -31,11 +31,8 @@ class Score:
 class Signal:
     """The strategy's output: what the portfolio should look like."""
     weights: dict[str, Decimal]      # symbol -> target weight
-    cash_weight = Decimal("1") - sum(weights.values(), Decimal("0"))
-    # Equal weights of 1/3 leave a rounding tail; anything below a basis
-    # point is not a real cash allocation.
-    if abs(cash_weight) < Decimal("0.0001"):
-        cash_weight = Decimal("0")
+    cash_weight: Decimal             # unallocated, held as cash
+    scores: list[Score]              # full ranking, for the log
 
 def evaluate(candles_by_symbol: dict[str, list[dict]]) -> Signal:
     """Rank the universe by momentum and pick the top N.
@@ -75,13 +72,13 @@ def evaluate(candles_by_symbol: dict[str, list[dict]]) -> Signal:
     weight = Decimal("1") / config.TOP_N
     weights = {s.symbol: weight for s in selected}
 
-    # Slots that found no qualifying symbol stay in cash rather than being
-    # redistributed - concentrating into fewer names would raise risk at
-    # exactly the moment the market is weak.
     cash_weight = Decimal("1") - sum(weights.values(), Decimal("0"))
+    # Equal weights of 1/3 leave a rounding tail; anything below a basis
+    # point is not a real cash allocation.
+    if abs(cash_weight) < Decimal("0.0001"):
+        cash_weight = Decimal("0")
 
     return Signal(weights=weights, cash_weight=cash_weight, scores=scores)
-
 
 def format_signal(signal: Signal) -> str:
     """Human-readable ranking for the daily log."""
