@@ -2,7 +2,8 @@
 
 import json
 import time
-
+import market
+from decimal import Decimal
 from toss_client import TossClient, TossApiError
 
 SYMBOL = "QCOM"
@@ -21,8 +22,8 @@ def main() -> None:
     price_data = client.price(SYMBOL)
     dump("current price", price_data)
 
-    last = float(price_data["result"][0]["lastPrice"])
-    bid = round(last * 0.5, 2)
+    last = Decimal(price_data["result"][0]["lastPrice"])
+    bid = (last * Decimal("0.5")).quantize(Decimal("0.01"))
     print(f"\nlast={last} -> placing BUY LIMIT at {bid}")
 
     input("\nPress Enter to place the order, or Ctrl+C to abort... ")

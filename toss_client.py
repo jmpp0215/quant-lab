@@ -5,6 +5,7 @@ import time
 import uuid
 import logging
 import requests
+import market
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -135,6 +136,14 @@ class TossClient:
             "quantity": quantity,
             "clientOrderId": uuid.uuid4().hex[:32],
         }
+
+        # KRX rejects prices that are off-tick. Catch it before sending.
+        if price is not None and symbol.isdigit():
+            if not market.is_valid_kr_price(price):
+                raise ValueError(
+                    f"price {price} is not on a valid KRX tick "
+                    f"(tick={market.kr_tick_size(price)})"
+                )
         if price is not None:
             body["price"] = price
 
