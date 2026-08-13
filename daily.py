@@ -11,20 +11,22 @@ period runs until the first scheduled rebalance.
 import logging
 import sys
 from datetime import datetime
-
+import indicators
 import candles
 import config
 import logging_config
 import market
 import storage
 import strategy
+from decimal import Decimal
 from toss_client import TossClient, TossApiError
 
 log = logging.getLogger("daily")
 
 
 def record(signal: strategy.Signal, trade_date: str,
-           session: str | None) -> None:
+           session: str | None,
+           candles_by_symbol: dict[str, list[dict]]) -> None:
     now = datetime.now().astimezone().isoformat()
 
     rows = [
@@ -38,12 +40,22 @@ def record(signal: strategy.Signal, trade_date: str,
         for rank, score in enumerate(signal.scores, 1)
     ]
 
+    ind_rows = [
+        (symbol, name, value)
+        for symbol in config.all_symbols()
+        for name, value in indicators.compute_all(
+            candles_by_symbol.get(symbol, []),
+            config.DIVIDEND_YIELD.get(symbol, Decimal("0")),
+        ).items()
+    ]
+
     with storage.connect() as conn:
         storage.save_run(conn, trade_date, now, session, ok=True)
         storage.save_scores(conn, trade_date, rows)
+        storage.save_indicators(conn, trade_date, ind_rows)
 
-    log.info("recorded %d scores for %s", len(rows), trade_date)
-
+    log.info("recorded %d scores, %d indicators for %s",
+             len(rows), len(ind_rows), trade_date)
 
 def main() -> int:
     logging_config.setup()
@@ -70,7 +82,7 @@ def main() -> int:
 
         signal = strategy.evaluate(data)
         log.info("\n%s", strategy.format_signal(signal))
-        record(signal, trade_date, session)
+        record(signal, trade_date, session, data)
 
     except TossApiError as e:
         log.error("api error: %s", e)
