@@ -68,9 +68,13 @@ def main() -> int:
 
         session = market.current_session(client.market_calendar("KR"))
         log.info("KR session: %s", session)
-
+        # Once the regular session has closed, today's candle is final and
+        # should drive the signal; before that it is still moving.
+    
+        session_closed = session in (None, "afterMarket")
         data = {
-            sym: candles.get(client, sym, days=config.HISTORY_DAYS)
+            sym: candles.get(client, sym, days=config.HISTORY_DAYS,
+                             include_today=session_closed)
             for sym in config.all_symbols()
         }
 

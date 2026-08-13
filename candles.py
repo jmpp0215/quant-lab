@@ -7,7 +7,6 @@ we fetch once, store on disk, and afterwards only pull the new days.
 import json
 import logging
 import time
-from datetime import date, datetime
 from pathlib import Path
 from datetime import date, datetime, timedelta
 from toss_client import TossClient
@@ -73,27 +72,33 @@ def save(symbol: str, candles: list[dict]) -> None:
 
 
 def get(client: TossClient, symbol: str, days: int = 260,
-        today: date | None = None) -> list[dict]:
-    """Return daily candles, newest first, excluding today's partial candle.
+        today: date | None = None,
+        include_today: bool = False) -> list[dict]:
+    """Return daily candles, newest first.
 
-    Uses the disk cache when it already covers the requested range, so a
-    daily run only costs one request per symbol instead of three.
+    Today's candle is excluded by default because it is still forming
+    during market hours; the caller passes include_today=True once the
+    session has closed and the candle is final.
     """
     today = today or datetime.now().date()
     today_str = today.isoformat()
 
+    def is_complete(c: dict) -> bool:
+        d = _trading_date(c)
+        return d < today_str or (include_today and d == today_str)
     cached = load_cached(symbol)
-    complete = [c for c in cached if _trading_date(c) < today_str]
-
+    complete = [c for c in cached if is_complete(c)]
     if len(complete) >= days:
         newest = _trading_date(complete[0])
-        # The cache is only good if it already holds yesterday's candle.
-        # A wider window silently serves stale data on the very day a
-        # rebalance depends on it.
-        if newest >= (today - timedelta(days=1)).isoformat():
+        # When today's candle counts, the cache is only fresh if it holds
+        # today; otherwise yesterday is enough. Without this the run right
+        # after the close would keep serving the pre-close cache.
+        required = today_str if include_today else (
+            today - timedelta(days=1)).isoformat()
+        if newest >= required:
             log.debug("%s: cache hit (%d candles)", symbol, len(complete))
             return complete[:days]
 
     fresh = fetch(client, symbol, days + 1)
     save(symbol, fresh)
-    return [c for c in fresh if _trading_date(c) < today_str][:days]
+    return [c for c in fresh if is_complete(c)][:days]
