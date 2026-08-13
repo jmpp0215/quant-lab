@@ -9,7 +9,7 @@ import logging
 import time
 from datetime import date, datetime
 from pathlib import Path
-
+from datetime import date, datetime, timedelta
 from toss_client import TossClient
 
 CACHE_DIR = Path(__file__).parent / "data" / "candles"
@@ -87,9 +87,10 @@ def get(client: TossClient, symbol: str, days: int = 260,
 
     if len(complete) >= days:
         newest = _trading_date(complete[0])
-        # Cache is stale if the newest complete candle is several days old;
-        # refetch rather than guess about holidays.
-        if (today - date.fromisoformat(newest)).days <= 4:
+        # The cache is only good if it already holds yesterday's candle.
+        # A wider window silently serves stale data on the very day a
+        # rebalance depends on it.
+        if newest >= (today - timedelta(days=1)).isoformat():
             log.debug("%s: cache hit (%d candles)", symbol, len(complete))
             return complete[:days]
 
