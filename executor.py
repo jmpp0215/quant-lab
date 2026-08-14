@@ -71,7 +71,7 @@ def limit_price_for(order: Order, touch: Touch, last: Decimal) -> Decimal:
             f"last {last}; refusing to trade into an abnormal book"
         )
 
-    if not market.is_valid_kr_price(price, is_etf=config.IS_ETF):
+    if not market.is_valid_kr_price(price, is_etf=config.is_etf(order.symbol)):
         raise ExecutionError(f"{order.symbol}: {price} is off-tick")
 
     return price

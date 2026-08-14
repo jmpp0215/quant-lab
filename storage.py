@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 import json
+
 DB_PATH = Path(__file__).parent / "data" / "quant.db"
 
 log = logging.getLogger(__name__)
@@ -49,6 +50,19 @@ CREATE TABLE IF NOT EXISTS portfolio (
     cash        TEXT NOT NULL,
     positions   TEXT NOT NULL,
     PRIMARY KEY (trade_date, account, currency)
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+    id           INTEGER PRIMARY KEY,
+    trade_date   TEXT NOT NULL,
+    placed_at    TEXT NOT NULL,
+    account      TEXT NOT NULL,
+    symbol       TEXT NOT NULL,
+    side         TEXT NOT NULL,
+    quantity     INTEGER NOT NULL,
+    limit_price  TEXT NOT NULL,
+    order_id     TEXT,
+    filled       INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_scores_symbol ON scores(symbol, trade_date);
@@ -139,6 +153,43 @@ def save_portfolio(conn: sqlite3.Connection, trade_date: str, account: str,
         (trade_date, account, currency, str(total), str(cash),
          json.dumps(positions, ensure_ascii=False)),
     )
+
+def save_order(conn: sqlite3.Connection, trade_date: str, placed_at: str,
+               account: str, symbol: str, side: str, quantity: int,
+               limit_price: Decimal, order_id: str | None,
+               filled: bool) -> None:
+    conn.execute(
+        "INSERT INTO orders (trade_date, placed_at, account, symbol, side, "
+        "quantity, limit_price, order_id, filled) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (trade_date, placed_at, account, symbol, side, quantity,
+         str(limit_price), order_id, int(filled)),
+    )
+
+
+def rebalanced_this_month(conn: sqlite3.Connection, trade_date: str) -> bool:
+    """True if any order was already placed in the same calendar month.
+
+    This is how "first trading day of the month" is decided: rather than
+    computing the calendar date, we treat the month's first run as the
+    rebalance. A missed day simply shifts the rebalance later instead of
+    skipping it.
+    """
+    month = trade_date[:7]
+    row = conn.execute(
+        "SELECT 1 FROM orders WHERE trade_date LIKE ? LIMIT 1",
+        (f"{month}%",),
+    ).fetchone()
+    return row is not None
+
+
+def ordered_today(conn: sqlite3.Connection, trade_date: str) -> bool:
+    """Guard against a second rebalance on the same day."""
+    row = conn.execute(
+        "SELECT 1 FROM orders WHERE trade_date = ? LIMIT 1",
+        (trade_date,),
+    ).fetchone()
+    return row is not None
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")

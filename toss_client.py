@@ -182,10 +182,10 @@ class TossClient:
 
         # KRX rejects prices that are off-tick. Catch it before sending.
         if price is not None and symbol.isdigit():
-            if not market.is_valid_kr_price(price, is_etf=config.IS_ETF):
+            if not market.is_valid_kr_price(price, is_etf=config.is_etf(symbol)):
                 raise ValueError(
                     f"price {price} is not on a valid tick "
-                    f"(tick={market.kr_tick_size(price, is_etf=config.IS_ETF)})"
+                    f"(tick={market.kr_tick_size(price, is_etf=config.is_etf(symbol))})"
                 )
         if price is not None:
             body["price"] = price

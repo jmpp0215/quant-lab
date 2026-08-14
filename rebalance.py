@@ -97,7 +97,7 @@ def plan(target_weights: dict[str, Decimal],
             symbol,
             positions[symbol].name if symbol in positions else symbol,
         )
-        limit = market.round_to_tick(price, is_etf=config.IS_ETF)
+        limit = market.round_to_tick(price, is_etf=config.is_etf(symbol))
         order = Order(
             symbol=symbol,
             name=name,

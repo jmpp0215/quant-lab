@@ -2,7 +2,6 @@
 
 from decimal import Decimal
 
-IS_ETF = True
 # Universe: every candidate the strategy may hold. Membership is chosen for
 # low mutual correlation, not recent performance - a weak performer simply
 # does not get selected, and stays available for when its momentum turns.
@@ -61,6 +60,8 @@ SKIP_MONTHS = 1
 # Trading days of history to keep locally.
 HISTORY_DAYS = 300
 
+def is_etf(symbol: str) -> bool:
+    return symbol in UNIVERSE or symbol in WATCH_ONLY
 
 def all_symbols() -> list[str]:
     """Every symbol we fetch candles for, traded or not."""
