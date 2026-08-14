@@ -109,13 +109,15 @@ def cancel_open_orders(client: TossClient) -> int:
 
 
 def wait_for_fill(client: TossClient, order_id: str,
-                  timeout: int = FILL_TIMEOUT) -> tuple[bool, dict]:
+                  timeout: int | None = None) -> tuple[bool, dict]:
     """Poll until the order leaves the open list, or time runs out.
 
     Returns (filled, execution). The execution block carries the average
     fill price plus commission and tax, which the broker computes for us -
     worth capturing at the time rather than reconstructing later.
     """
+
+    timeout = FILL_TIMEOUT if timeout is None else timeout
     deadline = time.time() + timeout
     last_execution: dict = {}
 
