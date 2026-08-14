@@ -69,6 +69,14 @@ CREATE TABLE IF NOT EXISTS orders (
     tax             TEXT
 );
 
+CREATE TABLE IF NOT EXISTS variants (
+    trade_date  TEXT NOT NULL REFERENCES runs(trade_date) ON DELETE CASCADE,
+    variant     TEXT NOT NULL,
+    symbol      TEXT NOT NULL,
+    weight      TEXT NOT NULL,
+    PRIMARY KEY (trade_date, variant, symbol)
+);
+
 CREATE INDEX IF NOT EXISTS idx_scores_symbol ON scores(symbol, trade_date);
 """
 
@@ -206,6 +214,16 @@ def ordered_today(conn: sqlite3.Connection, trade_date: str) -> bool:
     ).fetchone()
     return row is not None
 
+def save_variants(conn: sqlite3.Connection, trade_date: str,
+                  rows: list[tuple[str, str, Decimal]]) -> None:
+    """rows: (variant, symbol, weight)."""
+    conn.execute("DELETE FROM variants WHERE trade_date = ?", (trade_date,))
+    conn.executemany(
+        "INSERT INTO variants (trade_date, variant, symbol, weight) "
+        "VALUES (?, ?, ?, ?)",
+        [(trade_date, v, s, str(w)) for v, s, w in rows],
+    )
+    
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     init()

@@ -8,7 +8,7 @@ historical data during a backtest.
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
-
+import indicators
 import config
 import momentum
 
@@ -89,3 +89,141 @@ def format_signal(signal: Signal) -> str:
         lines.append(f"  {mark}{i}. {s.name:<24} {mom}")
     lines.append(f"  cash: {signal.cash_weight:.0%}")
     return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class Variant:
+    """An alternative allocation, computed but never traded.
+
+    Recorded daily so that months from now the choice between them can be
+    settled against observations rather than argued from a backtest of
+    eight rebalances.
+    """
+    name: str
+    weights: dict[str, Decimal]
+
+
+def _rank_by(candles_by_symbol: dict[str, list[dict]],
+             months: int, skip: int = 0) -> list[tuple[str, Decimal]]:
+    """Symbols with a computable return over the window, best first."""
+    scored = []
+    for sym in config.UNIVERSE:
+        value = momentum.total_return(
+            candles_by_symbol.get(sym, []), months, skip,
+            config.DIVIDEND_YIELD.get(sym, Decimal("0")),
+        )
+        if value is not None:
+            scored.append((sym, value))
+    return sorted(scored, key=lambda x: x[1], reverse=True)
+
+
+def _above_hurdle(ranked: list[tuple[str, Decimal]],
+                  hurdle: Decimal) -> list[str]:
+    """Apply absolute momentum, then take the top N."""
+    eligible = [
+        sym for sym, value in ranked
+        if value > hurdle and sym != config.CASH_SYMBOL
+    ]
+    return eligible[:config.TOP_N]
+
+
+def _equal(symbols: list[str]) -> dict[str, Decimal]:
+    if not symbols:
+        return {}
+    weight = Decimal("1") / config.TOP_N
+    return {sym: weight for sym in symbols}
+
+
+def _hurdle_for(ranked: list[tuple[str, Decimal]]) -> Decimal:
+    cash = next((v for s, v in ranked if s == config.CASH_SYMBOL), None)
+    return cash if cash is not None else Decimal("0")
+
+
+def variant_single_lookback(candles_by_symbol: dict[str, list[dict]],
+                            months: int, skip: int = 0) -> dict[str, Decimal]:
+    ranked = _rank_by(candles_by_symbol, months, skip)
+    return _equal(_above_hurdle(ranked, _hurdle_for(ranked)))
+
+
+def variant_blended(candles_by_symbol: dict[str, list[dict]]
+                    ) -> dict[str, Decimal]:
+    """Average the rank across 3, 6 and 12 months.
+
+    Averaging positions rather than returns keeps a single outsized number
+    from dominating: a symbol up 300% over a year outranks everything on
+    the twelve-month leg no matter how it has behaved since.
+    """
+    legs = [_rank_by(candles_by_symbol, m) for m in (3, 6, 12)]
+
+    positions: dict[str, list[int]] = {}
+    for leg in legs:
+        for place, (sym, _) in enumerate(leg, 1):
+            positions.setdefault(sym, []).append(place)
+
+    # Only symbols with a full set of legs are comparable.
+    complete = {s: p for s, p in positions.items() if len(p) == len(legs)}
+    averaged = sorted(
+        ((s, Decimal(sum(p)) / len(p)) for s, p in complete.items()),
+        key=lambda x: x[1],
+    )
+
+    cash_rank = next((r for s, r in averaged if s == config.CASH_SYMBOL), None)
+    hurdle = cash_rank if cash_rank is not None else Decimal("999")
+
+    # Lower is better here, so the comparison flips.
+    eligible = [
+        s for s, rank in averaged
+        if rank < hurdle and s != config.CASH_SYMBOL
+    ]
+    return _equal(eligible[:config.TOP_N])
+
+
+def variant_inverse_vol(candles_by_symbol: dict[str, list[dict]],
+                        selected: dict[str, Decimal]) -> dict[str, Decimal]:
+    """The live selection, weighted by 1/volatility instead of equally.
+
+    Equal weights give each name the same money, not the same risk.
+    """
+    vols = {}
+    for sym in selected:
+        vol = indicators.volatility(candles_by_symbol.get(sym, []))
+        if vol and vol > 0:
+            vols[sym] = vol
+
+    if len(vols) != len(selected):
+        return dict(selected)
+
+    inverse = {s: Decimal("1") / v for s, v in vols.items()}
+    total = sum(inverse.values())
+    return {s: w / total for s, w in inverse.items()}
+
+
+def variant_trend_filtered(candles_by_symbol: dict[str, list[dict]],
+                           selected: dict[str, Decimal]) -> dict[str, Decimal]:
+    """The live selection, minus anything trading below its 200-day average.
+
+    Dropped names are not replaced - the freed weight stays in cash, since
+    a weak tape is the wrong moment to concentrate.
+    """
+    kept = [
+        sym for sym in selected
+        if (indicators.above_moving_average(candles_by_symbol.get(sym, []))
+            or Decimal("0")) > 0
+    ]
+    weight = Decimal("1") / config.TOP_N
+    return {sym: weight for sym in kept}
+
+
+def variants(candles_by_symbol: dict[str, list[dict]],
+             signal: Signal) -> list[Variant]:
+    """Every alternative allocation for today, for the record."""
+    return [
+        Variant("mom_6m", variant_single_lookback(candles_by_symbol, 6)),
+        Variant("mom_12m_no_skip",
+                variant_single_lookback(candles_by_symbol, 12, 0)),
+        Variant("blended_rank", variant_blended(candles_by_symbol)),
+        Variant("inverse_vol",
+                variant_inverse_vol(candles_by_symbol, signal.weights)),
+        Variant("trend_filtered",
+                variant_trend_filtered(candles_by_symbol, signal.weights)),
+    ]

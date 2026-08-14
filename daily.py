@@ -56,16 +56,22 @@ def record(signal: strategy.Signal, trade_date: str, session: str | None,
          "qty": p.quantity, "price": str(p.last_price)}
         for p in positions.values()
     ]
+    variant_rows = [
+        (v.name, symbol, weight)
+        for v in strategy.variants(candles_by_symbol, signal)
+        for symbol, weight in v.weights.items()
+    ]
 
     with storage.connect() as conn:
         storage.save_run(conn, trade_date, now, session, ok=True)
         storage.save_scores(conn, trade_date, rows)
         storage.save_indicators(conn, trade_date, ind_rows)
+        storage.save_variants(conn, trade_date, variant_rows)
         storage.save_portfolio(conn, trade_date, "toss-bot", "KRW",
                                total, cash, pos_rows)
 
-    log.info("recorded %d scores, %d indicators, portfolio %s KRW",
-             len(rows), len(ind_rows), f"{total:,.0f}")
+    log.info("recorded %d scores, %d indicators, %d variant weights",
+             len(rows), len(ind_rows), len(variant_rows))
 
 def main() -> int:
     logging_config.setup()
