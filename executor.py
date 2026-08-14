@@ -109,21 +109,34 @@ def cancel_open_orders(client: TossClient) -> int:
 
 
 def wait_for_fill(client: TossClient, order_id: str,
-                  timeout: int = FILL_TIMEOUT) -> bool:
-    """Poll until the order leaves the open list, or time runs out."""
+                  timeout: int = FILL_TIMEOUT) -> tuple[bool, dict]:
+    """Poll until the order leaves the open list, or time runs out.
+
+    Returns (filled, execution). The execution block carries the average
+    fill price plus commission and tax, which the broker computes for us -
+    worth capturing at the time rather than reconstructing later.
+    """
     deadline = time.time() + timeout
+    last_execution: dict = {}
+
     while time.time() < deadline:
-        open_ids = {
-            o["orderId"]
-            for o in client.list_orders("OPEN")["result"]["orders"]
-        }
-        if order_id not in open_ids:
-            log.info("order %s filled", order_id)
-            return True
+        entries = client.list_orders("OPEN")["result"]["orders"]
+        match = next((o for o in entries if o["orderId"] == order_id), None)
+
+        if match is None:
+            log.info("order %s no longer open", order_id)
+            return True, last_execution
+
+        last_execution = match.get("execution") or {}
+        filled = int(last_execution.get("filledQuantity") or 0)
+        if filled:
+            log.info("order %s partially filled: %s/%s",
+                     order_id, filled, match["quantity"])
+
         time.sleep(POLL_INTERVAL)
 
     log.warning("order %s still open after %ds", order_id, timeout)
-    return False
+    return False, last_execution
 
 def place(client: TossClient, order: Order, last: Decimal) -> str | None:
     """Send one order at the touch. Returns the order id, or None if skipped."""
@@ -146,15 +159,24 @@ def place(client: TossClient, order: Order, last: Decimal) -> str | None:
         return None
     return result["result"]["orderId"]
 
+def fetch_execution(client: TossClient, order_id: str) -> dict:
+    """Read the final execution block from the closed order list."""
+    try:
+        entries = client.list_orders("CLOSED")["result"]["orders"]
+    except TossApiError as e:
+        log.warning("could not read closed orders: %s", e)
+        return {}
+
+    match = next((o for o in entries if o["orderId"] == order_id), None)
+    return (match or {}).get("execution") or {}
 
 def execute(client: TossClient, orders: list[Order],
-            prices: dict[str, Decimal]) -> dict[str, bool]:
+            prices: dict[str, Decimal]) -> dict[str, dict]:
     """Send orders in list order, waiting for each fill before the next.
 
-    Sells precede buys in the plan, and a buy cannot be funded until the
-    sell settles, so the sequencing is not merely cosmetic.
+    Returns per-symbol {filled, order_id, execution}.
     """
-    results: dict[str, bool] = {}
+    results: dict[str, dict] = {}
 
     for order in orders:
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -162,25 +184,29 @@ def execute(client: TossClient, orders: list[Order],
                 order_id = place(client, order, prices[order.symbol])
             except ExecutionError as e:
                 log.error("skipping %s: %s", order.symbol, e)
-                results[order.symbol] = False
+                results[order.symbol] = {"filled": False, "order_id": None,
+                                         "execution": {}}
                 break
 
             if order_id is None:      # dry run
-                results[order.symbol] = True
+                results[order.symbol] = {"filled": True, "order_id": None,
+                                         "execution": {}}
                 break
 
-            if wait_for_fill(client, order_id):
-                results[order.symbol] = True
+            filled, execution = wait_for_fill(client, order_id)
+            if filled:
+                execution = fetch_execution(client, order_id) or execution
+                results[order.symbol] = {"filled": True, "order_id": order_id,
+                                         "execution": execution}
                 break
 
-            # Unfilled: cancel and reprice against a fresh book rather than
-            # leaving a stale order resting at a price the market has left.
             log.info("repricing %s (attempt %d/%d)",
                      order.symbol, attempt, MAX_ATTEMPTS)
             client.cancel_order(order_id)
         else:
             log.error("%s: gave up after %d attempts", order.symbol,
                       MAX_ATTEMPTS)
-            results[order.symbol] = False
+            results[order.symbol] = {"filled": False, "order_id": None,
+                                     "execution": {}}
 
     return results

@@ -53,16 +53,20 @@ CREATE TABLE IF NOT EXISTS portfolio (
 );
 
 CREATE TABLE IF NOT EXISTS orders (
-    id           INTEGER PRIMARY KEY,
-    trade_date   TEXT NOT NULL,
-    placed_at    TEXT NOT NULL,
-    account      TEXT NOT NULL,
-    symbol       TEXT NOT NULL,
-    side         TEXT NOT NULL,
-    quantity     INTEGER NOT NULL,
-    limit_price  TEXT NOT NULL,
-    order_id     TEXT,
-    filled       INTEGER NOT NULL DEFAULT 0
+    id              INTEGER PRIMARY KEY,
+    trade_date      TEXT NOT NULL,
+    placed_at       TEXT NOT NULL,
+    account         TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    quantity        INTEGER NOT NULL,
+    limit_price     TEXT NOT NULL,
+    order_id        TEXT,
+    filled          INTEGER NOT NULL DEFAULT 0,
+    filled_qty      INTEGER,
+    avg_fill_price  TEXT,
+    commission      TEXT,
+    tax             TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_scores_symbol ON scores(symbol, trade_date);
@@ -157,13 +161,24 @@ def save_portfolio(conn: sqlite3.Connection, trade_date: str, account: str,
 def save_order(conn: sqlite3.Connection, trade_date: str, placed_at: str,
                account: str, symbol: str, side: str, quantity: int,
                limit_price: Decimal, order_id: str | None,
-               filled: bool) -> None:
+               filled: bool, execution: dict | None = None) -> None:
+    """Record one order, including fill details when the broker has them.
+
+    Commission and tax come back in the order response, so capturing them
+    here avoids reconstructing after-tax performance later from statements.
+    """
+    ex = execution or {}
     conn.execute(
         "INSERT INTO orders (trade_date, placed_at, account, symbol, side, "
-        "quantity, limit_price, order_id, filled) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "quantity, limit_price, order_id, filled, filled_qty, "
+        "avg_fill_price, commission, tax) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (trade_date, placed_at, account, symbol, side, quantity,
-         str(limit_price), order_id, int(filled)),
+         str(limit_price), order_id, int(filled),
+         int(ex["filledQuantity"]) if ex.get("filledQuantity") else None,
+         ex.get("averageFilledPrice"),
+         ex.get("commission"),
+         ex.get("tax")),
     )
 
 

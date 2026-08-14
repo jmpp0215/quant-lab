@@ -44,14 +44,15 @@ def snapshot(client: TossClient) -> tuple[dict, Decimal]:
 
 
 def record_orders(trade_date: str, orders: list[rebalance.Order],
-                  results: dict[str, bool]) -> None:
+                  results: dict[str, dict]) -> None:
     now = datetime.now().astimezone().isoformat()
     with storage.connect() as conn:
         for order in orders:
+            r = results.get(order.symbol, {})
             storage.save_order(
                 conn, trade_date, now, ACCOUNT, order.symbol, order.side,
-                order.quantity, order.limit_price, None,
-                results.get(order.symbol, False),
+                order.quantity, order.limit_price, r.get("order_id"),
+                r.get("filled", False), r.get("execution"),
             )
 
 
@@ -115,7 +116,8 @@ def main() -> int:
 
     if sells:
         results |= executor.execute(client, sells, prices)
-        record_orders(trade_date, sells, results)
+        if not client.dry_run:
+            record_orders(trade_date, sells, results)
 
     # --- buys, replanned against the cash the sells actually raised ----
     buys = [o for o in orders if o.side == "BUY"]
@@ -136,7 +138,7 @@ def main() -> int:
     log.info("final: %s KRW cash, %d positions, %s total",
              f"{cash:,.0f}", len(positions), f"{total:,.0f}")
 
-    failed = [s for s, ok in results.items() if not ok]
+    failed = [s for s, r in results.items() if not r.get("filled")]
     if failed:
         log.warning("unfilled: %s", failed)
         return 1

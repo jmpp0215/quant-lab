@@ -212,3 +212,6 @@ class TossClient:
 
     def market_calendar(self, country: str = "US") -> dict:
         return self.get(f"/api/v1/market-calendar/{country}")
+
+    def get_order(self, order_id: str) -> dict:
+        return self.get(f"/api/v1/orders/{order_id}", need_account=True)
