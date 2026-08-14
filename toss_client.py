@@ -7,6 +7,7 @@ import logging
 import requests
 import market
 import random
+import config
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -181,10 +182,10 @@ class TossClient:
 
         # KRX rejects prices that are off-tick. Catch it before sending.
         if price is not None and symbol.isdigit():
-            if not market.is_valid_kr_price(price):
+            if not market.is_valid_kr_price(price, is_etf=config.IS_ETF):
                 raise ValueError(
-                    f"price {price} is not on a valid KRX tick "
-                    f"(tick={market.kr_tick_size(price)})"
+                    f"price {price} is not on a valid tick "
+                    f"(tick={market.kr_tick_size(price, is_etf=config.IS_ETF)})"
                 )
         if price is not None:
             body["price"] = price

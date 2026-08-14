@@ -120,17 +120,18 @@ class TestOrdering:
 
 class TestPriceHandling:
     def test_snaps_limit_price_to_tick(self):
+        # The universe is ETFs, which quote in flat 5-won steps.
         orders = rebalance.plan(
-            target_weights={"005930": Decimal("1")},
+            target_weights={"102110": Decimal("1")},
             positions={},
-            prices={"005930": Decimal("241037")},
+            prices={"102110": Decimal("109692")},
             cash=Decimal("1000000"),
         )
-        assert orders[0].limit_price == Decimal("241000")
+        assert orders[0].limit_price == Decimal("109690")
 
     def test_skips_symbol_with_no_price(self):
         orders = rebalance.plan(
-            target_weights={"AAA": Decimal("1")},
+            target_weights={"102110": Decimal("1")},
             positions={},
             prices={},
             cash=Decimal("1000000"),

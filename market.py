@@ -14,6 +14,8 @@ KR_TICK_SIZES = [
     (Decimal("200000"), Decimal("100")),
     (Decimal("500000"), Decimal("500")),
 ]
+ETF_TICK = Decimal("5")
+
 
 SESSION_NAMES = ("preMarket", "regularMarket", "afterMarket", "dayMarket")
 
@@ -23,8 +25,11 @@ def _sessions(calendar: dict) -> dict:
     today = calendar["result"]["today"]
     return today.get("integrated", today)
 
-def kr_tick_size(price: str | Decimal) -> Decimal:
+def kr_tick_size(price: str | Decimal, is_etf: bool = False) -> Decimal:
     """Return the KRX tick size for a given price level."""
+    if is_etf:
+        return ETF_TICK
+
     p = Decimal(price)
     for threshold, tick in KR_TICK_SIZES:
         if p < threshold:
@@ -32,15 +37,14 @@ def kr_tick_size(price: str | Decimal) -> Decimal:
     return Decimal("1000")
 
 
-def is_valid_kr_price(price: str | Decimal) -> bool:
-    """Check that a price sits exactly on a valid KRX tick."""
+
+def is_valid_kr_price(price: str | Decimal, is_etf: bool = False) -> bool:
     p = Decimal(price)
-    return p % kr_tick_size(p) == 0
+    return p % kr_tick_size(p, is_etf) == 0
 
 
-def round_to_tick(price: Decimal) -> Decimal:
-    """Snap a price down to the nearest valid KRX tick."""
-    tick = kr_tick_size(price)
+def round_to_tick(price: Decimal, is_etf: bool = False) -> Decimal:
+    tick = kr_tick_size(price, is_etf)
     return (price // tick) * tick
 
 def to_decimal(value: str | None) -> Decimal | None:

@@ -27,7 +27,15 @@ class TestTickSize:
         # 2000 is the start of the 5-won band, not the end of the 1-won one.
         assert market.kr_tick_size("1999") == Decimal("1")
         assert market.kr_tick_size("2000") == Decimal("5")
+class TestEtfTickSize:
+    @pytest.mark.parametrize("price", ["7275", "16175", "109690", "1074950"])
+    def test_etf_ticks_are_flat_five_won(self, price):
+        assert market.kr_tick_size(price, is_etf=True) == Decimal("5")
 
+    def test_etf_validation_accepts_five_won_steps(self):
+        # A share at this price would step by 1,000 won; an ETF does not.
+        assert market.is_valid_kr_price("1074955", is_etf=True)
+        assert not market.is_valid_kr_price("1074955")
 
 class TestPriceValidation:
     def test_accepts_price_on_tick(self):
@@ -54,3 +62,5 @@ class TestRoundToTick:
         for raw in ("1537", "48037", "163537", "241037", "600037"):
             snapped = market.round_to_tick(Decimal(raw))
             assert market.is_valid_kr_price(snapped)
+
+

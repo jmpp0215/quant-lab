@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 
+IS_ETF = True
 # Universe: every candidate the strategy may hold. Membership is chosen for
 # low mutual correlation, not recent performance - a weak performer simply
 # does not get selected, and stays available for when its momentum turns.
