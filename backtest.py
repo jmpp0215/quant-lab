@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 import indicators
-
+import strategy
 import config
 import strategy
 
@@ -67,16 +67,12 @@ def rebalance_dates(candles_by_symbol: dict[str, list[dict]],
 
 
 def run(candles_by_symbol: dict[str, list[dict]],
-        initial: Decimal = Decimal("10000000")) -> list[Rebalance]:
-    """Replay monthly rebalances, holding the selected names in between.
-
-    Positions are held in fractional units: the point here is to measure
-    the strategy, not the rounding, and whole-share constraints are already
-    covered by rebalance.plan and its tests.
-    """
+        initial: Decimal = Decimal("10000000"),
+        scheme: str = "equal") -> list[Rebalance]:
+    """Replay monthly rebalances, holding the selected names in between."""
     history: list[Rebalance] = []
     value = initial
-    holdings: dict[str, Decimal] = {}   # symbol -> units held
+    holdings: dict[str, Decimal] = {}
 
     for date in rebalance_dates(candles_by_symbol):
         prices = {
@@ -85,7 +81,6 @@ def run(candles_by_symbol: dict[str, list[dict]],
         }
         prices = {s: p for s, p in prices.items() if p is not None}
 
-        # Mark the existing book to market before deciding anything.
         if holdings:
             value = sum(
                 units * prices[sym]
@@ -99,18 +94,22 @@ def run(candles_by_symbol: dict[str, list[dict]],
         }
         signal = strategy.evaluate(sliced)
 
+        weights = signal.weights
+        if scheme != "equal" and weights:
+            scores = {s.symbol: s.momentum for s in signal.scores
+                      if s.momentum is not None}
+            weights = strategy._weights_by_scheme(
+                sliced, list(weights), scheme, scores)
+
         holdings = {
             sym: (value * weight) / prices[sym]
-            for sym, weight in signal.weights.items()
+            for sym, weight in weights.items()
             if sym in prices
         }
 
-        history.append(Rebalance(date=date, weights=signal.weights,
+        history.append(Rebalance(date=date, weights=weights,
                                  prices=prices, value=value))
-        log.info("%s: %s KRW -> %s", date, f"{value:,.0f}",
-                 [config.UNIVERSE[s] for s in signal.weights])
 
-    # Final mark to market using the most recent close.
     if holdings:
         last = max(_date_of(c) for c in
                    candles_by_symbol[next(iter(config.UNIVERSE))])
@@ -127,30 +126,40 @@ def run(candles_by_symbol: dict[str, list[dict]],
     return history
 
 
-def summarise(history: list[Rebalance]) -> str:
+def summarise(history: list[Rebalance], label: str = "") -> str:
     if len(history) < 2:
         return "not enough history"
 
     start, end = history[0].value, history[-1].value
     total = (end - start) / start
 
+    # Period returns between rebalances, for a rough volatility estimate.
+    steps = [
+        (history[i + 1].value - history[i].value) / history[i].value
+        for i in range(len(history) - 1)
+    ]
+    mean = sum(steps) / len(steps)
+    if len(steps) > 1:
+        variance = sum((s - mean) ** 2 for s in steps) / (len(steps) - 1)
+        # Monthly observations, so annualise by sqrt(12).
+        vol = Decimal(str(float(variance) ** 0.5)) * Decimal("3.4641")
+    else:
+        vol = Decimal("0")
+
+    periods = Decimal(len(steps))
+    annualised = (Decimal("1") + total) ** (Decimal("12") / periods) - 1
+    sharpe = annualised / vol if vol else Decimal("0")
+
     peak = start
     max_dd = Decimal("0")
     for r in history:
         peak = max(peak, r.value)
-        drawdown = (r.value - peak) / peak
-        max_dd = min(max_dd, drawdown)
+        max_dd = min(max_dd, (r.value - peak) / peak)
 
-    lines = [
-        f"period    : {history[0].date} ~ {history[-1].date}",
-        f"rebalances: {len(history) - 1}",
-        f"start     : {start:,.0f} KRW",
-        f"end       : {end:,.0f} KRW",
-        f"return    : {total:.2%}",
-        f"max dd    : {max_dd:.2%}",
-    ]
-    return "\n".join(lines)
-
+    return (
+        f"{label:<16} return={total:>7.2%}  ann={annualised:>7.2%}  "
+        f"vol={vol:>6.2%}  sharpe={sharpe:>5.2f}  mdd={max_dd:>7.2%}"
+    )
 
 def buy_and_hold(candles_by_symbol: dict[str, list[dict]], symbol: str,
                  dates: list[str],
@@ -182,84 +191,3 @@ def equal_weight(candles_by_symbol: dict[str, list[dict]],
         if start and end:
             total += per * end / start
     return total
-
-
-def _inverse_vol_weights(sliced: dict[str, list[dict]],
-                         symbols: list[str]) -> dict[str, Decimal]:
-    """Weights proportional to 1/volatility, normalised to sum to one.
-
-    Equal weighting gives each name the same money, not the same risk. A
-    symbol running at 90% annualised volatility dominates a portfolio it
-    nominally holds a third of.
-    """
-    vols = {}
-    for sym in symbols:
-        vol = indicators.volatility(sliced.get(sym, []))
-        if vol and vol > 0:
-            vols[sym] = vol
-
-    if not vols:
-        return {}
-
-    inverse = {s: Decimal("1") / v for s, v in vols.items()}
-    total = sum(inverse.values())
-    return {s: w / total for s, w in inverse.items()}
-
-
-def run(candles_by_symbol: dict[str, list[dict]],
-        initial: Decimal = Decimal("10000000"),
-        inverse_vol: bool = False) -> list[Rebalance]:
-    """Replay monthly rebalances, holding the selected names in between."""
-    history: list[Rebalance] = []
-    value = initial
-    holdings: dict[str, Decimal] = {}
-
-    for date in rebalance_dates(candles_by_symbol):
-        prices = {
-            sym: close_at(cs, date)
-            for sym, cs in candles_by_symbol.items()
-        }
-        prices = {s: p for s, p in prices.items() if p is not None}
-
-        if holdings:
-            value = sum(
-                units * prices[sym]
-                for sym, units in holdings.items()
-                if sym in prices
-            )
-
-        sliced = {
-            sym: slice_at(cs, date)
-            for sym, cs in candles_by_symbol.items()
-        }
-        signal = strategy.evaluate(sliced)
-
-        weights = signal.weights
-        if inverse_vol and weights:
-            adjusted = _inverse_vol_weights(sliced, list(weights))
-            if adjusted:
-                weights = adjusted
-
-        holdings = {
-            sym: (value * weight) / prices[sym]
-            for sym, weight in weights.items()
-            if sym in prices
-        }
-
-        history.append(Rebalance(date=date, weights=weights,
-                                 prices=prices, value=value))
-
-    if holdings:
-        last = max(_date_of(c) for c in
-                   candles_by_symbol[next(iter(config.UNIVERSE))])
-        final_prices = {
-            sym: close_at(cs, last)
-            for sym, cs in candles_by_symbol.items()
-        }
-        value = sum(units * final_prices[sym]
-                    for sym, units in holdings.items()
-                    if final_prices.get(sym))
-        history.append(Rebalance(date=last, weights={}, prices=final_prices,
-                                 value=value))
-
-    return history
