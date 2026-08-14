@@ -11,6 +11,8 @@ from decimal import Decimal
 import indicators
 import config
 import momentum
+import allocation
+
 
 log = logging.getLogger(__name__)
 
@@ -178,26 +180,6 @@ def variant_blended(candles_by_symbol: dict[str, list[dict]]
     return _equal(eligible[:config.TOP_N])
 
 
-def variant_inverse_vol(candles_by_symbol: dict[str, list[dict]],
-                        selected: dict[str, Decimal]) -> dict[str, Decimal]:
-    """The live selection, weighted by 1/volatility instead of equally.
-
-    Equal weights give each name the same money, not the same risk.
-    """
-    vols = {}
-    for sym in selected:
-        vol = indicators.volatility(candles_by_symbol.get(sym, []))
-        if vol and vol > 0:
-            vols[sym] = vol
-
-    if len(vols) != len(selected):
-        return dict(selected)
-
-    inverse = {s: Decimal("1") / v for s, v in vols.items()}
-    total = sum(inverse.values())
-    return {s: w / total for s, w in inverse.items()}
-
-
 def variant_trend_filtered(candles_by_symbol: dict[str, list[dict]],
                            selected: dict[str, Decimal]) -> dict[str, Decimal]:
     """The live selection, minus anything trading below its 200-day average.
@@ -216,14 +198,92 @@ def variant_trend_filtered(candles_by_symbol: dict[str, list[dict]],
 
 def variants(candles_by_symbol: dict[str, list[dict]],
              signal: Signal) -> list[Variant]:
-    """Every alternative allocation for today, for the record."""
-    return [
+    """Every alternative allocation for today, for the record.
+
+    Two independent axes: which symbols the signal picks, and how the
+    money is split across them. Both are recorded so that months from now
+    the choice can be settled against observations.
+    """
+    scores = {s.symbol: s.momentum for s in signal.scores
+              if s.momentum is not None}
+    selected = list(signal.weights)
+
+    out = [
         Variant("mom_6m", variant_single_lookback(candles_by_symbol, 6)),
         Variant("mom_12m_no_skip",
                 variant_single_lookback(candles_by_symbol, 12, 0)),
         Variant("blended_rank", variant_blended(candles_by_symbol)),
-        Variant("inverse_vol",
-                variant_inverse_vol(candles_by_symbol, signal.weights)),
         Variant("trend_filtered",
                 variant_trend_filtered(candles_by_symbol, signal.weights)),
     ]
+
+    for scheme in ("inverse_vol", "risk_parity", "signal_weighted", "rank_weighted"):
+        out.append(Variant(
+            f"weight_{scheme}",
+            _weights_by_scheme(candles_by_symbol, selected, scheme, scores),
+        ))
+
+    return out
+
+
+def _weights_by_scheme(candles_by_symbol: dict[str, list[dict]],
+                       symbols: list[str], scheme: str,
+                       scores: dict[str, Decimal] | None = None
+                       ) -> dict[str, Decimal]:
+    """Allocate across an already-selected set of symbols.
+
+    Selection and sizing are separate decisions: the momentum ranking says
+    what to hold, this says how much. Equal weighting is the default not
+    because it is optimal but because it assumes nothing.
+    """
+    if not symbols:
+        return {}
+
+    if scheme == "equal":
+        weight = Decimal("1") / config.TOP_N
+        return {sym: weight for sym in symbols}
+
+    returns = {
+        sym: allocation.daily_returns(candles_by_symbol.get(sym, []))
+        for sym in symbols
+    }
+    if any(len(r) < 30 for r in returns.values()):
+        log.warning("insufficient history for %s weighting; using equal",
+                    scheme)
+        return _weights_by_scheme(candles_by_symbol, symbols, "equal")
+
+    cov = allocation.covariance_matrix(returns, symbols)
+
+    if scheme == "risk_parity":
+        raw = allocation.risk_parity(cov)
+        return allocation.to_decimal_weights(symbols, raw)
+
+    if scheme == "inverse_vol":
+        vols = [cov[i][i] ** 0.5 for i in range(len(symbols))]
+        inverse = [1 / v if v > 0 else 0 for v in vols]
+        total = sum(inverse)
+        return allocation.to_decimal_weights(
+            symbols, [w / total for w in inverse])
+
+    if scheme == "signal_weighted":
+        # Size by conviction: a symbol ranked far above the rest carries
+        # more of the portfolio. This trusts the ranking with the sizing
+        # decision as well as the selection one.
+        if not scores:
+            return _weights_by_scheme(candles_by_symbol, symbols, "equal")
+        floor = min(scores[s] for s in symbols)
+        shifted = {s: scores[s] - floor + Decimal("0.01") for s in symbols}
+        total = sum(shifted.values())
+        return {s: v / total for s, v in shifted.items()}
+
+    if scheme == "rank_weighted":
+        # Weight by rank rather than by score: a 170% twelve-month return
+        # is not four times better than a 40% one, and dividing by raw
+        # scores lets one outlier take the whole portfolio.
+        ordered = sorted(symbols, key=lambda s: scores[s], reverse=True)
+        n = len(ordered)
+        total = Decimal(n * (n + 1) // 2)
+        return {sym: Decimal(n - i) / total
+                for i, sym in enumerate(ordered)}
+
+    raise ValueError(f"unknown scheme: {scheme}")
