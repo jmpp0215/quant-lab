@@ -10,7 +10,7 @@ import sqlite3
 from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
-
+import json
 DB_PATH = Path(__file__).parent / "data" / "quant.db"
 
 log = logging.getLogger(__name__)
@@ -39,6 +39,16 @@ CREATE TABLE IF NOT EXISTS indicators (
     name        TEXT NOT NULL,
     value       TEXT,
     PRIMARY KEY (trade_date, symbol, name)
+);
+
+CREATE TABLE IF NOT EXISTS portfolio (
+    trade_date  TEXT NOT NULL,
+    account     TEXT NOT NULL,
+    currency    TEXT NOT NULL,
+    total       TEXT NOT NULL,
+    cash        TEXT NOT NULL,
+    positions   TEXT NOT NULL,
+    PRIMARY KEY (trade_date, account, currency)
 );
 
 CREATE INDEX IF NOT EXISTS idx_scores_symbol ON scores(symbol, trade_date);
@@ -113,6 +123,22 @@ def save_indicators(conn: sqlite3.Connection, trade_date: str,
          for sym, name, val in rows],
     )
 
+def save_portfolio(conn: sqlite3.Connection, trade_date: str, account: str,
+                   currency: str, total: Decimal, cash: Decimal,
+                   positions: list[dict]) -> None:
+    """Store one account's end-of-day snapshot.
+
+    Values stay in their native currency: converting to KRW here would
+    freeze the snapshot at one day's FX rate and make later recalculation
+    impossible.
+    """
+    conn.execute(
+        "INSERT OR REPLACE INTO portfolio "
+        "(trade_date, account, currency, total, cash, positions) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (trade_date, account, currency, str(total), str(cash),
+         json.dumps(positions, ensure_ascii=False)),
+    )
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")

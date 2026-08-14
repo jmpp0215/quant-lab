@@ -18,17 +18,18 @@ import logging_config
 import market
 import storage
 import strategy
+import rebalance
 from decimal import Decimal
 from toss_client import TossClient, TossApiError
 
 log = logging.getLogger("daily")
 
 
-def record(signal: strategy.Signal, trade_date: str,
-           session: str | None,
-           candles_by_symbol: dict[str, list[dict]]) -> None:
+def record(signal: strategy.Signal, trade_date: str, session: str | None,
+           candles_by_symbol: dict[str, list[dict]],
+           positions: dict[str, rebalance.Position],
+           cash: Decimal) -> None:
     now = datetime.now().astimezone().isoformat()
-
     rows = [
         {
             "symbol": score.symbol,
@@ -49,13 +50,22 @@ def record(signal: strategy.Signal, trade_date: str,
         ).items()
     ]
 
+    total = cash + sum(p.value for p in positions.values())
+    pos_rows = [
+        {"symbol": p.symbol, "name": p.name,
+         "qty": p.quantity, "price": str(p.last_price)}
+        for p in positions.values()
+    ]
+
     with storage.connect() as conn:
         storage.save_run(conn, trade_date, now, session, ok=True)
         storage.save_scores(conn, trade_date, rows)
         storage.save_indicators(conn, trade_date, ind_rows)
+        storage.save_portfolio(conn, trade_date, "toss-bot", "KRW",
+                               total, cash, pos_rows)
 
-    log.info("recorded %d scores, %d indicators for %s",
-             len(rows), len(ind_rows), trade_date)
+    log.info("recorded %d scores, %d indicators, portfolio %s KRW",
+             len(rows), len(ind_rows), f"{total:,.0f}")
 
 def main() -> int:
     logging_config.setup()
@@ -86,7 +96,10 @@ def main() -> int:
 
         signal = strategy.evaluate(data)
         log.info("\n%s", strategy.format_signal(signal))
-        record(signal, trade_date, session, data)
+        positions = rebalance.parse_positions(client.holdings())
+        cash = Decimal(client.buying_power("KRW")["result"]["cashBuyingPower"])
+
+        record(signal, trade_date, session, data, positions, cash)
 
     except TossApiError as e:
         log.error("api error: %s", e)
