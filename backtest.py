@@ -14,10 +14,8 @@ to see whether the ranking ever actually rotates.
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
-import indicators
 import strategy
 import config
-import strategy
 
 log = logging.getLogger(__name__)
 

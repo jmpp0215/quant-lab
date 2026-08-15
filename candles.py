@@ -10,7 +10,9 @@ import time
 from pathlib import Path
 from datetime import date, datetime, timedelta
 from toss_client import TossClient
+from zoneinfo import ZoneInfo
 
+KST = ZoneInfo("Asia/Seoul")
 CACHE_DIR = Path(__file__).parent / "data" / "candles"
 PAGE_SIZE = 100
 PAGE_DELAY = 1.0
@@ -80,7 +82,7 @@ def get(client: TossClient, symbol: str, days: int = 260,
     during market hours; the caller passes include_today=True once the
     session has closed and the candle is final.
     """
-    today = today or datetime.now().date()
+    today = today or datetime.now(KST).date()
     today_str = today.isoformat()
 
     def is_complete(c: dict) -> bool:

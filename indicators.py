@@ -7,7 +7,6 @@ picked differently?" without having traded on it first.
 """
 
 import logging
-from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 import momentum

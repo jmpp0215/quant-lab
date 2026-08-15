@@ -19,7 +19,7 @@ import market
 import rebalance
 import storage
 import strategy
-from toss_client import TossClient, TossApiError
+from toss_client import TossClient
 
 ACCOUNT = "toss-bot"
 

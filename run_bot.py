@@ -4,7 +4,6 @@ import logging
 import signal
 import sys
 import time
-from datetime import datetime, timezone
 
 import logging_config
 import market

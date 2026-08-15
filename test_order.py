@@ -2,7 +2,6 @@
 
 import json
 import time
-import market
 from decimal import Decimal
 from toss_client import TossClient, TossApiError
 
