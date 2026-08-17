@@ -5,12 +5,12 @@ strategy only acts on completed daily candles and intraday recalculation
 is noise for a monthly rebalance.
 """
 
+import json
 import logging
 import sqlite3
 from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
-import json
 
 DB_PATH = Path(__file__).parent / "data" / "quant.db"
 

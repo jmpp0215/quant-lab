@@ -3,7 +3,8 @@
 import json
 import time
 from decimal import Decimal
-from toss_client import TossClient, TossApiError
+
+from toss_client import TossApiError, TossClient
 
 SYMBOL = "QCOM"
 

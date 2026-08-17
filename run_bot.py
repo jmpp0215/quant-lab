@@ -7,7 +7,7 @@ import time
 
 import logging_config
 import market
-from toss_client import TossClient, TossApiError
+from toss_client import TossApiError, TossClient
 
 POLL_INTERVAL = 30
 CALENDAR_REFRESH = 3600

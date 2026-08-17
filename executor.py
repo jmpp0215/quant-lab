@@ -16,7 +16,7 @@ from decimal import Decimal
 import config
 import market
 from rebalance import Order
-from toss_client import TossClient, TossApiError
+from toss_client import TossApiError, TossClient
 
 log = logging.getLogger(__name__)
 

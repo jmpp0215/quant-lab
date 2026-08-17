@@ -127,5 +127,5 @@ def to_decimal_weights(symbols: list[str],
     """Convert to Decimal for downstream order sizing."""
     return {
         sym: Decimal(str(w)).quantize(Decimal("0.0001"))
-        for sym, w in zip(symbols, weights)
+        for sym, w in zip(symbols, weights, strict=True)
     }

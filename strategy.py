@@ -8,11 +8,11 @@ historical data during a backtest.
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
-import indicators
-import config
-import momentum
-import allocation
 
+import allocation
+import config
+import indicators
+import momentum
 
 log = logging.getLogger(__name__)
 

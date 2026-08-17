@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+# Correctness rules first. Style can wait; the value right now is catching
+# redefinitions, undefined names, and naive datetimes before they turn
+# into a silently wrong result.
+select = ["F", "E9", "B", "DTZ", "I"]
+
+# Decimal is deliberately constructed from strings throughout: Decimal(0.1)
+# inherits the binary float error that Decimal exists to avoid, and mixing
+# the two forms invites someone to copy the wrong one.
+ignore = ["FURB157"]

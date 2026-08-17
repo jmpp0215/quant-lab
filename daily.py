@@ -11,16 +11,17 @@ period runs until the first scheduled rebalance.
 import logging
 import sys
 from datetime import datetime
-import indicators
+from decimal import Decimal
+
 import candles
 import config
+import indicators
 import logging_config
 import market
+import rebalance
 import storage
 import strategy
-import rebalance
-from decimal import Decimal
-from toss_client import TossClient, TossApiError
+from toss_client import TossApiError, TossClient
 
 log = logging.getLogger("daily")
 

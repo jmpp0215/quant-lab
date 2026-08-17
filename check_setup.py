@@ -6,7 +6,7 @@ import sys
 
 import logging_config
 import market
-from toss_client import TossClient, TossApiError
+from toss_client import TossApiError, TossClient
 
 
 def show(label: str, fn) -> None:

@@ -6,7 +6,6 @@ covered case by case rather than trusted to a single happy path.
 
 from decimal import Decimal
 
-
 import rebalance
 from rebalance import Position
 
