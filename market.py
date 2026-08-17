@@ -21,9 +21,25 @@ SESSION_NAMES = ("preMarket", "regularMarket", "afterMarket", "dayMarket")
 
 
 def _sessions(calendar: dict) -> dict:
-    """Return today's session map, flattening the KR 'integrated' wrapper."""
+    """Today's session map, flattening the KR 'integrated' wrapper.
+
+    A holiday returns integrated: null rather than omitting the key, so
+    the fallback has to handle None as well as a missing key.
+    """
     today = calendar["result"]["today"]
-    return today.get("integrated", today)
+    if "integrated" in today:
+        return today["integrated"] or {}
+    return today
+
+
+def is_business_day(calendar: dict) -> bool:
+    """True when the market trades today.
+
+    Distinguishes a holiday from merely being outside session hours: both
+    give current_session() == None, but only one means there will be no
+    candle for today at all.
+    """
+    return bool(_sessions(calendar))
 
 def kr_tick_size(price: str | Decimal, is_etf: bool = False) -> Decimal:
     """Return the KRX tick size for a given price level."""

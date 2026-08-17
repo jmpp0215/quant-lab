@@ -63,4 +63,17 @@ class TestRoundToTick:
             snapped = market.round_to_tick(Decimal(raw))
             assert market.is_valid_kr_price(snapped)
 
+class TestBusinessDay:
+    def test_holiday_has_no_sessions(self):
+        calendar = {"result": {"today": {"date": "2026-08-17",
+                                         "integrated": None}}}
+        assert not market.is_business_day(calendar)
+        assert market.current_session(calendar) is None
 
+    def test_trading_day_has_sessions(self):
+        calendar = {"result": {"today": {"date": "2026-08-14", "integrated": {
+            "regularMarket": {
+                "startTime": "2026-08-14T09:00:00.000+09:00",
+                "endTime": "2026-08-14T15:30:00.000+09:00",
+            }}}}}
+        assert market.is_business_day(calendar)

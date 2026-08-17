@@ -28,7 +28,7 @@ log = logging.getLogger("daily")
 def record(signal: strategy.Signal, trade_date: str, session: str | None,
            candles_by_symbol: dict[str, list[dict]],
            positions: dict[str, rebalance.Position],
-           cash: Decimal) -> None:
+           cash: Decimal, skip_portfolio: bool = False) -> None:
     now = datetime.now().astimezone().isoformat()
     rows = [
         {
@@ -67,9 +67,13 @@ def record(signal: strategy.Signal, trade_date: str, session: str | None,
         storage.save_scores(conn, trade_date, rows)
         storage.save_indicators(conn, trade_date, ind_rows)
         storage.save_variants(conn, trade_date, variant_rows)
-        storage.save_portfolio(conn, trade_date, "toss-bot", "KRW",
-                               total, cash, pos_rows)
 
+        # Holdings can only be observed now, never reconstructed, so a
+        # backfilled date must not be given today's balance.
+        if not skip_portfolio:
+            storage.save_portfolio(conn, trade_date, "toss-bot", "KRW",
+                                   total, cash, pos_rows)
+    
     log.info("recorded %d scores, %d indicators, %d variant weights",
              len(rows), len(ind_rows), len(variant_rows))
 
@@ -78,34 +82,62 @@ def main() -> int:
     log.info("daily run start")
 
     storage.init()
+    # Recompute a past date from cached candles. The signal is a pure
+    # function of the candles up to that date, so a missed run can be
+    # filled in later without losing anything.
+    target = None
+    if "--date" in sys.argv:
+        target = sys.argv[sys.argv.index("--date") + 1]
+        log.info("backfilling %s", target)
 
     try:
         client = TossClient()
 
-        session = market.current_session(client.market_calendar("KR"))
-        log.info("KR session: %s", session)
+        if target is None:
+            calendar = client.market_calendar("KR")
+            if not market.is_business_day(calendar):
+                log.info("market closed today; nothing to record")
+                return 0
+            session = market.current_session(calendar)
+            session_closed = session in (None, "afterMarket")
+        else:
+            # A past date's candles are complete by definition.
+            session = None
+            session_closed = True
+        
         # Once the regular session has closed, today's candle is final and
         # should drive the signal; before that it is still moving.
-    
-        session_closed = session in (None, "afterMarket")
         data = {
             sym: candles.get(client, sym, days=config.HISTORY_DAYS,
                              include_today=session_closed)
             for sym in config.all_symbols()
         }
+        if target is not None:
+            data = {
+                sym: [c for c in cs if c["timestamp"][:10] <= target]
+                for sym, cs in data.items()
+            }
 
         # The trade date is the newest completed candle, not today - during
         # market hours these differ, and the signal belongs to the former.
         reference = data[next(iter(config.UNIVERSE))]
+        if not reference:
+            log.error("no candles at or before %s", target)
+            return 1
         trade_date = reference[0]["timestamp"][:10]
         log.info("trade date: %s", trade_date)
 
         signal = strategy.evaluate(data)
         log.info("\n%s", strategy.format_signal(signal))
-        positions = rebalance.parse_positions(client.holdings())
-        cash = Decimal(client.buying_power("KRW")["result"]["cashBuyingPower"])
+        if target is None:
+            positions = rebalance.parse_positions(client.holdings())
+            cash = Decimal(
+                client.buying_power("KRW")["result"]["cashBuyingPower"])
+        else:
+            positions, cash = {}, Decimal("0")
 
-        record(signal, trade_date, session, data, positions, cash)
+        record(signal, trade_date, session, data, positions, cash,
+               skip_portfolio=target is not None)
 
     except TossApiError as e:
         log.error("api error: %s", e)
