@@ -45,35 +45,38 @@ def close_at(candles: list[dict], as_of: str) -> Decimal | None:
 
 
 def rebalance_dates(candles_by_symbol: dict[str, list[dict]],
-                    skip_months: int = 13) -> list[str]:
-    """First trading date of each month, once enough history has accrued.
+                    skip_months: int = 13,
+                    offset: int = 0) -> list[str]:
+    """The (offset+1)-th trading date of each month, once history allows.
 
-    The reference symbol drives the calendar; every symbol in the universe
-    is Korea-listed, so they share one.
+    Months without enough trading days are skipped rather than falling
+    back to their last day: substituting a different day would quietly
+    turn a timing-luck comparison into a comparison of different
+    schedules.
     """
     reference = candles_by_symbol[next(iter(config.UNIVERSE))]
     dates = sorted(_date_of(c) for c in reference)
 
-    firsts: list[str] = []
-    seen: set[str] = set()
+    by_month: dict[str, list[str]] = {}
     for d in dates:
-        month = d[:7]
-        if month not in seen:
-            seen.add(month)
-            firsts.append(d)
+        by_month.setdefault(d[:7], []).append(d)
 
-    return firsts[skip_months:]
-
+    months = sorted(by_month)[skip_months:]
+    return [
+        by_month[m][offset] for m in months
+        if len(by_month[m]) > offset
+    ]
 
 def run(candles_by_symbol: dict[str, list[dict]],
         initial: Decimal = Decimal("10000000"),
-        scheme: str = "equal") -> list[Rebalance]:
+        scheme: str = "equal",
+        offset: int = 0) -> list[Rebalance]:
     """Replay monthly rebalances, holding the selected names in between."""
     history: list[Rebalance] = []
     value = initial
     holdings: dict[str, Decimal] = {}
 
-    for date in rebalance_dates(candles_by_symbol):
+    for date in rebalance_dates(candles_by_symbol, offset=offset):
         prices = {
             sym: close_at(cs, date)
             for sym, cs in candles_by_symbol.items()
