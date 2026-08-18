@@ -77,6 +77,16 @@ CREATE TABLE IF NOT EXISTS variants (
     PRIMARY KEY (trade_date, variant, symbol)
 );
 
+CREATE TABLE IF NOT EXISTS cashflows (
+    id          INTEGER PRIMARY KEY,
+    trade_date  TEXT NOT NULL,
+    account     TEXT NOT NULL,
+    amount      TEXT NOT NULL,
+    note        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_cashflows_date ON cashflows(trade_date);
+
 CREATE INDEX IF NOT EXISTS idx_scores_symbol ON scores(symbol, trade_date);
 """
 
@@ -223,6 +233,30 @@ def save_variants(conn: sqlite3.Connection, trade_date: str,
         "VALUES (?, ?, ?, ?)",
         [(trade_date, v, s, str(w)) for v, s, w in rows],
     )
+
+def save_cashflow(conn: sqlite3.Connection, trade_date: str, account: str,
+                  amount: Decimal, note: str | None = None) -> None:
+    """Record an external deposit or withdrawal.
+
+    Without this, a jump in portfolio value is indistinguishable from a
+    gain, and every return figure downstream is wrong.
+    """
+    conn.execute(
+        "INSERT INTO cashflows (trade_date, account, amount, note) "
+        "VALUES (?, ?, ?, ?)",
+        (trade_date, account, str(amount), note),
+    )
+
+
+def cashflows_by_date(conn: sqlite3.Connection,
+                      account: str) -> dict[str, Decimal]:
+    """Net external flow per date, for stripping out of return figures."""
+    rows = conn.execute(
+        "SELECT trade_date, SUM(CAST(amount AS REAL)) AS total "
+        "FROM cashflows WHERE account = ? GROUP BY trade_date",
+        (account,),
+    ).fetchall()
+    return {r["trade_date"]: Decimal(str(r["total"])) for r in rows}
     
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
