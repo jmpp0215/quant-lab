@@ -15,19 +15,22 @@ def order(side: str, qty: int = 10) -> Order:
 
 
 class TestLimitPrice:
-    def test_buy_takes_the_ask(self):
+    def test_buy_prices_through_the_ask(self):
         touch = Touch(bid=Decimal("109615"), ask=Decimal("109620"),
                       bid_volume=300, ask_volume=4222)
         price = executor.limit_price_for(order("BUY"), touch,
                                          Decimal("109615"))
-        assert price == Decimal("109620")
+        # One tick above the ask: enough to survive the book moving between
+        # reading it and the order arriving, without paying for depth the
+        # retry loop can pick up instead.
+        assert price == Decimal("109625")
 
-    def test_sell_takes_the_bid(self):
+    def test_sell_prices_through_the_bid(self):
         touch = Touch(bid=Decimal("109615"), ask=Decimal("109620"),
                       bid_volume=300, ask_volume=4222)
         price = executor.limit_price_for(order("SELL"), touch,
                                          Decimal("109620"))
-        assert price == Decimal("109615")
+        assert price == Decimal("109610")
 
     def test_refuses_empty_book(self):
         touch = Touch(bid=None, ask=None, bid_volume=0, ask_volume=0)
@@ -47,7 +50,7 @@ class TestLimitPrice:
                       bid_volume=100, ask_volume=100)
         price = executor.limit_price_for(order("BUY"), touch,
                                          Decimal("109615"))
-        assert price == Decimal("108005")
+        assert price == Decimal("108010")
 
 
 class TestAuctionGuard:

@@ -130,8 +130,8 @@ def main() -> int:
         log.info("\nrevised buy plan:\n%s", rebalance.format_plan(buys))
         if buys and confirm("Proceed with buys?"):
             results |= executor.execute(client, buys, prices)
-            record_orders(trade_date, buys, results)
-
+            if not client.dry_run:
+                record_orders(trade_date, buys, results)
     # --- verify -------------------------------------------------------
     positions, cash = snapshot(client)
     total = cash + sum(p.value for p in positions.values())

@@ -12,6 +12,7 @@ import logging
 import time
 from dataclasses import dataclass
 from decimal import Decimal
+from dataclasses import dataclass, replace
 
 import config
 import market
@@ -31,6 +32,7 @@ MAX_ATTEMPTS = 3
 
 # No new orders once the closing auction begins.
 AUCTION_START = "15:20"
+TICK_BUFFER = 1
 
 
 class ExecutionError(RuntimeError):
@@ -56,13 +58,27 @@ def read_touch(client: TossClient, symbol: str) -> Touch:
     )
 
 
+
+
 def limit_price_for(order: Order, touch: Touch, last: Decimal) -> Decimal:
-    """Price that should fill immediately against the current book."""
+    """Price that should fill immediately against the current book.
+
+    Priced a couple of ticks through the touch rather than at it: the best
+    price often holds far fewer shares than the order needs, and a limit
+    exactly at the touch leaves the remainder resting while the book moves
+    away. The deviation check below still caps how far this can go.
+    """
     price = touch.ask if order.side == "BUY" else touch.bid
     side_name = "ask" if order.side == "BUY" else "bid"
 
     if price is None:
         raise ExecutionError(f"{order.symbol}: no {side_name} in the book")
+
+    tick = market.kr_tick_size(price, is_etf=config.is_etf(order.symbol))
+    if order.side == "BUY":
+        price = price + tick * TICK_BUFFER
+    else:
+        price = price - tick * TICK_BUFFER
 
     deviation = abs(price - last) / last
     if deviation > MAX_DEVIATION:
@@ -75,7 +91,6 @@ def limit_price_for(order: Order, touch: Touch, last: Decimal) -> Decimal:
         raise ExecutionError(f"{order.symbol}: {price} is off-tick")
 
     return price
-
 
 def check_depth(order: Order, touch: Touch) -> None:
     """Warn when the touch cannot absorb the whole order.
@@ -176,39 +191,68 @@ def execute(client: TossClient, orders: list[Order],
             prices: dict[str, Decimal]) -> dict[str, dict]:
     """Send orders in list order, waiting for each fill before the next.
 
-    Returns per-symbol {filled, order_id, execution}.
+    An unfilled order is cancelled and reissued for the *remaining*
+    quantity only. Reissuing the full size would double up on whatever
+    already filled, and partial fills are the normal case rather than the
+    exception: the touch frequently holds a small fraction of what the
+    order needs.
     """
     results: dict[str, dict] = {}
 
     for order in orders:
+        remaining = order.quantity
+        total_filled = 0
+        last_execution: dict = {}
+        order_id: str | None = None
+
         for attempt in range(1, MAX_ATTEMPTS + 1):
+            if remaining <= 0:
+                break
+
             try:
-                order_id = place(client, order, prices[order.symbol])
+                order_id = place(client, replace(order, quantity=remaining),
+                                 prices[order.symbol])
             except ExecutionError as e:
                 log.error("skipping %s: %s", order.symbol, e)
-                results[order.symbol] = {"filled": False, "order_id": None,
-                                         "execution": {}}
                 break
 
             if order_id is None:      # dry run
-                results[order.symbol] = {"filled": True, "order_id": None,
-                                         "execution": {}}
+                total_filled = order.quantity
+                remaining = 0
                 break
 
-            filled, execution = wait_for_fill(client, order_id)
+            filled, last_execution = wait_for_fill(client, order_id)
+
             if filled:
-                execution = fetch_execution(client, order_id) or execution
-                results[order.symbol] = {"filled": True, "order_id": order_id,
-                                         "execution": execution}
-                break
+                execution = fetch_execution(client, order_id) or last_execution
+                got = int(execution.get("filledQuantity") or remaining)
+                total_filled += got
+                remaining -= got
+                last_execution = execution
+                if remaining > 0:
+                    log.info("%s: %d of %d filled, retrying the rest",
+                             order.symbol, total_filled, order.quantity)
+                continue
 
-            log.info("repricing %s (attempt %d/%d)",
-                     order.symbol, attempt, MAX_ATTEMPTS)
+            # Timed out. Cancel, read what actually filled, and reprice the
+            # remainder against a fresh book.
             client.cancel_order(order_id)
-        else:
-            log.error("%s: gave up after %d attempts", order.symbol,
-                      MAX_ATTEMPTS)
-            results[order.symbol] = {"filled": False, "order_id": None,
-                                     "execution": {}}
+            execution = fetch_execution(client, order_id)
+            got = int(execution.get("filledQuantity") or 0)
+            total_filled += got
+            remaining -= got
+            if execution:
+                last_execution = execution
+
+            log.info("%s: %d of %d filled after attempt %d, %d remaining",
+                     order.symbol, total_filled, order.quantity, attempt,
+                     remaining)
+
+        results[order.symbol] = {
+            "filled": remaining <= 0,
+            "order_id": order_id,
+            "execution": last_execution,
+            "filled_quantity": total_filled,
+        }
 
     return results
