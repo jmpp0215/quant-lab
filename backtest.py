@@ -70,11 +70,18 @@ def rebalance_dates(candles_by_symbol: dict[str, list[dict]],
 def run(candles_by_symbol: dict[str, list[dict]],
         initial: Decimal = Decimal("10000000"),
         scheme: str = "equal",
-        offset: int = 0) -> list[Rebalance]:
-    """Replay monthly rebalances, holding the selected names in between."""
+        offset: int = 0,
+        costs: bool = False) -> list[Rebalance]:
+    """Replay monthly rebalances, holding the selected names in between.
+
+    With costs=True, each rebalance pays the spread on both sides and tax
+    on realised gains in foreign-tracking ETFs. Turnover is what makes
+    tranching expensive, so comparing schedules without it is misleading.
+    """
     history: list[Rebalance] = []
     value = initial
     holdings: dict[str, Decimal] = {}
+    basis: dict[str, Decimal] = {}      # symbol -> cost per unit
 
     for date in rebalance_dates(candles_by_symbol, offset=offset):
         prices = {
@@ -103,12 +110,31 @@ def run(candles_by_symbol: dict[str, list[dict]],
             weights = strategy._weights_by_scheme(
                 sliced, list(weights), scheme, scores)
 
-        holdings = {
+        target = {
             sym: (value * weight) / prices[sym]
             for sym, weight in weights.items()
             if sym in prices
         }
 
+        if costs:
+            value -= _rebalance_cost(holdings, target, prices, basis)
+            target = {
+                sym: (value * weight) / prices[sym]
+                for sym, weight in weights.items()
+                if sym in prices
+            }
+
+        # Carry basis forward for held units, set it for newly bought ones.
+        for sym, units in target.items():
+            previous = holdings.get(sym, Decimal("0"))
+            if units > previous:
+                bought = units - previous
+                old_cost = previous * basis.get(sym, prices[sym])
+                basis[sym] = (old_cost + bought * prices[sym]) / units
+            elif sym not in basis:
+                basis[sym] = prices[sym]
+
+        holdings = target
         history.append(Rebalance(date=date, weights=weights,
                                  prices=prices, value=value))
 
@@ -126,6 +152,30 @@ def run(candles_by_symbol: dict[str, list[dict]],
                                  value=value))
 
     return history
+
+
+def _rebalance_cost(current: dict[str, Decimal], target: dict[str, Decimal],
+                    prices: dict[str, Decimal],
+                    basis: dict[str, Decimal]) -> Decimal:
+    """Total cost of moving from `current` to `target` holdings."""
+    total = Decimal("0")
+
+    for sym in set(current) | set(target):
+        if sym not in prices:
+            continue
+        delta = target.get(sym, Decimal("0")) - current.get(sym, Decimal("0"))
+        if delta == 0:
+            continue
+
+        notional = abs(delta) * prices[sym]
+        total += _spread_cost(sym, notional)
+
+        if delta < 0:
+            sold = abs(delta)
+            cost_basis = sold * basis.get(sym, prices[sym])
+            total += _tax_on_sale(sym, sold * prices[sym], cost_basis)
+
+    return total
 
 
 def summarise(history: list[Rebalance], label: str = "") -> str:
@@ -193,3 +243,23 @@ def equal_weight(candles_by_symbol: dict[str, list[dict]],
         if start and end:
             total += per * end / start
     return total
+
+def _spread_cost(symbol: str, notional: Decimal) -> Decimal:
+    """One-way cost of crossing the spread."""
+    half = config.HALF_SPREAD.get(symbol, config.DEFAULT_HALF_SPREAD)
+    return notional * half
+
+
+def _tax_on_sale(symbol: str, proceeds: Decimal,
+                 cost_basis: Decimal) -> Decimal:
+    """Tax due on realising a gain.
+
+    Only foreign-tracking ETFs are taxed; a domestic equity ETF can be
+    rotated freely. Losses are treated as zero rather than as a credit,
+    which understates the benefit of loss harvesting but avoids modelling
+    an annual offset the backtest has no way to track.
+    """
+    if symbol not in config.FOREIGN_ETF:
+        return Decimal("0")
+    gain = proceeds - cost_basis
+    return gain * config.GAINS_TAX_RATE if gain > 0 else Decimal("0")

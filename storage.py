@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS orders (
     trade_date      TEXT NOT NULL,
     placed_at       TEXT NOT NULL,
     account         TEXT NOT NULL,
+    tranche         INTEGER,
     symbol          TEXT NOT NULL,
     side            TEXT NOT NULL,
     quantity        INTEGER NOT NULL,
@@ -84,6 +85,15 @@ CREATE TABLE IF NOT EXISTS cashflows (
     amount      TEXT NOT NULL,
     note        TEXT
 );
+CREATE TABLE IF NOT EXISTS tranche_holdings (
+    tranche     INTEGER NOT NULL,
+    account     TEXT NOT NULL,
+    symbol      TEXT NOT NULL,
+    quantity    INTEGER NOT NULL,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (tranche, account, symbol)
+);
+
 
 CREATE INDEX IF NOT EXISTS idx_cashflows_date ON cashflows(trade_date);
 
@@ -179,26 +189,35 @@ def save_portfolio(conn: sqlite3.Connection, trade_date: str, account: str,
 def save_order(conn: sqlite3.Connection, trade_date: str, placed_at: str,
                account: str, symbol: str, side: str, quantity: int,
                limit_price: Decimal, order_id: str | None,
-               filled: bool, execution: dict | None = None) -> None:
-    """Record one order, including fill details when the broker has them.
-
-    Commission and tax come back in the order response, so capturing them
-    here avoids reconstructing after-tax performance later from statements.
-    """
+               filled: bool, execution: dict | None = None,
+               tranche: int | None = None) -> None:
+    """Record one order, including fill details when the broker has them."""
     ex = execution or {}
     conn.execute(
-        "INSERT INTO orders (trade_date, placed_at, account, symbol, side, "
-        "quantity, limit_price, order_id, filled, filled_qty, "
+        "INSERT INTO orders (trade_date, placed_at, account, tranche, symbol, "
+        "side, quantity, limit_price, order_id, filled, filled_qty, "
         "avg_fill_price, commission, tax) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (trade_date, placed_at, account, symbol, side, quantity,
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (trade_date, placed_at, account, tranche, symbol, side, quantity,
          str(limit_price), order_id, int(filled),
          int(ex["filledQuantity"]) if ex.get("filledQuantity") else None,
          ex.get("averageFilledPrice"),
          ex.get("commission"),
          ex.get("tax")),
     )
+def tranches_done_this_month(conn: sqlite3.Connection, account: str,
+                             trade_date: str) -> set[int]:
+    """Tranches that have already rebalanced in the same calendar month.
 
+    Drives the catch-up rule: a tranche that missed its scheduled day
+    runs at the next opportunity instead of skipping the month.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT tranche FROM orders "
+        "WHERE account = ? AND trade_date LIKE ? AND tranche IS NOT NULL",
+        (account, f"{trade_date[:7]}%"),
+    ).fetchall()
+    return {r["tranche"] for r in rows}
 
 def rebalanced_this_month(conn: sqlite3.Connection, trade_date: str) -> bool:
     """True if any order was already placed in the same calendar month.
@@ -257,7 +276,46 @@ def cashflows_by_date(conn: sqlite3.Connection,
         (account,),
     ).fetchall()
     return {r["trade_date"]: Decimal(str(r["total"])) for r in rows}
-    
+
+def save_tranche_holdings(conn: sqlite3.Connection, tranche: int,
+                          account: str, holdings: dict[str, int],
+                          updated_at: str) -> None:
+    """Replace one tranche's book. Symbols absent from `holdings` are
+    dropped, so a tranche that exits a position leaves no stale row.
+    """
+    conn.execute(
+        "DELETE FROM tranche_holdings WHERE tranche = ? AND account = ?",
+        (tranche, account),
+    )
+    conn.executemany(
+        "INSERT INTO tranche_holdings "
+        "(tranche, account, symbol, quantity, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [(tranche, account, sym, qty, updated_at)
+         for sym, qty in holdings.items() if qty > 0],
+    )
+
+
+def load_tranche_holdings(conn: sqlite3.Connection, tranche: int,
+                          account: str) -> dict[str, int]:
+    rows = conn.execute(
+        "SELECT symbol, quantity FROM tranche_holdings "
+        "WHERE tranche = ? AND account = ?",
+        (tranche, account),
+    ).fetchall()
+    return {r["symbol"]: r["quantity"] for r in rows}
+
+
+def load_all_tranche_holdings(conn: sqlite3.Connection,
+                              account: str) -> dict[int, dict[str, int]]:
+    rows = conn.execute(
+        "SELECT tranche, symbol, quantity FROM tranche_holdings "
+        "WHERE account = ?", (account,),
+    ).fetchall()
+    out: dict[int, dict[str, int]] = {}
+    for r in rows:
+        out.setdefault(r["tranche"], {})[r["symbol"]] = r["quantity"]
+    return out
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     init()
