@@ -14,6 +14,7 @@ to see whether the ranking ever actually rotates.
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
+from datetime import date
 
 import config
 import strategy
@@ -185,21 +186,31 @@ def summarise(history: list[Rebalance], label: str = "") -> str:
     start, end = history[0].value, history[-1].value
     total = (end - start) / start
 
-    # Period returns between rebalances, for a rough volatility estimate.
     steps = [
         (history[i + 1].value - history[i].value) / history[i].value
         for i in range(len(history) - 1)
     ]
+
+    # Annualise from elapsed calendar time, not the number of
+    # observations: tranched runs record three times as many points over
+    # the same period, and counting them as months understates the rate.
+    first = date.fromisoformat(history[0].date)
+    last = date.fromisoformat(history[-1].date)
+    years = Decimal((last - first).days) / Decimal("365.25")
+    if years <= 0:
+        return "not enough history"
+
+    annualised = (Decimal("1") + total) ** (1 / years) - 1
+
+    periods_per_year = Decimal(len(steps)) / years
     mean = sum(steps) / len(steps)
     if len(steps) > 1:
         variance = sum((s - mean) ** 2 for s in steps) / (len(steps) - 1)
-        # Monthly observations, so annualise by sqrt(12).
-        vol = Decimal(str(float(variance) ** 0.5)) * Decimal("3.4641")
+        vol = Decimal(str(float(variance) ** 0.5)) * Decimal(
+            str(float(periods_per_year) ** 0.5))
     else:
         vol = Decimal("0")
 
-    periods = Decimal(len(steps))
-    annualised = (Decimal("1") + total) ** (Decimal("12") / periods) - 1
     sharpe = annualised / vol if vol else Decimal("0")
 
     peak = start
@@ -263,3 +274,139 @@ def _tax_on_sale(symbol: str, proceeds: Decimal,
         return Decimal("0")
     gain = proceeds - cost_basis
     return gain * config.GAINS_TAX_RATE if gain > 0 else Decimal("0")
+
+def run_tranched(candles_by_symbol: dict[str, list[dict]],
+                 initial: Decimal = Decimal("10000000"),
+                 scheme: str = "equal",
+                 costs: bool = False) -> list[Rebalance]:
+    """Replay the strategy with capital split across staggered sleeves.
+
+    Each sleeve rebalances on its own trading day of the month and holds
+    its positions untouched in between. Cash is pooled: a sleeve treats
+    1/N of the balance as its own, matching how the live system works.
+    """
+    tranches = list(config.TRANCHES)
+    n = len(tranches)
+
+    books: dict[int, dict[str, Decimal]] = {t: {} for t in tranches}
+    cash = initial
+    history: list[Rebalance] = []
+
+    schedule = _tranche_schedule(candles_by_symbol, tranches)
+    if not schedule:
+        return []
+
+    # Seed every sleeve on the first scheduled date. The live system was
+    # already fully invested when tranching began, so starting from cash
+    # would charge the comparison for three weeks of sitting out.
+    first_date = schedule[0][0]
+    seed_prices = {sym: close_at(cs, first_date)
+                   for sym, cs in candles_by_symbol.items()}
+    seed_prices = {s: p for s, p in seed_prices.items() if p is not None}
+
+    seed_sliced = {sym: slice_at(cs, first_date)
+                   for sym, cs in candles_by_symbol.items()}
+    seed_signal = strategy.evaluate(seed_sliced)
+
+    per_sleeve = initial / n
+    for t in tranches:
+        books[t] = {
+            sym: (per_sleeve * weight) / seed_prices[sym]
+            for sym, weight in seed_signal.weights.items()
+            if sym in seed_prices
+        }
+        cash -= sum(units * seed_prices[sym]
+                    for sym, units in books[t].items())
+
+    # The first scheduled rebalance is now a no-op for that sleeve.
+    schedule = schedule[1:]
+
+    for date, which in schedule:
+        prices = {
+            sym: close_at(cs, date)
+            for sym, cs in candles_by_symbol.items()
+        }
+        prices = {s: p for s, p in prices.items() if p is not None}
+
+        sliced = {
+            sym: slice_at(cs, date)
+            for sym, cs in candles_by_symbol.items()
+        }
+        signal = strategy.evaluate(sliced)
+
+        weights = signal.weights
+        if scheme != "equal" and weights:
+            scores = {s.symbol: s.momentum for s in signal.scores
+                      if s.momentum is not None}
+            weights = strategy._weights_by_scheme(
+                sliced, list(weights), scheme, scores)
+
+        book = books[which]
+        equity = sum(units * prices[sym] for sym, units in book.items()
+                     if sym in prices)
+        sleeve_value = equity + cash / n
+
+        target = {
+            sym: (sleeve_value * weight) / prices[sym]
+            for sym, weight in weights.items()
+            if sym in prices
+        }
+
+        # Trades settle against the shared cash pool.
+        for sym in set(book) | set(target):
+            if sym not in prices:
+                continue
+            delta = target.get(sym, Decimal("0")) - book.get(sym, Decimal("0"))
+            if delta == 0:
+                continue
+            notional = delta * prices[sym]
+            cash -= notional
+            if costs:
+                cash -= _spread_cost(sym, abs(notional))
+
+        books[which] = {s: u for s, u in target.items() if u > 0}
+
+        total = cash + sum(
+            units * prices[sym]
+            for b in books.values()
+            for sym, units in b.items()
+            if sym in prices
+        )
+        history.append(Rebalance(date=date, weights=weights,
+                                 prices=prices, value=total))
+
+    last = max(_date_of(c) for c in
+               candles_by_symbol[next(iter(config.UNIVERSE))])
+    final_prices = {sym: close_at(cs, last)
+                    for sym, cs in candles_by_symbol.items()}
+    total = cash + sum(
+        units * final_prices[sym]
+        for b in books.values()
+        for sym, units in b.items()
+        if final_prices.get(sym)
+    )
+    history.append(Rebalance(date=last, weights={}, prices=final_prices,
+                             value=total))
+
+    return history
+
+
+def _tranche_schedule(candles_by_symbol: dict[str, list[dict]],
+                      tranches: list[int],
+                      skip_months: int = 13) -> list[tuple[str, int]]:
+    """(date, tranche) pairs in chronological order."""
+    reference = candles_by_symbol[next(iter(config.UNIVERSE))]
+    dates = sorted(_date_of(c) for c in reference)
+
+    by_month: dict[str, list[str]] = {}
+    for d in dates:
+        by_month.setdefault(d[:7], []).append(d)
+
+    out = []
+    for month in sorted(by_month)[skip_months:]:
+        days = by_month[month]
+        for t in tranches:
+            if len(days) > t:
+                out.append((days[t], t))
+
+    return sorted(out)
