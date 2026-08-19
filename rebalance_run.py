@@ -114,7 +114,7 @@ def main() -> int:
         done = storage.tranches_done_this_month(conn, ACCOUNT, today)
         books = storage.load_all_tranche_holdings(conn, ACCOUNT)
 
-    which = tranche.due_today(day_index, done)
+    which = tranche.due_today(day_index, done, today[:7])
     if which is None:
         log.info("trading day %d: no tranche due (done: %s)",
                  day_index + 1, sorted(done) or "none")

@@ -85,13 +85,19 @@ def trading_day_index(candles: list[dict], today: str) -> int | None:
     return days.index(today) if today in days else None
 
 
-def due_today(day_index: int, done_this_month: set[int]) -> int | None:
+def due_today(day_index: int, done_this_month: set[int],
+              month: str | None = None) -> int | None:
     """Which tranche should rebalance today, if any.
 
     A tranche whose scheduled day has passed without running catches up at
     the next opportunity: with monthly rebalancing, skipping a month costs
-    far more than drifting a day or two off schedule.
+    more than drifting a day or two off schedule. The catch-up is
+    suppressed before TRANCHE_START_MONTH, when sleeves had not yet been
+    given a schedule to miss.
     """
+    if month is not None and month < config.TRANCHE_START_MONTH:
+        return day_index if day_index in config.TRANCHES else None
+
     for scheduled in sorted(config.TRANCHES):
         if scheduled in done_this_month:
             continue
@@ -119,3 +125,26 @@ def tranche_value(holdings: dict[str, int], prices: dict[str, Decimal],
         if symbol in prices
     )
     return equity + cash_share(cash)
+
+def next_due(candles: list[dict], today: str,
+             done_this_month: set[int]) -> tuple[str, int] | None:
+    """The next trading date on which a tranche is scheduled, and which.
+
+    Looks only within the current month: the schedule resets each month,
+    and a tranche that has not run by month end is simply skipped rather
+    than carried over.
+    """
+    month = today[:7]
+    days = sorted({
+        c["timestamp"][:10] for c in candles
+        if c["timestamp"][:10].startswith(month)
+    })
+
+    for index, date in enumerate(days):
+        if date <= today:
+            continue
+        which = due_today(index, done_this_month)
+        if which is not None:
+            return date, which
+
+    return None

@@ -110,3 +110,12 @@ class TestDueToday:
 
     def test_returns_none_when_all_are_done(self):
         assert tranche.due_today(14, {0, 5, 10}) is None
+        
+    def test_no_catch_up_before_the_start_month(self):
+        # Sleeves that never had a scheduled day in the introduction month
+        # wait rather than firing on consecutive days.
+        assert tranche.due_today(12, set(), "2026-08") is None
+        assert tranche.due_today(5, set(), "2026-08") == 5
+
+    def test_catch_up_applies_from_the_start_month(self):
+        assert tranche.due_today(12, set(), "2026-09") == 0

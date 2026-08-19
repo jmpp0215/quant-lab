@@ -91,6 +91,11 @@ SKIP_MONTHS = 1
 HISTORY_DAYS = 300
 
 TRANCHES = (0, 5, 10)   # nth trading day of the month, zero-indexed
+# Tranching began mid-August 2026. Sleeves that had no scheduled day left
+# in that month start fresh in September rather than firing back to back,
+# which would defeat the point of staggering them.
+TRANCHE_START_MONTH = "2026-09"
+
 
 def tranche_cash_share(total_cash: Decimal) -> Decimal:
     return total_cash / len(TRANCHES)
