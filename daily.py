@@ -32,13 +32,21 @@ log = logging.getLogger("daily")
 # others from ever being read. "snapshot" picks the adapter that knows how
 # to turn that broker's holdings/balance response into an AccountSnapshot.
 # "strategy" gates the dual-momentum signal - only the ISA account trades
-# config.UNIVERSE; the other two are individual-stock/no-strategy accounts
-# that only get a portfolio snapshot recorded.
+# config.UNIVERSE; the rest are individual-stock/no-strategy accounts that
+# only get a portfolio snapshot recorded.
+_kis_main_client = lambda: KisClient("main")
+
 ACCOUNTS = {
     "toss-bot": {"client": TossClient, "snapshot": toss_client.snapshot,
                  "strategy": False},
-    "kis-main": {"client": lambda: KisClient("main"),
+    "kis-main": {"client": _kis_main_client,
                  "snapshot": kis_client.snapshot, "strategy": False},
+    # Domestic and overseas balance are separate endpoints on the same KIS
+    # account - shares _kis_main_client with "kis-main" (see the client
+    # cache in main()) rather than authenticating twice for one account.
+    "kis-main-overseas": {"client": _kis_main_client,
+                          "snapshot": kis_client.snapshot_overseas,
+                          "strategy": False},
     "kis-isa":  {"client": lambda: KisClient("isa"),
                  "snapshot": kis_client.snapshot, "strategy": True},
 }
@@ -142,9 +150,13 @@ def main() -> int:
         return 1
 
     overall_ok = True
+    client_cache: dict = {}
     for account_name, cfg in ACCOUNTS.items():
         try:
-            client = cfg["client"]()
+            factory = cfg["client"]
+            if factory not in client_cache:
+                client_cache[factory] = factory()
+            client = client_cache[factory]
 
             if cfg["strategy"]:
                 signal = strategy.evaluate(data)
