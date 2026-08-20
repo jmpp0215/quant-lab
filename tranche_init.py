@@ -8,12 +8,12 @@ import logging
 import sys
 from datetime import datetime
 
-import config
-import logging_config
-import rebalance
-import storage
-import tranche
-from toss_client import TossClient
+from quant import config
+from quant import logging_config
+from quant import rebalance
+from quant import storage
+from quant import tranche
+from quant.toss_client import TossClient
 
 ACCOUNT = "toss-bot"
 

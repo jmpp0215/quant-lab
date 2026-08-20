@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-import config
-import strategy
+from quant import config
+from quant import strategy
 
 log = logging.getLogger(__name__)
 

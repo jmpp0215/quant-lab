@@ -13,10 +13,10 @@ import time
 from dataclasses import dataclass, replace
 from decimal import Decimal
 
-import config
-import market
-from rebalance import Order
-from toss_client import TossApiError, TossClient
+from quant import config
+from quant import market
+from quant.rebalance import Order
+from quant.toss_client import TossApiError, TossClient
 
 log = logging.getLogger(__name__)
 

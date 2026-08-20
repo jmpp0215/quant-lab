@@ -10,7 +10,7 @@ its own.
 import logging
 from decimal import Decimal
 
-import config
+from quant import config
 
 log = logging.getLogger(__name__)
 

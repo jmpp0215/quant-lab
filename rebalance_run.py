@@ -10,16 +10,16 @@ import sys
 from datetime import datetime
 from decimal import Decimal
 
-import candles
-import config
-import executor
-import logging_config
-import market
-import rebalance
-import storage
-import strategy
-import tranche
-from toss_client import TossApiError, TossClient
+from quant import candles
+from quant import config
+from quant import executor
+from quant import logging_config
+from quant import market
+from quant import rebalance
+from quant import storage
+from quant import strategy
+from quant import tranche
+from quant.toss_client import TossApiError, TossClient
 
 ACCOUNT = "toss-bot"
 

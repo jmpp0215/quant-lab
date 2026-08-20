@@ -9,10 +9,10 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
-import allocation
-import config
-import indicators
-import momentum
+from quant import allocation
+from quant import config
+from quant import indicators
+from quant import momentum
 
 log = logging.getLogger(__name__)
 

@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 
-import allocation
+from quant import allocation
 
 
 def make_candles(prices: list[str]) -> list[dict]:

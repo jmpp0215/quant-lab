@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-import momentum
+from quant import momentum
 
 
 def candles(prices: list[tuple[str, str]]) -> list[dict]:

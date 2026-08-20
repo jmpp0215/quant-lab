@@ -4,7 +4,7 @@ import json
 import time
 from decimal import Decimal
 
-from toss_client import TossApiError, TossClient
+from quant.toss_client import TossApiError, TossClient
 
 SYMBOL = "QCOM"
 

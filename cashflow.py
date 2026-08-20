@@ -10,7 +10,7 @@ to be entered by hand. Without them a deposit looks exactly like a gain.
 import sys
 from decimal import Decimal
 
-import storage
+from quant import storage
 
 ACCOUNT = "toss-bot"
 

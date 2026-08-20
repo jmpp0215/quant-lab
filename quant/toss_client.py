@@ -10,10 +10,10 @@ from decimal import Decimal
 import requests
 from dotenv import load_dotenv
 
-import config
-import market
-import rebalance
-import storage
+from quant import config
+from quant import market
+from quant import rebalance
+from quant import storage
 
 load_dotenv()
 

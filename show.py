@@ -12,8 +12,8 @@ import sys
 import unicodedata
 from decimal import Decimal
 
-import config
-import storage
+from quant import config
+from quant import storage
 
 ACCOUNT = "toss-bot"
 

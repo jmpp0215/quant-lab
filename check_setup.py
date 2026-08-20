@@ -4,9 +4,9 @@ import json
 import logging
 import sys
 
-import logging_config
-import market
-from toss_client import TossApiError, TossClient
+from quant import logging_config
+from quant import market
+from quant.toss_client import TossApiError, TossClient
 
 
 def show(label: str, fn) -> None:

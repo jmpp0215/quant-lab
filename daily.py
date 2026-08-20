@@ -13,17 +13,17 @@ import sys
 from datetime import datetime
 from decimal import Decimal
 
-import candles
-import config
-import indicators
-import kis_client
-import logging_config
-import market
-import storage
-import strategy
-import toss_client
-from kis_client import KisApiError, KisClient
-from toss_client import TossApiError, TossClient
+from quant import candles
+from quant import config
+from quant import indicators
+from quant import kis_client
+from quant import logging_config
+from quant import market
+from quant import storage
+from quant import strategy
+from quant import toss_client
+from quant.kis_client import KisApiError, KisClient
+from quant.toss_client import TossApiError, TossClient
 
 log = logging.getLogger("daily")
 

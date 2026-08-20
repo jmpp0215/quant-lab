@@ -9,7 +9,7 @@ from decimal import Decimal
 import requests
 from dotenv import load_dotenv
 
-import storage
+from quant import storage
 
 load_dotenv()
 

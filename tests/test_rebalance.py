@@ -6,8 +6,8 @@ covered case by case rather than trusted to a single happy path.
 
 from decimal import Decimal
 
-import rebalance
-from rebalance import Position
+from quant import rebalance
+from quant.rebalance import Position
 
 
 def pos(symbol: str, qty: int, price: str) -> Position:

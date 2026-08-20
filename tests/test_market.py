@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-import market
+from quant import market
 
 
 class TestTickSize:

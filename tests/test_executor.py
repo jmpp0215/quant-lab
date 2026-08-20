@@ -4,9 +4,9 @@ from decimal import Decimal
 
 import pytest
 
-import executor
-from executor import ExecutionError, Touch
-from rebalance import Order
+from quant import executor
+from quant.executor import ExecutionError, Touch
+from quant.rebalance import Order
 
 
 def order(side: str, qty: int = 10) -> Order:

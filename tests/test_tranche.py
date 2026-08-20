@@ -8,8 +8,8 @@ from decimal import Decimal
 
 import pytest
 
-import config
-import tranche
+from quant import config
+from quant import tranche
 
 
 class TestSplitEvenly:

@@ -9,7 +9,7 @@ picked differently?" without having traded on it first.
 import logging
 from decimal import Decimal, InvalidOperation
 
-import momentum
+from quant import momentum
 
 log = logging.getLogger(__name__)
 
