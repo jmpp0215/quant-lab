@@ -23,19 +23,28 @@ def main() -> int:
     date = sys.argv[1]
     amount = Decimal(sys.argv[2])
     note = sys.argv[3] if len(sys.argv) > 3 else None
+    kind = "opening_balance" if "--opening" in sys.argv else "deposit"
 
     storage.init()
     with storage.connect() as conn:
-        storage.save_cashflow(conn, date, ACCOUNT, amount, note)
+        existing = conn.execute(
+            "SELECT id, note FROM cashflows WHERE account = ? "
+            "AND trade_date = ? AND amount = ?",
+            (ACCOUNT, date, str(amount)),
+        ).fetchall()
 
-    direction = "deposit" if amount > 0 else "withdrawal"
-    print(f"recorded {direction} of {abs(amount):,} KRW on {date}")
+    if existing:
+        # Re-running the same command is an easy mistake, and a duplicate
+        # transfer silently corrupts every return figure that nets it out.
+        print(f"\na matching entry already exists:")
+        for row in existing:
+            print(f"  id {row['id']}: {row['note'] or ''}")
+        if input("record anyway? [yes/no]: ").strip().lower() != "yes":
+            print("aborted")
+            return 0
 
     with storage.connect() as conn:
-        rows = conn.execute(
-            "SELECT trade_date, amount, note FROM cashflows "
-            "WHERE account = ? ORDER BY trade_date", (ACCOUNT,),
-        ).fetchall()
+        storage.save_cashflow(conn, date, ACCOUNT, amount, note, kind)
 
     print("\nall cashflows:")
     total = Decimal("0")

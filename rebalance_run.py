@@ -211,6 +211,7 @@ def apply_fills(book: dict[str, int], orders: list[rebalance.Order],
 def record(trade_date: str, which: int, orders: list[rebalance.Order],
            results: dict[str, dict], book: dict[str, int]) -> None:
     now = datetime.now().astimezone().isoformat()
+    today = datetime.now().astimezone().date().isoformat()
     with storage.connect() as conn:
         for order in orders:
             r = results.get(order.symbol, {})
@@ -218,6 +219,7 @@ def record(trade_date: str, which: int, orders: list[rebalance.Order],
                 conn, trade_date, now, ACCOUNT, order.symbol, order.side,
                 order.quantity, order.limit_price, r.get("order_id"),
                 r.get("filled", False), r.get("execution"), tranche=which,
+                executed_date=today,
             )
         storage.save_tranche_holdings(conn, which, ACCOUNT, book, now)
 

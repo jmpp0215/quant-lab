@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS cashflows (
     trade_date  TEXT NOT NULL,
     account     TEXT NOT NULL,
     amount      TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'deposit',
     note        TEXT
 );
 CREATE TABLE IF NOT EXISTS tranche_holdings (
@@ -93,7 +94,6 @@ CREATE TABLE IF NOT EXISTS tranche_holdings (
     updated_at  TEXT NOT NULL,
     PRIMARY KEY (tranche, account, symbol)
 );
-
 
 CREATE INDEX IF NOT EXISTS idx_cashflows_date ON cashflows(trade_date);
 
@@ -190,7 +190,8 @@ def save_order(conn: sqlite3.Connection, trade_date: str, placed_at: str,
                account: str, symbol: str, side: str, quantity: int,
                limit_price: Decimal, order_id: str | None,
                filled: bool, execution: dict | None = None,
-               tranche: int | None = None) -> None:
+               tranche: int | None = None,
+               executed_date: str | None = None) -> None:
     """Record one order, including fill details when the broker has them."""
     ex = execution or {}
     conn.execute(
@@ -254,16 +255,19 @@ def save_variants(conn: sqlite3.Connection, trade_date: str,
     )
 
 def save_cashflow(conn: sqlite3.Connection, trade_date: str, account: str,
-                  amount: Decimal, note: str | None = None) -> None:
-    """Record an external deposit or withdrawal.
+                  amount: Decimal, note: str | None = None,
+                  kind: str = "deposit") -> None:
+    """Record an external transfer, or the balance a strategy started from.
 
-    Without this, a jump in portfolio value is indistinguishable from a
-    gain, and every return figure downstream is wrong.
+    The two are different things: a deposit changes the cash balance on
+    that date, while an opening balance is a reference point that no
+    transfer accompanied. Netting the latter out of cash reconciliation
+    would make every trading day look like money had moved.
     """
     conn.execute(
-        "INSERT INTO cashflows (trade_date, account, amount, note) "
-        "VALUES (?, ?, ?, ?)",
-        (trade_date, account, str(amount), note),
+        "INSERT INTO cashflows (trade_date, account, amount, kind, note) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (trade_date, account, str(amount), kind, note),
     )
 
 
@@ -316,6 +320,50 @@ def load_all_tranche_holdings(conn: sqlite3.Connection,
     for r in rows:
         out.setdefault(r["tranche"], {})[r["symbol"]] = r["quantity"]
     return out
+
+def unexplained_cash_change(conn: sqlite3.Connection, account: str,
+                            trade_date: str) -> Decimal:
+    """Cash movement that recorded trading does not account for.
+
+    Cash moves for three reasons: fills, distributions, and external
+    transfers. Netting out the fills leaves the other two, and a transfer
+    is large enough to tell apart by size. Watching cash rather than total
+    value avoids flagging every volatile session as a deposit.
+    """
+    rows = conn.execute(
+        "SELECT trade_date, cash FROM portfolio WHERE account = ? "
+        "AND trade_date <= ? ORDER BY trade_date DESC LIMIT 2",
+        (account, trade_date),
+    ).fetchall()
+    if len(rows) < 2:
+        return Decimal("0")
+
+    today = Decimal(rows[0]["cash"])
+    previous = Decimal(rows[1]["cash"])
+
+    fills = conn.execute(
+        "SELECT side, filled_qty, avg_fill_price, commission, tax "
+        "FROM orders WHERE account = ? AND executed_date = ? AND filled = 1",
+        (account, trade_date),
+    ).fetchall()
+
+    traded = Decimal("0")
+    for f in fills:
+        if not f["filled_qty"] or not f["avg_fill_price"]:
+            continue
+        notional = Decimal(str(f["filled_qty"])) * Decimal(f["avg_fill_price"])
+        traded += notional if f["side"] == "SELL" else -notional
+        traded -= Decimal(f["commission"] or 0)
+        traded -= Decimal(f["tax"] or 0)
+
+    recorded = conn.execute(
+        "SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) AS total "
+        "FROM cashflows WHERE account = ? AND trade_date = ? "
+        "AND kind = 'deposit'",
+        (account, trade_date),
+    ).fetchone()["total"]
+
+    return today - previous - traded - Decimal(str(recorded))
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     init()
