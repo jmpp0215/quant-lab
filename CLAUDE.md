@@ -100,6 +100,7 @@ rather than trade through it.
   blended rank, trend filter, risk-parity/inverse-vol/signal/rank weighting) every run and
   records them via `storage.save_variants`, but only the primary `strategy.evaluate` signal
   is ever traded. Don't wire a variant into execution without an explicit decision to do so.
+- **KIS API Quirks:** KIS API field names (e.g., `tot_evlu_pfls_amt`) can mean entirely different things (e.g., Total Evaluation vs Total Profit/Loss) depending on the endpoint. Never trust a field name without mathematically verifying it against raw response data.
 
 ## Working in this repo
 
