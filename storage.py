@@ -9,12 +9,28 @@ import json
 import logging
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "data" / "quant.db"
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AccountSnapshot:
+    """One broker account's end-of-day state, in the shape save_portfolio wants.
+    
+    Note: `currency` applies to `total` and `cash`. For overseas accounts, 
+    individual items in `positions` may have their `price` in a different 
+    currency (e.g. USD) depending on the broker's API behavior.
+    """
+    account: str
+    currency: str
+    total: Decimal
+    cash: Decimal
+    positions: list[dict]   # [{"symbol", "name", "qty", "price"}, ...]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (

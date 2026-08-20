@@ -5,12 +5,15 @@ import os
 import random
 import time
 import uuid
+from decimal import Decimal
 
 import requests
 from dotenv import load_dotenv
 
 import config
 import market
+import rebalance
+import storage
 
 load_dotenv()
 
@@ -217,3 +220,22 @@ class TossClient:
 
     def get_order(self, order_id: str) -> dict:
         return self.get(f"/api/v1/orders/{order_id}", need_account=True)
+
+
+def snapshot(client: "TossClient") -> storage.AccountSnapshot:
+    """Current holdings and cash, in the common cross-broker shape.
+
+    Toss exposes no pre-computed account total, so it is derived here as
+    cash + sum(position value) - the same arithmetic daily.py used before
+    this became multi-account.
+    """
+    positions = rebalance.parse_positions(client.holdings())
+    cash = Decimal(client.buying_power("KRW")["result"]["cashBuyingPower"])
+    total = cash + sum((p.value for p in positions.values()), Decimal("0"))
+    pos_rows = [
+        {"symbol": p.symbol, "name": p.name, "qty": p.quantity,
+         "price": str(p.last_price)}
+        for p in positions.values()
+    ]
+    return storage.AccountSnapshot(account="toss-bot", currency="KRW",
+                                   total=total, cash=cash, positions=pos_rows)
