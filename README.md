@@ -60,18 +60,26 @@ be audited later against the signal log.
 
 ## Layout
 
+The codebase separates core logic (`quant/`) from executable entry points (project root).
+
 | Module | Responsibility |
 |---|---|
-| `toss_client.py` | REST client — token caching, 429 backoff, error envelope parsing |
-| `candles.py` | Daily candle fetching, disk cache, exclusion of the in-progress candle |
-| `momentum.py` | Date-anchored lookback returns with dividend adjustment |
-| `strategy.py` | Dual momentum signal generation (pure) |
-| `rebalance.py` | Target weights → orders, with share rounding and tick-size snapping |
-| `market.py` | Session detection, KRX tick sizes |
-| `daily.py` | Entry point, driven by cron |
-| `config.py` | Universe and strategy parameters |
+| `quant/toss_client.py` | Toss REST client — token caching, 429 backoff, error envelope parsing |
+| `quant/kis_client.py` | KIS REST client — overseas accounts, balances, and cash inquiries |
+| `quant/candles.py` | Daily candle fetching, disk cache, exclusion of the in-progress candle |
+| `quant/momentum.py` | Date-anchored lookback returns with dividend adjustment |
+| `quant/strategy.py` | Dual momentum signal generation (pure) |
+| `quant/rebalance.py` | Target weights → orders, with share rounding and tick-size snapping |
+| `quant/tranche.py` | Capital splitting into staggered sleeves, drift reconciliation |
+| `quant/executor.py` | Limit order placement, polling fills, deviation guards |
+| `quant/storage.py` | SQLite persistence for signals, orders, portfolio snapshots, and cashflows |
+| `quant/market.py` | Session detection, KRX tick sizes |
+| `quant/config.py` | Universe and strategy parameters |
+| `daily.py` | Entry point, driven by cron to compute and record daily signals |
+| `rebalance_run.py` | Manual, interactive entry point for actual trading |
+| `tests/` | Unit tests for strategy, allocation, executor, and tranche logic |
 
-`strategy.evaluate` takes candles and returns target weights. It has no access to the network,
+`quant.strategy.evaluate` takes candles and returns target weights. It has no access to the network,
 the clock, or the filesystem, so live trading and backtesting can share the same code path.
 
 ---
@@ -87,17 +95,17 @@ python check_setup.py       # read-only connectivity check
 python daily.py             # compute and record today's signal
 ```
 
-Signals are appended to `data/signals.jsonl`, one JSON object per line.
+State and signals are stored locally in a SQLite database at `data/quant.db`.
 
 ---
 
 ## Status
 
-- [x] API client with retry and rate-limit handling
+- [x] API client with retry and rate-limit handling (Toss, KIS)
 - [x] Candle collection and local cache
 - [x] Dual momentum signal generation
 - [x] Order planning from target weights
 - [x] Scheduled daily runs
-- [ ] Order execution (sell → confirm fills → buy)
-- [ ] Backtest and performance metrics
+- [x] Order execution (sell → confirm fills → buy)
+- [x] Backtest and performance metrics
 - [ ] Failure notifications
