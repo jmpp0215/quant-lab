@@ -26,6 +26,10 @@ WATCH_ONLY = {
     "241180": "TIGER 일본니케이225",
     "195930": "TIGER 유로스탁스50(합성H)",
     "459580": "KODEX CD금리액티브(합성)",
+    # Listed 2026-03-17, so only ~5 months of candles exist (as of
+    # 2026-08-20) - too short for a 12-month momentum window. Tracked here
+    # until it has enough history to rank fairly.
+    "0167Z0": "KODEX 미국우주항공",
 }
 # Annual distribution yield per symbol, used to approximate total return.
 # Toss candles are price-only, so a high-yield symbol would otherwise rank
