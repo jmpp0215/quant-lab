@@ -1,5 +1,9 @@
 """Assign the current account holdings to tranches.
 
+    python tranche_init.py                    toss-bot (default)
+    python tranche_init.py --account kis-isa
+    python tranche_init.py --account kis-isa --force
+
 No trading happens: this only writes down which sleeve owns which shares.
 Run once, when starting staggered rebalancing on an existing position.
 """
@@ -8,14 +12,7 @@ import logging
 import sys
 from datetime import datetime
 
-from quant import config
-from quant import logging_config
-from quant import rebalance
-from quant import storage
-from quant import tranche
-from quant.toss_client import TossClient
-
-ACCOUNT = "toss-bot"
+from quant import accounts, config, logging_config, storage, tranche
 
 log = logging.getLogger("tranche-init")
 
@@ -24,18 +21,21 @@ def main() -> int:
     logging_config.setup()
     storage.init()
 
-    client = TossClient()
-    positions = rebalance.parse_positions(client.holdings())
-    actual = {p.symbol: p.quantity for p in positions.values()}
+    account, rest = accounts.extract_account(sys.argv[1:])
+    cfg = accounts.resolve(account)
+    client = cfg["client"]()
+    snap = cfg["snapshot"](client)
+    names = {p["symbol"]: p["name"] for p in snap.positions}
+    actual = {p["symbol"]: p["qty"] for p in snap.positions}
 
     if not actual:
         log.error("no holdings to split")
         return 1
 
     with storage.connect() as conn:
-        existing = storage.load_all_tranche_holdings(conn, ACCOUNT)
+        existing = storage.load_all_tranche_holdings(conn, account)
 
-    if existing and "--force" not in sys.argv:
+    if existing and "--force" not in rest:
         log.error("tranche books already exist; use --force to overwrite")
         for t, holdings in sorted(existing.items()):
             log.error("  tranche %d: %s", t, holdings)
@@ -45,14 +45,14 @@ def main() -> int:
 
     print("\ncurrent account:")
     for symbol, quantity in sorted(actual.items()):
-        print(f"  {config.UNIVERSE.get(symbol, symbol):<24} {quantity:>5}")
+        print(f"  {names.get(symbol, symbol):<24} {quantity:>5}")
 
     print("\nproposed split:")
     for t in config.TRANCHES:
         holdings = split[t]
         print(f"  tranche {t}:")
         for symbol, quantity in sorted(holdings.items()):
-            print(f"    {config.UNIVERSE.get(symbol, symbol):<22} {quantity:>5}")
+            print(f"    {names.get(symbol, symbol):<22} {quantity:>5}")
 
     drift = tranche.reconcile(split, actual)
     if drift:
@@ -66,7 +66,7 @@ def main() -> int:
     now = datetime.now().astimezone().isoformat()
     with storage.connect() as conn:
         for t, holdings in split.items():
-            storage.save_tranche_holdings(conn, t, ACCOUNT, holdings, now)
+            storage.save_tranche_holdings(conn, t, account, holdings, now)
 
     log.info("tranche books written")
     return 0

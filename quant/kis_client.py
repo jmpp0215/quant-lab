@@ -115,6 +115,19 @@ class KisClient:
                 continue
 
             if response.status_code >= 400:
+                # KIS's own per-second throttle surfaces as a 500 with
+                # rt_cd=1 EGW00201, not a 429 - same "nothing was
+                # processed" case as 429, so it gets the same backoff/retry.
+                try:
+                    error_body = response.json()
+                except ValueError:
+                    error_body = {}
+                if error_body.get("msg_cd") == "EGW00201" and attempt < MAX_RETRIES:
+                    delay = self._backoff(attempt)
+                    log.warning("%s %s rate limited (EGW00201), retry in %.1fs",
+                                method, path, delay)
+                    time.sleep(delay)
+                    continue
                 self._raise_for_error(method, path, response)
 
             payload = response.json()
@@ -302,9 +315,20 @@ def snapshot_overseas(client: "KisClient") -> storage.AccountSnapshot:
     cash = total - stock_value_krw
     
     return storage.AccountSnapshot(
-        account=f"kis-{client.account}-overseas", 
+        account=f"kis-{client.account}-overseas",
         currency="KRW",
-        total=total, 
-        cash=cash, 
+        total=total,
+        cash=cash,
         positions=positions
     )
+
+
+def batch_price(client: "KisClient", symbols: set[str]) -> dict[str, Decimal]:
+    """Last price for each symbol.
+
+    KIS has no multi-symbol quote endpoint, unlike Toss - one price() call
+    per symbol. output.stck_prpr was verified live (ISA/102110) earlier in
+    this project, not assumed from docs.
+    """
+    return {sym: Decimal(client.price(sym)["output"]["stck_prpr"])
+            for sym in symbols}

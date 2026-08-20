@@ -6,16 +6,15 @@
     python show.py portfolio       value over time
     python show.py orders          trade history
     python show.py tranches        current sleeve books
+
+    --account NAME   which account to show (default: toss-bot)
 """
 
 import sys
 import unicodedata
 from decimal import Decimal
 
-from quant import config
-from quant import storage
-
-ACCOUNT = "toss-bot"
+from quant import accounts, config, storage
 
 
 def _name(symbol: str) -> str:
@@ -52,7 +51,7 @@ def _pct(value: str | None) -> str:
     return f"{Decimal(value):>8.2%}" if value else "     n/a"
 
 
-def latest() -> None:
+def latest(account: str) -> None:
     with storage.connect() as conn:
         run = conn.execute(
             "SELECT trade_date, updated_at, session FROM runs "
@@ -69,7 +68,7 @@ def latest() -> None:
         ).fetchall()
         pf = conn.execute(
             "SELECT total, cash FROM portfolio "
-            "WHERE trade_date = ? AND account = ?", (date, ACCOUNT)
+            "WHERE trade_date = ? AND account = ?", (date, account)
         ).fetchone()
 
     print(f"=== {date} (recorded {run['updated_at'][:19]}) ===\n")
@@ -163,15 +162,15 @@ def variants() -> None:
         print(f"{_pad(name, 22)}{picks}{differs}")
 
 
-def portfolio() -> None:
+def portfolio(account: str) -> None:
     with storage.connect() as conn:
         rows = conn.execute(
             "SELECT trade_date, total, cash FROM portfolio "
-            "WHERE account = ? ORDER BY trade_date", (ACCOUNT,)
+            "WHERE account = ? ORDER BY trade_date", (account,)
         ).fetchall()
         flows = conn.execute(
             "SELECT trade_date, amount, note FROM cashflows "
-            "WHERE account = ? ORDER BY trade_date", (ACCOUNT,)
+            "WHERE account = ? ORDER BY trade_date", (account,)
         ).fetchall()
 
     if not rows:
@@ -195,12 +194,12 @@ def portfolio() -> None:
               f"{notes.get(r['trade_date'], '')}")
 
 
-def orders() -> None:
+def orders(account: str) -> None:
     with storage.connect() as conn:
         rows = conn.execute(
             "SELECT trade_date, tranche, symbol, side, quantity, "
             "filled_qty, avg_fill_price, commission FROM orders "
-            "WHERE account = ? ORDER BY id", (ACCOUNT,)
+            "WHERE account = ? ORDER BY id", (account,)
         ).fetchall()
 
     if not rows:
@@ -218,13 +217,13 @@ def orders() -> None:
               f"{price:>12,.0f}{Decimal(r['commission'] or 0):>8,.0f}")
 
 
-def tranches() -> None:
+def tranches(account: str) -> None:
     with storage.connect() as conn:
-        books = storage.load_all_tranche_holdings(conn, ACCOUNT)
+        books = storage.load_all_tranche_holdings(conn, account)
         done = {r["tranche"] for r in conn.execute(
             "SELECT DISTINCT tranche FROM orders WHERE account = ? "
             "AND tranche IS NOT NULL "
-            "AND trade_date >= date('now', 'start of month')", (ACCOUNT,)
+            "AND trade_date >= date('now', 'start of month')", (account,)
         ).fetchall()}
 
     for t in config.TRANCHES:
@@ -235,23 +234,26 @@ def tranches() -> None:
         print()
 
 
+# ranking/variants ignore account - scores/variants are the shared signal,
+# not per-account state, so account doesn't apply to them.
 COMMANDS = {
-    "latest": latest,
-    "ranking": ranking,
-    "variants": variants,
-    "portfolio": portfolio,
-    "orders": orders,
-    "tranches": tranches,
+    "latest": lambda account: latest(account),
+    "ranking": lambda account: ranking(),
+    "variants": lambda account: variants(),
+    "portfolio": lambda account: portfolio(account),
+    "orders": lambda account: orders(account),
+    "tranches": lambda account: tranches(account),
 }
 
 
 def main() -> int:
-    command = sys.argv[1] if len(sys.argv) > 1 else "latest"
+    account, rest = accounts.extract_account(sys.argv[1:])
+    command = rest[0] if rest else "latest"
     handler = COMMANDS.get(command)
     if handler is None:
         print(__doc__)
         return 1
-    handler()
+    handler(account)
     return 0
 
 

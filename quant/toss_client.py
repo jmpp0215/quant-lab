@@ -10,10 +10,7 @@ from decimal import Decimal
 import requests
 from dotenv import load_dotenv
 
-from quant import config
-from quant import market
-from quant import rebalance
-from quant import storage
+from quant import config, market, rebalance, storage
 
 load_dotenv()
 
@@ -239,3 +236,11 @@ def snapshot(client: "TossClient") -> storage.AccountSnapshot:
     ]
     return storage.AccountSnapshot(account="toss-bot", currency="KRW",
                                    total=total, cash=cash, positions=pos_rows)
+
+
+def batch_price(client: "TossClient", symbols: set[str]) -> dict[str, Decimal]:
+    """Last price for each symbol, in one comma-joined call."""
+    if not symbols:
+        return {}
+    result = client.price(",".join(sorted(symbols)))["result"]
+    return {r["symbol"]: Decimal(r["lastPrice"]) for r in result}

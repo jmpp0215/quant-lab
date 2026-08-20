@@ -1,5 +1,8 @@
 """Report whether a tranche is scheduled to rebalance today.
 
+    python check_due.py                    toss-bot (default)
+    python check_due.py --account kis-isa
+
 Runs in the morning so there is time to act during the session. Places no
 orders: rebalancing stays a manual step until the process has been through
 several live cycles.
@@ -10,15 +13,8 @@ import subprocess
 import sys
 from datetime import datetime
 
-from quant import candles
-from quant import config
-from quant import logging_config
-from quant import market
-from quant import storage
-from quant import tranche
+from quant import accounts, candles, config, logging_config, market, storage, tranche
 from quant.toss_client import TossApiError, TossClient
-
-ACCOUNT = "toss-bot"
 
 log = logging.getLogger("check-due")
 
@@ -43,8 +39,12 @@ def notify(title: str, message: str) -> None:
 
 def main() -> int:
     logging_config.setup()
+    account, _ = accounts.extract_account(sys.argv[1:])
 
     try:
+        # Candle/calendar data is shared market data, not account state -
+        # Toss is the source regardless of which account's tranche
+        # schedule we're checking.
         client = TossClient()
         calendar = client.market_calendar("KR")
 
@@ -62,7 +62,7 @@ def main() -> int:
             return 0
 
         with storage.connect() as conn:
-            done = storage.tranches_done_this_month(conn, ACCOUNT, today)
+            done = storage.tranches_done_this_month(conn, account, today)
 
         which = tranche.due_today(day_index, done, today[:7])
 
@@ -73,7 +73,7 @@ def main() -> int:
 
         log.info("trading day %d: tranche %d is due", day_index + 1, which)
         notify("quant-lab",
-               f"트랜치 {which} 리밸런싱 예정 (거래일 {day_index + 1})")
+               f"[{account}] 트랜치 {which} 리밸런싱 예정 (거래일 {day_index + 1})")
 
     except TossApiError as e:
         log.error("api error: %s", e)

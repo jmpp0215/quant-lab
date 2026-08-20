@@ -13,43 +13,20 @@ import sys
 from datetime import datetime
 from decimal import Decimal
 
-from quant import candles
-from quant import config
-from quant import indicators
-from quant import kis_client
-from quant import logging_config
-from quant import market
-from quant import storage
-from quant import strategy
-from quant import toss_client
-from quant.kis_client import KisApiError, KisClient
+from quant import (
+    accounts,
+    candles,
+    config,
+    indicators,
+    logging_config,
+    market,
+    storage,
+    strategy,
+)
+from quant.kis_client import KisApiError
 from quant.toss_client import TossApiError, TossClient
 
 log = logging.getLogger("daily")
-
-# Client factories are lazy (called only inside the account loop) so a
-# missing/bad credential for one account doesn't stop env vars for the
-# others from ever being read. "snapshot" picks the adapter that knows how
-# to turn that broker's holdings/balance response into an AccountSnapshot.
-# "strategy" gates the dual-momentum signal - only the ISA account trades
-# config.UNIVERSE; the rest are individual-stock/no-strategy accounts that
-# only get a portfolio snapshot recorded.
-_kis_main_client = lambda: KisClient("main")
-
-ACCOUNTS = {
-    "toss-bot": {"client": TossClient, "snapshot": toss_client.snapshot,
-                 "strategy": False},
-    "kis-main": {"client": _kis_main_client,
-                 "snapshot": kis_client.snapshot, "strategy": False},
-    # Domestic and overseas balance are separate endpoints on the same KIS
-    # account - shares _kis_main_client with "kis-main" (see the client
-    # cache in main()) rather than authenticating twice for one account.
-    "kis-main-overseas": {"client": _kis_main_client,
-                          "snapshot": kis_client.snapshot_overseas,
-                          "strategy": False},
-    "kis-isa":  {"client": lambda: KisClient("isa"),
-                 "snapshot": kis_client.snapshot, "strategy": True},
-}
 
 
 def record_strategy(signal: strategy.Signal, trade_date: str,
@@ -151,7 +128,7 @@ def main() -> int:
 
     overall_ok = True
     client_cache: dict = {}
-    for account_name, cfg in ACCOUNTS.items():
+    for account_name, cfg in accounts.ACCOUNTS.items():
         try:
             factory = cfg["client"]
             if factory not in client_cache:

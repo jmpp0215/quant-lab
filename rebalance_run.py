@@ -1,8 +1,17 @@
 """Manual rebalance run.
 
+    python rebalance_run.py                    toss-bot (default), places live orders
+    python rebalance_run.py --account kis-isa   plan only - see note below
+
 Capital is split across tranches that rebalance on different trading days
 of the month, so a run touches one sleeve and leaves the others alone.
 Only that sleeve's holdings and its share of the cash pool are in scope.
+
+Order placement (executor.py) only supports Toss: it calls Toss-specific
+raw endpoints for order-book depth, open-order tracking, cancellation, and
+fill polling that have no KIS equivalent yet. For any non-toss-bot account
+this script computes and prints the rebalance plan the same way, then
+stops before sending anything if there is something to trade.
 """
 
 import logging
@@ -10,31 +19,25 @@ import sys
 from datetime import datetime
 from decimal import Decimal
 
-from quant import candles
-from quant import config
-from quant import executor
-from quant import logging_config
-from quant import market
-from quant import rebalance
-from quant import storage
-from quant import strategy
-from quant import tranche
-from quant.toss_client import TossApiError, TossClient
-
-ACCOUNT = "toss-bot"
+from quant import (
+    accounts,
+    candles,
+    config,
+    executor,
+    logging_config,
+    market,
+    rebalance,
+    storage,
+    strategy,
+    tranche,
+)
+from quant.toss_client import TossClient
 
 log = logging.getLogger("rebalance")
 
 
 def confirm(prompt: str) -> bool:
     return input(f"\n{prompt} [yes/no]: ").strip().lower() == "yes"
-
-
-def current_prices(client: TossClient, symbols: set[str]) -> dict[str, Decimal]:
-    if not symbols:
-        return {}
-    result = client.price(",".join(sorted(symbols)))["result"]
-    return {r["symbol"]: Decimal(r["lastPrice"]) for r in result}
 
 
 def plan_for_tranche(book: dict[str, int], targets: dict[str, int],
@@ -75,11 +78,20 @@ def main() -> int:
     logging_config.setup()
     storage.init()
 
-    client = TossClient()
-    log.info("dry_run = %s", client.dry_run)
+    account, _ = accounts.extract_account(sys.argv[1:])
+    cfg = accounts.resolve(account)
+    client = cfg["client"]()
+    log.info("account = %s, dry_run = %s", account, client.dry_run)
+
+    # Candle/calendar data is shared market data, not account state - Toss
+    # is the source regardless of which account is being rebalanced.
+    # candles.fetch() also relies on a Toss-shaped client.get(path, params)
+    # call, which KisClient's get() (which requires a tr_id) does not
+    # support, so this can never be the per-account `client`.
+    market_client = TossClient()
 
     now = datetime.now().astimezone()
-    calendar = client.market_calendar("KR")
+    calendar = market_client.market_calendar("KR")
 
     if not market.is_business_day(calendar):
         log.error("market closed today")
@@ -91,17 +103,21 @@ def main() -> int:
         log.error("closing auction has begun; no new orders")
         return 1
 
-    executor.cancel_open_orders(client)
+    if account == "toss-bot":
+        executor.cancel_open_orders(client)
+    else:
+        log.info("%s: skipping open-order cleanup "
+                 "(executor.py has no KIS support)", account)
 
     data = {
-        sym: candles.get(client, sym, days=config.HISTORY_DAYS)
+        sym: candles.get(market_client, sym, days=config.HISTORY_DAYS)
         for sym in config.all_symbols()
     }
     trade_date = data[next(iter(config.UNIVERSE))][0]["timestamp"][:10]
 
     # Schedule is keyed to the actual calendar day, not the signal date:
     # the signal lags by design, but the rebalance happens today.
-    dated = candles.get(client, next(iter(config.UNIVERSE)),
+    dated = candles.get(market_client, next(iter(config.UNIVERSE)),
                         days=config.HISTORY_DAYS, include_today=True)
     today = now.date().isoformat()
     day_index = tranche.trading_day_index(dated, today)
@@ -111,8 +127,8 @@ def main() -> int:
         return 1
 
     with storage.connect() as conn:
-        done = storage.tranches_done_this_month(conn, ACCOUNT, today)
-        books = storage.load_all_tranche_holdings(conn, ACCOUNT)
+        done = storage.tranches_done_this_month(conn, account, today)
+        books = storage.load_all_tranche_holdings(conn, account)
 
     which = tranche.due_today(day_index, done, today[:7])
     if which is None:
@@ -123,9 +139,10 @@ def main() -> int:
     log.info("trading day %d: tranche %d is due", day_index + 1, which)
 
     # The books drive every quantity below, so trading through a
-    # discrepancy would compound it.
-    positions = rebalance.parse_positions(client.holdings())
-    actual = {p.symbol: p.quantity for p in positions.values()}
+    # discrepancy would compound it. One snapshot() call gives both
+    # positions and cash, broker-agnostic.
+    snap = cfg["snapshot"](client)
+    actual = {p["symbol"]: p["qty"] for p in snap.positions}
     drift = tranche.reconcile(books, actual)
     if drift:
         log.error("tranche books disagree with the account: %s", drift)
@@ -135,9 +152,9 @@ def main() -> int:
     signal = strategy.evaluate(data)
     log.info("\n%s", strategy.format_signal(signal))
 
-    cash = Decimal(client.buying_power("KRW")["result"]["cashBuyingPower"])
+    cash = snap.cash
     book = books.get(which, {})
-    prices = current_prices(client, set(signal.weights) | set(book))
+    prices = cfg["price"](client, set(signal.weights) | set(book))
 
     value = tranche.tranche_value(book, prices, cash)
     targets = tranche.target_quantities(signal.weights, value, prices)
@@ -153,6 +170,15 @@ def main() -> int:
     if not orders:
         log.info("nothing to do")
         return 0
+
+    if account != "toss-bot":
+        log.error(
+            "KIS 주문 실행은 아직 구현 안 됨, 별도 작업 필요 - executor.py는 "
+            "호가조회/미체결조회/취소/체결내역조회가 전부 Toss 전용이라 %s "
+            "계좌로는 주문을 보낼 수 없습니다. 위 계산된 플랜은 참고용입니다.",
+            account,
+        )
+        return 1
 
     if not confirm(f"Rebalance tranche {which}?"):
         log.info("aborted by user")
@@ -182,7 +208,7 @@ def main() -> int:
     final_book = apply_fills(book, orders, results)
 
     if not client.dry_run:
-        record(trade_date, which, orders, results, final_book)
+        record(account, trade_date, which, orders, results, final_book)
 
     log.info("tranche %d now holds: %s", which, final_book)
     return 0
@@ -208,20 +234,21 @@ def apply_fills(book: dict[str, int], orders: list[rebalance.Order],
     return {s: q for s, q in updated.items() if q > 0}
 
 
-def record(trade_date: str, which: int, orders: list[rebalance.Order],
-           results: dict[str, dict], book: dict[str, int]) -> None:
+def record(account: str, trade_date: str, which: int,
+           orders: list[rebalance.Order], results: dict[str, dict],
+           book: dict[str, int]) -> None:
     now = datetime.now().astimezone().isoformat()
     today = datetime.now().astimezone().date().isoformat()
     with storage.connect() as conn:
         for order in orders:
             r = results.get(order.symbol, {})
             storage.save_order(
-                conn, trade_date, now, ACCOUNT, order.symbol, order.side,
+                conn, trade_date, now, account, order.symbol, order.side,
                 order.quantity, order.limit_price, r.get("order_id"),
                 r.get("filled", False), r.get("execution"), tranche=which,
                 executed_date=today,
             )
-        storage.save_tranche_holdings(conn, which, ACCOUNT, book, now)
+        storage.save_tranche_holdings(conn, which, account, book, now)
 
 
 if __name__ == "__main__":
