@@ -13,8 +13,8 @@ to see whether the ranking ever actually rotates.
 
 import logging
 from dataclasses import dataclass
-from decimal import Decimal
 from datetime import date
+from decimal import Decimal
 
 import config
 import strategy

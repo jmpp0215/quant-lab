@@ -19,7 +19,7 @@ import rebalance
 import storage
 import strategy
 import tranche
-from toss_client import TossClient, TossApiError
+from toss_client import TossApiError, TossClient
 
 ACCOUNT = "toss-bot"
 

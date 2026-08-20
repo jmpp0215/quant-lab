@@ -10,9 +10,8 @@ healthy, and simply does not fill when it is not.
 
 import logging
 import time
-from dataclasses import dataclass
-from decimal import Decimal
 from dataclasses import dataclass, replace
+from decimal import Decimal
 
 import config
 import market

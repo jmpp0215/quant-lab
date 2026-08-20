@@ -16,7 +16,7 @@ import logging_config
 import market
 import storage
 import tranche
-from toss_client import TossClient, TossApiError
+from toss_client import TossApiError, TossClient
 
 ACCOUNT = "toss-bot"
 
