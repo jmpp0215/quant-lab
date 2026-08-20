@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from quant.toss_client import TossClient
 
 KST = ZoneInfo("Asia/Seoul")
-CACHE_DIR = Path(__file__).parent / "data" / "candles"
+CACHE_DIR = Path(__file__).parent.parent / "data" / "candles"
 PAGE_SIZE = 100
 PAGE_DELAY = 1.0
 

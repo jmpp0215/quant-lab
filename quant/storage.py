@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "data" / "quant.db"
+DB_PATH = Path(__file__).parent.parent / "data" / "quant.db"
 
 log = logging.getLogger(__name__)
 

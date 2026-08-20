@@ -5,7 +5,7 @@ import logging.handlers
 import sys
 from pathlib import Path
 
-LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR = Path(__file__).parent.parent / "logs"
 
 
 def setup(level: int = logging.INFO) -> None:
