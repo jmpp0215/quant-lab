@@ -38,7 +38,7 @@ the last traded price.
 
 4. **Verify the unlock took effect.**
 
-       python -c "from toss_client import TossClient; print(TossClient().dry_run)"
+       python -c "from quant.toss_client import TossClient; print(TossClient().dry_run)"
 
    Expect `False`. If it still prints `True`, the file was not saved.
 
@@ -78,8 +78,45 @@ book really is that wide, skip the rebalance for the day.
 **Anything unclear.** Stop and cancel from the app. A missed rebalance
 costs almost nothing; a wrong one is real money.
 
+## KIS accounts (kis-isa, kis-main)
+
+The procedure above is for `toss-bot`. `executor.py` supports KIS as well,
+but `rebalance_run.py` refuses to place orders for any other account:
+
+    python rebalance_run.py --account kis-isa
+
+computes and prints the plan, then stops. The plan itself is trustworthy
+and worth reading; only the sending is blocked.
+
+The block is a deliberate policy, not a missing feature. Two things are
+still unproven, and both want a person watching:
+
+- **No KIS order has ever been sent by this code.** KIS has no paper
+  environment, so the first real order is also the first test.
+- **`kis_client.open_orders()` parses an unverified response shape.** The
+  account had no resting order when it was written, so TTTC8036R's row
+  fields were never actually seen. It reads keys directly, so a wrong
+  guess raises rather than mis-reporting a fill — and the one caller that
+  runs before any order is placed fails first — but it wants confirming
+  against a real resting order.
+
+To lift it: place one small unfillable limit order by hand through the
+KIS app, confirm `open_orders()` parses it, then delete the
+`account != "toss-bot"` guard in `rebalance_run.py` and re-enable the
+`cancel_open_orders` call above it. `KIS_DRY_RUN` is the same
+unlock/lock dance as `TOSS_DRY_RUN` in steps 3-6.
+
+An ETF held outside `UNIVERSE`/`WATCH_ONLY` must be listed in
+`config.HELD_ETFS`, or `is_etf()` prices it on the stock tick grid: an
+order is then refused as off-tick about half the time and silently priced
+a tick too far through the touch the other half. `0074K0` is there for
+this reason. Add to it before trading any other outside holding.
+
 ## Notes
 
 - `ordered_today` blocks a second rebalance on the same trading date. It
   reads the `orders` table, so dry runs must not be recorded there.
 - The universe is frozen until November. Do not adjust it on the day.
+- Toss issues **one active token per credential set**: authenticating a
+  second `TossClient` silently invalidates the first one's token. Entry
+  points reuse a single instance rather than creating one per role.

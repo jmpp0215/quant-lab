@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from quant import market
+from quant import config, market
 
 
 class TestTickSize:
@@ -77,3 +77,48 @@ class TestBusinessDay:
                 "endTime": "2026-08-14T15:30:00.000+09:00",
             }}}}}
         assert market.is_business_day(calendar)
+
+
+class TestEtfClassification:
+    """is_etf() decides which tick grid a symbol prices on, so a wrong
+    answer either refuses a valid order or places one on the wrong grid.
+
+    Every tick below was measured from the live KIS order book on
+    2026-08-21 by reading the spacing between consecutive quote levels,
+    not taken from a rule table.
+    """
+
+    # (symbol, price, expected is_etf, tick observed in the live book)
+    HOLDINGS = [
+        ("005380", "418500", False, "500"),   # 현대차
+        ("005490", "313500", False, "500"),   # POSCO홀딩스
+        ("0074K0", "16955", True, "5"),       # KoAct - ETF, not in UNIVERSE
+        ("0167Z0", "8140", True, "5"),        # KODEX 미국우주항공
+        ("058470", "65400", False, "100"),    # 리노공업
+        ("105560", "163100", False, "100"),   # KB금융
+    ]
+
+    @pytest.mark.parametrize("symbol,price,is_etf,tick", HOLDINGS)
+    def test_matches_the_live_order_book(self, symbol, price, is_etf, tick):
+        assert config.is_etf(symbol) is is_etf
+        assert market.kr_tick_size(price, is_etf=is_etf) == Decimal(tick)
+        assert market.is_valid_kr_price(price, is_etf=is_etf)
+
+    def test_held_etf_outside_the_universe_still_prices_as_an_etf(self):
+        # The regression this exists for: 0074K0 is a real ETF that is in
+        # neither UNIVERSE nor WATCH_ONLY. While is_etf() was membership
+        # based it got the 10-won stock grid, which refused its real
+        # market price as off-tick about half the time and silently
+        # priced a tick too far through the touch the other half.
+        assert "0074K0" not in config.UNIVERSE
+        assert "0074K0" not in config.WATCH_ONLY
+        assert config.is_etf("0074K0")
+
+    def test_held_etfs_are_not_traded_as_candidates(self):
+        # HELD_ETFS exists only to answer the tick question. Leaking into
+        # all_symbols() would start fetching candles for it and let the
+        # strategy rank it.
+        assert "0074K0" not in config.all_symbols()
+
+    def test_an_unknown_symbol_is_not_an_etf(self):
+        assert not config.is_etf("005930")   # 삼성전자, never held

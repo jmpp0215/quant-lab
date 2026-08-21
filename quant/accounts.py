@@ -15,24 +15,34 @@ DEFAULT_ACCOUNT = "toss-bot"
 
 _kis_main_client = lambda: KisClient("main")
 
+# "broker" is the module implementing quant/broker.py's execution
+# interface for that account - executor is handed it and never touches a
+# broker's response shape itself. None means orders cannot be placed for
+# this account at all.
 ACCOUNTS = {
     "toss-bot": {"client": TossClient, "snapshot": toss_client.snapshot,
-                 "price": toss_client.batch_price, "strategy": False},
+                 "price": toss_client.batch_price, "broker": toss_client,
+                 "strategy": False},
     "kis-main": {"client": _kis_main_client, "snapshot": kis_client.snapshot,
-                 "price": kis_client.batch_price, "strategy": False},
+                 "price": kis_client.batch_price, "broker": kis_client,
+                 "strategy": False},
     # Domestic and overseas balance are separate endpoints on the same KIS
     # account - shares _kis_main_client with "kis-main" rather than
-    # authenticating twice for one account.
+    # authenticating twice for one account. No broker: overseas ordering
+    # is a different KIS endpoint family that kis_client does not
+    # implement, so this account can be snapshotted but never traded.
     "kis-main-overseas": {"client": _kis_main_client,
                           "snapshot": kis_client.snapshot_overseas,
-                          "price": kis_client.batch_price, "strategy": False},
+                          "price": kis_client.batch_price, "broker": None,
+                          "strategy": False},
     "kis-isa": {"client": lambda: KisClient("isa"), "snapshot": kis_client.snapshot,
-                "price": kis_client.batch_price, "strategy": True},
+                "price": kis_client.batch_price, "broker": kis_client,
+                "strategy": True},
 }
 
 
 def resolve(account: str) -> dict:
-    """{"client", "snapshot", "price", "strategy"} for one account name."""
+    """{"client", "snapshot", "price", "broker", "strategy"} for one account."""
     try:
         return ACCOUNTS[account]
     except KeyError:

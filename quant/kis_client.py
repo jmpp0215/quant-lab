@@ -4,12 +4,16 @@ import logging
 import os
 import random
 import time
+from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
 
-from quant import storage
+from quant import broker, storage
+
+KST = ZoneInfo("Asia/Seoul")
 
 load_dotenv()
 
@@ -256,6 +260,17 @@ class KisClient:
             },
         )
 
+    def orderbook(self, symbol: str) -> dict:
+        """Domestic stock orderbook / asking price (tr_id: FHKST01010200)."""
+        return self.get(
+            "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+            tr_id="FHKST01010200",
+            params={
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": symbol,
+            },
+        )
+
     def holdings(self) -> dict:
         """Domestic stock balance inquiry (실전 tr_id: TTTC8434R)."""
         return self.get(
@@ -271,6 +286,33 @@ class KisClient:
                 "FUND_STTL_ICLD_YN": "N",
                 "FNCG_AMT_AUTO_RDPT_YN": "N",
                 "PRCS_DVSN": "01",
+                "CTX_AREA_FK100": "",
+                "CTX_AREA_NK100": "",
+            },
+        )
+
+    def daily_orders(self, start: str, end: str) -> dict:
+        """Orders and their fills over a date range (tr_id: TTTC8001R).
+
+        Dates are YYYYMMDD. Rows carry tot_ccld_qty and avg_prvs but no
+        commission or tax - KIS does not return per-order fees here.
+        """
+        return self.get(
+            "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+            tr_id="TTTC8001R",
+            params={
+                "CANO": self.cano,
+                "ACNT_PRDT_CD": self.acnt_prdt_cd,
+                "INQR_STRT_DT": start,
+                "INQR_END_DT": end,
+                "SLL_BUY_DVSN_CD": "00",
+                "INQR_DVSN": "00",
+                "PDNO": "",
+                "CCLD_DVSN": "00",
+                "ORD_GNO_BRNO": "",
+                "ODNO": "",
+                "INQR_DVSN_3": "00",
+                "INQR_DVSN_1": "",
                 "CTX_AREA_FK100": "",
                 "CTX_AREA_NK100": "",
             },
@@ -372,3 +414,111 @@ def batch_price(client: "KisClient", symbols: set[str]) -> dict[str, Decimal]:
     """
     return {sym: Decimal(client.price(sym)["output"]["stck_prpr"])
             for sym in symbols}
+
+
+# --- execution interface (see quant/broker.py) ------------------------
+
+def _level(value: str | None) -> Decimal | None:
+    """One order-book level, or None when the side is empty.
+
+    KIS fills absent levels with "0" rather than omitting them. Passing a
+    zero through as a price would turn "there is no ask" into "the ask is
+    zero", which reads downstream as a 100% move away from the last trade
+    - the right refusal for the wrong reason, and only by luck.
+    """
+    if value is None:
+        return None
+    price = Decimal(value)
+    return price if price > 0 else None
+
+
+def orderbook(client: "KisClient", symbol: str) -> broker.Touch:
+    """Best bid/ask. Field names verified live against ISA/102110."""
+    out = client.orderbook(symbol).get("output1", {})
+    bid, ask = _level(out.get("bidp1")), _level(out.get("askp1"))
+    return broker.Touch(
+        bid=bid,
+        ask=ask,
+        bid_volume=int(out.get("bidp_rsqn1") or 0) if bid else 0,
+        ask_volume=int(out.get("askp_rsqn1") or 0) if ask else 0,
+    )
+
+
+def place_order(client: "KisClient", order, price: Decimal
+                ) -> broker.OrderHandle | None:
+    """Send one limit order. None means dry run - nothing was sent."""
+    result = client.create_order(
+        symbol=order.symbol,
+        side=order.side,
+        order_type="LIMIT",
+        quantity=order.quantity,
+        price=str(price),
+    )
+    if result.get("dryRun"):
+        return None
+
+    out = result["output"]
+    # Both halves matter: ODNO alone cannot be cancelled later.
+    return broker.OrderHandle(order_id=out["ODNO"],
+                              org_no=out["KRX_FWDG_ORD_ORGNO"])
+
+
+def open_orders(client: "KisClient") -> list[broker.OpenOrder]:
+    """Our resting orders.
+
+    UNVERIFIED RESPONSE SHAPE. The account held no open order when this
+    was written, so TTTC8036R is confirmed only as far as rt_cd=0 - its
+    row fields were never seen. The names below are the ones this same
+    account's inquire-daily-ccld rows really do carry (odno /
+    ord_gno_brno / ord_qty / tot_ccld_qty), and KIS reuses them across
+    order endpoints, but CLAUDE.md's rule stands: confirm against a live
+    resting order before trusting this. Keys are read directly rather
+    than with .get() defaults so a wrong guess raises instead of quietly
+    reporting an order as unfilled - and the caller that runs before any
+    order is placed (executor.cancel_open_orders) would fail loudly,
+    before money moves.
+    """
+    rows = client.list_orders().get("output") or []
+    return [
+        broker.OpenOrder(
+            handle=broker.OrderHandle(order_id=row["odno"],
+                                      org_no=row["ord_gno_brno"]),
+            symbol=row["pdno"],
+            quantity=int(row["ord_qty"]),
+            filled_quantity=int(row.get("tot_ccld_qty") or 0),
+        )
+        for row in rows
+    ]
+
+
+def cancel(client: "KisClient", handle: broker.OrderHandle) -> None:
+    if handle.org_no is None:
+        raise ValueError(
+            f"cannot cancel KIS order {handle.order_id}: no org_no on the "
+            "handle (KRX_FWDG_ORD_ORGNO is required alongside the id)"
+        )
+    # quantity=0 selects QTY_ALL_ORD_YN="Y", cancelling whatever remains
+    # rather than a figure we would have to re-read to get right.
+    client.cancel_order(orgn_odno=handle.order_id, quantity=0,
+                        branch_id=handle.org_no)
+
+
+def execution_for(client: "KisClient", handle: broker.OrderHandle) -> dict:
+    """Fills for one order, normalised to the shape storage.save_order wants.
+
+    commission and tax stay None: KIS's order inquiry does not return
+    per-order fees, and a rate-based estimate would be recorded as though
+    it were the broker's own figure.
+    """
+    today = datetime.now(KST).strftime("%Y%m%d")
+    rows = client.daily_orders(today, today).get("output1") or []
+    match = next((r for r in rows if r["odno"] == handle.order_id), None)
+    if match is None:
+        return {}
+
+    return {
+        "filledQuantity": match["tot_ccld_qty"],
+        "averageFilledPrice": match["avg_prvs"],
+        "commission": None,
+        "tax": None,
+    }

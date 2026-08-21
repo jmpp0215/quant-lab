@@ -10,7 +10,7 @@ from decimal import Decimal
 import requests
 from dotenv import load_dotenv
 
-from quant import config, market, rebalance, storage
+from quant import broker, config, market, rebalance, storage
 
 load_dotenv()
 
@@ -244,3 +244,56 @@ def batch_price(client: "TossClient", symbols: set[str]) -> dict[str, Decimal]:
         return {}
     result = client.price(",".join(sorted(symbols)))["result"]
     return {r["symbol"]: Decimal(r["lastPrice"]) for r in result}
+
+
+# --- execution interface (see quant/broker.py) ------------------------
+
+def orderbook(client: "TossClient", symbol: str) -> broker.Touch:
+    book = client.get("/api/v1/orderbook", params={"symbol": symbol})["result"]
+    asks, bids = book.get("asks") or [], book.get("bids") or []
+    return broker.Touch(
+        bid=Decimal(bids[0]["price"]) if bids else None,
+        ask=Decimal(asks[0]["price"]) if asks else None,
+        bid_volume=int(bids[0]["volume"]) if bids else 0,
+        ask_volume=int(asks[0]["volume"]) if asks else 0,
+    )
+
+
+def place_order(client: "TossClient", order, price: Decimal
+                ) -> broker.OrderHandle | None:
+    """Send one limit order. None means dry run - nothing was sent."""
+    result = client.create_order(
+        symbol=order.symbol,
+        side=order.side,
+        order_type="LIMIT",
+        quantity=order.quantity,
+        price=str(price),
+    )
+    if result.get("dryRun"):
+        return None
+    return broker.OrderHandle(order_id=result["result"]["orderId"])
+
+
+def open_orders(client: "TossClient") -> list[broker.OpenOrder]:
+    entries = client.list_orders("OPEN")["result"]["orders"]
+    out = []
+    for entry in entries:
+        execution = entry.get("execution") or {}
+        out.append(broker.OpenOrder(
+            handle=broker.OrderHandle(order_id=entry["orderId"]),
+            symbol=entry.get("symbol", ""),
+            quantity=int(entry["quantity"]),
+            filled_quantity=int(execution.get("filledQuantity") or 0),
+        ))
+    return out
+
+
+def cancel(client: "TossClient", handle: broker.OrderHandle) -> None:
+    client.cancel_order(handle.order_id)
+
+
+def execution_for(client: "TossClient", handle: broker.OrderHandle) -> dict:
+    """Final execution block, read from the closed order list."""
+    entries = client.list_orders("CLOSED")["result"]["orders"]
+    match = next((o for o in entries if o["orderId"] == handle.order_id), None)
+    return (match or {}).get("execution") or {}

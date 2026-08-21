@@ -127,7 +127,13 @@ def main() -> int:
         return 1
 
     overall_ok = True
-    client_cache: dict = {}
+    # Seeded with the market client so the toss-bot account reuses it
+    # instead of authenticating a second time: Toss keeps only one active
+    # token per credential set, and a second one silently invalidates the
+    # first. Today the candle work is all finished before this loop, so a
+    # second token would do no harm - but that is ordering luck, not a
+    # guarantee worth resting on.
+    client_cache: dict = {TossClient: market_client}
     for account_name, cfg in accounts.ACCOUNTS.items():
         try:
             factory = cfg["client"]

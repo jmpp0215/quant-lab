@@ -1,3 +1,9 @@
+[tool.pytest.ini_options]
+# The suite is tests/ only. scratch/ holds throwaway API probes whose
+# names start with test_, so pytest would otherwise try to import them as
+# tests and fail on collection.
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 88
 

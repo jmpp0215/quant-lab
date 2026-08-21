@@ -7,11 +7,12 @@ Capital is split across tranches that rebalance on different trading days
 of the month, so a run touches one sleeve and leaves the others alone.
 Only that sleeve's holdings and its share of the cash pool are in scope.
 
-Order placement (executor.py) only supports Toss: it calls Toss-specific
-raw endpoints for order-book depth, open-order tracking, cancellation, and
-fill polling that have no KIS equivalent yet. For any non-toss-bot account
-this script computes and prints the rebalance plan the same way, then
-stops before sending anything if there is something to trade.
+executor.py does now support KIS, but live order placement is still
+deliberately limited to toss-bot: the KIS execution path has never sent a
+real order, and KIS has no paper environment in which to prove it. So for
+any non-toss-bot account this script computes and prints the rebalance
+plan the same way, then stops before sending anything. Lifting that means
+editing the guard below - see RUNBOOK.md.
 """
 
 import logging
@@ -87,8 +88,13 @@ def main() -> int:
     # is the source regardless of which account is being rebalanced.
     # candles.fetch() also relies on a Toss-shaped client.get(path, params)
     # call, which KisClient's get() (which requires a tr_id) does not
-    # support, so this can never be the per-account `client`.
-    market_client = TossClient()
+    # support, so a KIS account still needs a Toss client alongside it.
+    #
+    # Reuse rather than construct when the account is itself Toss: Toss
+    # keeps only one active token per credential set, so a second client
+    # invalidates the first one's token the moment it authenticates, and
+    # whichever client is used next fails with 401 mid-run.
+    market_client = client if isinstance(client, TossClient) else TossClient()
 
     now = datetime.now().astimezone()
     calendar = market_client.market_calendar("KR")
@@ -104,10 +110,12 @@ def main() -> int:
         return 1
 
     if account == "toss-bot":
-        executor.cancel_open_orders(client)
+        executor.cancel_open_orders(cfg["broker"], client)
     else:
-        log.info("%s: skipping open-order cleanup "
-                 "(executor.py has no KIS support)", account)
+        # executor supports KIS now, but this flips together with the
+        # order-placement guard below, not before it.
+        log.info("%s: skipping open-order cleanup until live trading "
+                 "is enabled for this account", account)
 
     data = {
         sym: candles.get(market_client, sym, days=config.HISTORY_DAYS)
@@ -173,9 +181,11 @@ def main() -> int:
 
     if account != "toss-bot":
         log.error(
-            "KIS 주문 실행은 아직 구현 안 됨, 별도 작업 필요 - executor.py는 "
-            "호가조회/미체결조회/취소/체결내역조회가 전부 Toss 전용이라 %s "
-            "계좌로는 주문을 보낼 수 없습니다. 위 계산된 플랜은 참고용입니다.",
+            "%s 계좌 주문은 의도적으로 막혀 있습니다 (구현이 없어서가 아님) - "
+            "executor.py는 이제 KIS를 지원하지만, KIS 주문 경로로 실제 주문을 "
+            "내본 적이 없고 KIS에는 페이퍼 환경도 없습니다. 위 계산된 플랜은 "
+            "정상이며 참고용으로 쓸 수 있습니다. 해제하려면 rebalance_run.py의 "
+            "이 가드를 제거하세요 (RUNBOOK.md 참고).",
             account,
         )
         return 1
@@ -189,7 +199,7 @@ def main() -> int:
     results: dict[str, dict] = {}
 
     if sells:
-        results |= executor.execute(client, sells, prices)
+        results |= executor.execute(cfg["broker"], client, sells, prices)
 
     if buys:
         # Recompute against the cash the sells actually raised.
@@ -203,7 +213,7 @@ def main() -> int:
 
         log.info("\nrevised buy plan:\n%s", rebalance.format_plan(buys))
         if buys and confirm("Proceed with buys?"):
-            results |= executor.execute(client, buys, prices)
+            results |= executor.execute(cfg["broker"], client, buys, prices)
 
     final_book = apply_fills(book, orders, results)
 

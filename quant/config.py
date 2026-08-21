@@ -31,6 +31,30 @@ WATCH_ONLY = {
     # until it has enough history to rank fairly.
     "0167Z0": "KODEX 미국우주항공",
 }
+
+# ETFs we hold but do not trade as strategy candidates. Separate from
+# WATCH_ONLY on purpose: that dict feeds all_symbols(), so anything added
+# there gets candles fetched and accumulates history for later audit,
+# which is not what these are for. They exist only so is_etf() knows
+# which tick grid they price on.
+HELD_ETFS = {
+    "0074K0": "KoAct K수출핵심기업TOP30액티브",   # ISA, pending liquidation
+}
+
+# Every symbol that trades on the ETF tick grid - a flat 5 won at any
+# price - rather than the price-tiered grid individual stocks use.
+#
+# Membership in UNIVERSE/WATCH_ONLY used to stand in for this, which was
+# fine while those dicts were the only things we traded. It silently
+# mispriced any ETF held outside them: 0074K0 at 16,955 was rounded onto
+# the 10-won stock grid, so roughly half the time an order was refused as
+# off-tick and the other half it priced a tick further through the touch
+# than intended.
+#
+# Both dicts hold only ETFs, by construction. Putting an individual stock
+# in either would quietly hand it the wrong grid.
+ETF_SYMBOLS = set(UNIVERSE) | set(WATCH_ONLY) | set(HELD_ETFS)
+
 # Annual distribution yield per symbol, used to approximate total return.
 # Toss candles are price-only, so a high-yield symbol would otherwise rank
 # unfairly low - the ex-dividend drop shows up in the price while the
@@ -105,7 +129,12 @@ def tranche_cash_share(total_cash: Decimal) -> Decimal:
     return total_cash / len(TRANCHES)
 
 def is_etf(symbol: str) -> bool:
-    return symbol in UNIVERSE or symbol in WATCH_ONLY
+    """True when the symbol prices on the 5-won ETF tick grid.
+
+    Drives tick rounding and the off-tick guard, so a wrong answer here
+    either refuses a valid order or places one on the wrong grid.
+    """
+    return symbol in ETF_SYMBOLS
 
 def all_symbols() -> list[str]:
     """Every symbol we fetch candles for, traded or not."""
