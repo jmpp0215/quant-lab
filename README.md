@@ -108,6 +108,6 @@ State and signals are stored locally in a SQLite database at `data/quant.db`.
 - [x] Scheduled daily runs
 - [x] Order execution (sell → confirm fills → buy)
   - Toss: Live trading verified
-  - KIS: Dry-run body generation verified, pending live API test
+  - KIS: Domestic live trading verified, overseas pending live API test
 - [x] Backtest and performance metrics
 - [ ] Failure notifications
