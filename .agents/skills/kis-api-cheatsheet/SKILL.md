@@ -21,3 +21,9 @@ description: >-
   - `output3.tot_asst_amt` (Total Assets) is provided in **KRW** and accurately reflects unsettled same-day trades.
   - To calculate cash reliably, do NOT use the raw cash field (`frcr_dncl_amt_2`). Instead, derive it to match the total: `Cash (KRW) = tot_asst_amt - evlu_amt_smtl_amt` (Total Assets - Stock Evaluation Amount).
 - **Position Quantities:** Use `ccld_qty_smtl1` (체결수량합계) which includes today's executions, rather than `cblc_qty13` (전일잔고).
+
+## Overseas Quotes & Orderbook
+- **Orderbook (10-level):** Use `HHDFS76200100` (`inquire-asking-price`). It provides 10 levels of bid/ask prices (`pbid1`~`pask10`) and volumes (`vbid1`~`vask10`) without requiring WebSocket or premium subscriptions.
+- **Detailed Quote / Tick Size:** Use `HHDFS76200200` to get detailed stats. The tick size (호가단위) is available in the `e_hogau` field (e.g., `0.0100` for US stocks).
+- **Current Price:** Use `HHDFS00000300` for a simple current price snapshot. Be aware of undocumented enum values in fields like `ordy` (e.g., `매도불가`).
+- **Exchange Codes:** Use `EXCD: "NAS"` for NASDAQ when calling quote endpoints, which may differ from codes expected in other API endpoints or brokerages.

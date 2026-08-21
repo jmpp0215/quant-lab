@@ -320,6 +320,18 @@ class KisClient:
             },
         )
 
+    def orderbook_overseas(self, symbol: str, exchange: str = "NAS") -> dict:
+        """Overseas stock orderbook / asking price (tr_id: HHDFS76200100)."""
+        return self.get(
+            "/uapi/overseas-price/v1/quotations/inquire-asking-price",
+            tr_id="HHDFS76200100",
+            params={
+                "AUTH": "",
+                "EXCD": exchange,
+                "SYMB": symbol,
+            },
+        )
+
     def holdings(self) -> dict:
         """Domestic stock balance inquiry (실전 tr_id: TTTC8434R)."""
         return self.get(

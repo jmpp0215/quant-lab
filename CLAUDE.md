@@ -100,7 +100,12 @@ rather than trade through it.
   blended rank, trend filter, risk-parity/inverse-vol/signal/rank weighting) every run and
   records them via `storage.save_variants`, but only the primary `strategy.evaluate` signal
   is ever traded. Don't wire a variant into execution without an explicit decision to do so.
-- **KIS API Quirks:** KIS API field names (e.g., `tot_evlu_pfls_amt`) can mean entirely different things (e.g., Total Evaluation vs Total Profit/Loss) depending on the endpoint. Never trust a field name without mathematically verifying it against raw response data.
+- **KIS API Quirks:** 
+  - Field names (e.g., `tot_evlu_pfls_amt`) can mean entirely different things (Total Evaluation vs Total Profit/Loss) depending on the endpoint. Never trust a field name without mathematically verifying it against raw response data.
+  - US Stock Tick Size: Measured as `$0.01` (returned as `e_hogau: 0.0100` via `HHDFS76200200`).
+  - US Stock Exchange Codes: KIS API uses `NAS` (e.g., in REST queries) and `NASD` (in other contexts/Toss) differently; be precise with exchange codes.
+  - Undocumented Fields: The `ordy` field in price endpoints (e.g., `HHDFS00000300` returning '매도불가') lacks clear enum documentation.
+  - Overseas Orderbook: The 10-level overseas orderbook is available via `HHDFS76200100` (`orderbook_overseas` in `kis_client.py`), unlike the details endpoint `HHDFS76200200`.
 
 ## Working in this repo
 

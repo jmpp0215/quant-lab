@@ -16,8 +16,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from quant import config
-from quant import strategy
+from quant import config, strategy
 
 log = logging.getLogger(__name__)
 
@@ -84,9 +83,9 @@ def run(candles_by_symbol: dict[str, list[dict]],
     holdings: dict[str, Decimal] = {}
     basis: dict[str, Decimal] = {}      # symbol -> cost per unit
 
-    for date in rebalance_dates(candles_by_symbol, offset=offset):
+    for trade_date in rebalance_dates(candles_by_symbol, offset=offset):
         prices = {
-            sym: close_at(cs, date)
+            sym: close_at(cs, trade_date)
             for sym, cs in candles_by_symbol.items()
         }
         prices = {s: p for s, p in prices.items() if p is not None}
@@ -316,20 +315,21 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
             if sym in seed_prices
         }
         cash -= sum(units * seed_prices[sym]
-                    for sym, units in books[t].items())
+                for sym, units in books[t].items())
 
     # The first scheduled rebalance is now a no-op for that sleeve.
     schedule = schedule[1:]
 
-    for date, which in schedule:
+    for trade_date, which in schedule:
         prices = {
-            sym: close_at(cs, date)
+            sym: close_at(cs, trade_date)
             for sym, cs in candles_by_symbol.items()
         }
         prices = {s: p for s, p in prices.items() if p is not None}
+        prices["cash"] = Decimal("1.0")
 
         sliced = {
-            sym: slice_at(cs, date)
+            sym: slice_at(cs, trade_date)
             for sym, cs in candles_by_symbol.items()
         }
         signal = strategy.evaluate(sliced)
