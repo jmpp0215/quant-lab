@@ -209,6 +209,55 @@ class KisClient:
         return self.post("/uapi/domestic-stock/v1/trading/order-cash",
                          tr_id, body)
 
+    def create_order_overseas(self, symbol: str, side: str, quantity: int,
+                              price: str, exchange: str) -> dict:
+        """Place a US-listed limit order. Blocked unless KIS_DRY_RUN is
+        explicitly false.
+
+        Regular session only - the day session (미국주간거래) is a
+        different endpoint with its own tr_id pair
+        (/uapi/overseas-stock/v1/trading/daytime-order, TTTS6036U/
+        TTTS6037U), not implemented here.
+
+        Limit orders only, like create_order(): a market order has no
+        price ceiling, and unlike domestic, US regular-session buys don't
+        even have a market-order code (00 지정가/32 LOO/34 LOC only) - so
+        there is no order_type to make symmetric with sell in the first
+        place.
+
+        price is passed through as given (e.g. "145.00"); KIS's actual
+        tick/precision rules per price band are not documented anywhere
+        this could confirm them, so nothing here rounds or validates it -
+        unlike create_order(), which can check against known KRX ticks.
+        """
+        if exchange not in ("NASD", "NYSE", "AMEX"):
+            raise ValueError(
+                f"exchange must be NASD/NYSE/AMEX, got {exchange!r}")
+
+        tr_id = {"BUY": "TTTT1002U", "SELL": "TTTT1006U"}[side]
+        body = {
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt_cd,
+            "OVRS_EXCG_CD": exchange,
+            "PDNO": symbol,
+            "ORD_QTY": str(quantity),
+            "OVRS_ORD_UNPR": price,
+            "ORD_DVSN": "00",
+            "SLL_TYPE": "00" if side == "SELL" else "",
+            "ORD_SVR_DVSN_CD": "0",
+            "CTAC_TLNO": "",
+            "MGCO_APTM_ODNO": "",
+        }
+
+        if self.dry_run:
+            log.warning("[DRY RUN] overseas order not sent: %s (tr_id=%s)",
+                       body, tr_id)
+            return {"dryRun": True, "request": body}
+
+        log.info("placing overseas order: %s (tr_id=%s)", body, tr_id)
+        return self.post("/uapi/overseas-stock/v1/trading/order",
+                         tr_id, body)
+
     def list_orders(self) -> dict:
         """Domestic stock uncleared/cancelable orders (tr_id: TTTC8036R)."""
         return self.get(
