@@ -205,6 +205,46 @@ class KisClient:
         return self.post("/uapi/domestic-stock/v1/trading/order-cash",
                          tr_id, body)
 
+    def list_orders(self) -> dict:
+        """Domestic stock uncleared/cancelable orders (tr_id: TTTC8036R)."""
+        return self.get(
+            "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl",
+            tr_id="TTTC8036R",
+            params={
+                "CANO": self.cano,
+                "ACNT_PRDT_CD": self.acnt_prdt_cd,
+                "CTX_AREA_FK100": "",
+                "CTX_AREA_NK100": "",
+                "INQR_DVSN_1": "0",  # 0: 전체
+                "INQR_DVSN_2": "0",  # 0: 전체
+            },
+        )
+
+    def cancel_order(self, orgn_odno: str, quantity: int = 0, branch_id: str = "") -> dict:
+        """Cancel an uncleared domestic stock order (tr_id: TTTC0803U).
+        
+        branch_id (KRX_FWDG_ORD_ORGNO) is often returned as 'ord_gno_brno' in list_orders.
+        """
+        body = {
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt_cd,
+            "KRX_FWDG_ORD_ORGNO": branch_id,
+            "ORGN_ODNO": orgn_odno,
+            "ORD_DVSN": "00",            # required
+            "RVSE_CNCL_DVSN_CD": "02",   # 02: 취소
+            "ORD_QTY": str(quantity),
+            "ORD_UNPR": "0",
+            "QTY_ALL_ORD_YN": "Y" if quantity == 0 else "N",
+        }
+        
+        if self.dry_run:
+            log.warning("[DRY RUN] cancel not sent: %s (tr_id=TTTC0803U)", body)
+            return {"dryRun": True, "request": body}
+
+        log.info("canceling order %s: %s (tr_id=TTTC0803U)", orgn_odno, body)
+        return self.post("/uapi/domestic-stock/v1/trading/order-rvsecncl",
+                         "TTTC0803U", body)
+
     def price(self, symbol: str) -> dict:
         """Domestic stock current price (tr_id: FHKST01010100)."""
         return self.get(
