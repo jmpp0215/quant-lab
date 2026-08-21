@@ -6,8 +6,10 @@
     python show.py portfolio       value over time
     python show.py orders          trade history
     python show.py tranches        current sleeve books
+    python show.py summary         every account's total/cash, latest date
 
     --account NAME   which account to show (default: toss-bot)
+                     ignored by summary, which always shows every account
 """
 
 import sys
@@ -234,8 +236,47 @@ def tranches(account: str) -> None:
         print()
 
 
-# ranking/variants ignore account - scores/variants are the shared signal,
-# not per-account state, so account doesn't apply to them.
+def summary() -> None:
+    """Every account's total/cash on the latest date any of them has."""
+    with storage.connect() as conn:
+        date = conn.execute(
+            "SELECT MAX(trade_date) AS d FROM portfolio"
+        ).fetchone()["d"]
+        if not date:
+            print("no portfolio history")
+            return
+
+        rows = conn.execute(
+            "SELECT account, currency, total, cash FROM portfolio "
+            "WHERE trade_date = ?", (date,)
+        ).fetchall()
+
+    by_account = {r["account"]: r for r in rows}
+
+    print(f"=== {date} ===\n")
+    print(f"{_pad('account', 20)}{'total':>14}{'cash':>12}  currency")
+
+    # Grouped by currency rather than assumed KRW: save_portfolio keeps
+    # values in their native currency, so a summed total is only
+    # meaningful within one currency.
+    totals: dict[str, Decimal] = {}
+    for account in accounts.ACCOUNTS:
+        r = by_account.get(account)
+        if r is None:
+            print(f"{_pad(account, 20)}{'no data for ' + date:>26}")
+            continue
+        total, cash = Decimal(r["total"]), Decimal(r["cash"])
+        totals[r["currency"]] = totals.get(r["currency"], Decimal("0")) + total
+        print(f"{_pad(account, 20)}{total:>14,.0f}{cash:>12,.0f}  {r['currency']}")
+
+    print()
+    for currency, total in sorted(totals.items()):
+        print(f"{_pad('total', 20)}{total:>14,.0f}  {currency}")
+
+
+# ranking/variants/summary ignore account - ranking/variants are the
+# shared signal, not per-account state, and summary always shows every
+# account regardless of which one --account points at.
 COMMANDS = {
     "latest": lambda account: latest(account),
     "ranking": lambda account: ranking(),
@@ -243,6 +284,7 @@ COMMANDS = {
     "portfolio": lambda account: portfolio(account),
     "orders": lambda account: orders(account),
     "tranches": lambda account: tranches(account),
+    "summary": lambda account: summary(),
 }
 
 
