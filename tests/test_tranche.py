@@ -6,10 +6,7 @@ shows up as real money moving the wrong way.
 
 from decimal import Decimal
 
-import pytest
-
-from quant import config
-from quant import tranche
+from quant import config, tranche
 
 
 class TestSplitEvenly:

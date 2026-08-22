@@ -10,8 +10,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
-from quant import config
-from quant import market
+from quant import config, market
 
 log = logging.getLogger(__name__)
 

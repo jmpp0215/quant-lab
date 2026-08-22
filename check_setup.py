@@ -4,8 +4,7 @@ import json
 import logging
 import sys
 
-from quant import logging_config
-from quant import market
+from quant import logging_config, market
 from quant.toss_client import TossApiError, TossClient
 
 
