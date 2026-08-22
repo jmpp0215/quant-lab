@@ -24,7 +24,8 @@ python daily.py               # compute and record today's signal (no orders)
 python check_due.py           # is a tranche scheduled today? desktop notification only
 python rebalance_run.py       # interactive: place real orders for the tranche due today
 python tranche_init.py        # one-time: assign existing holdings to tranches
-python show.py                 # inspect recorded history
+python show.py                # inspect recorded history
+python slippage.py            # analyze execution slippage vs limit price
 ```
 
 Tests are plain `pytest` classes/functions per module (`TestXxx` grouping cases), no

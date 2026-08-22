@@ -76,7 +76,12 @@ The codebase separates core logic (`quant/`) from executable entry points (proje
 | `quant/market.py` | Session detection, KRX tick sizes |
 | `quant/config.py` | Universe and strategy parameters |
 | `daily.py` | Entry point, driven by cron to compute and record daily signals |
+| `check_due.py` | Entry point, driven by cron to notify if a tranche is due |
 | `rebalance_run.py` | Manual, interactive entry point for actual trading |
+| `tranche_init.py` | One-time entry point to assign existing holdings to tranches |
+| `backtest.py` | Historical simulation and performance metrics |
+| `show.py` | Read-only views over recorded history |
+| `slippage.py` | Execution slippage analysis (limit vs avg fill price) |
 | `tests/` | Unit tests for strategy, allocation, executor, and tranche logic |
 
 `quant.strategy.evaluate` takes candles and returns target weights. It has no access to the network,
