@@ -32,6 +32,12 @@ WATCH_ONLY = {
     "0167Z0": "KODEX 미국우주항공",
 }
 
+# Symbols that were once held or tracked but are no longer in the active
+# universe or watch list. Kept here primarily for naming historical records.
+RETIRED_SYMBOLS = {
+    "010120": "LS ELECTRIC",
+}
+
 # ETFs we hold but do not trade as strategy candidates. Separate from
 # WATCH_ONLY on purpose: that dict feeds all_symbols(), so anything added
 # there gets candles fetched and accumulates history for later audit,

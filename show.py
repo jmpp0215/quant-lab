@@ -27,6 +27,8 @@ def _name(symbol: str) -> str:
     """
     return (config.UNIVERSE.get(symbol)
             or config.WATCH_ONLY.get(symbol)
+            or config.HELD_ETFS.get(symbol)
+            or config.RETIRED_SYMBOLS.get(symbol)
             or symbol)
 
 
