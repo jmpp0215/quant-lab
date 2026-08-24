@@ -88,20 +88,29 @@ but `rebalance_run.py` refuses to place orders for any other account:
 computes and prints the plan, then stops. The plan itself is trustworthy
 and worth reading; only the sending is blocked.
 
-The block is a deliberate policy, not a missing feature. Two things are
-still unproven, and both want a person watching:
+The block is a deliberate policy, not a missing feature.
 
-- **No KIS order has ever been sent by this code.** KIS has no paper
-  environment, so the first real order is also the first test.
-- **`kis_client.open_orders()` parses an unverified response shape.** The
-  account had no resting order when it was written, so TTTC8036R's row
-  fields were never actually seen. It reads keys directly, so a wrong
-  guess raises rather than mis-reporting a fill — and the one caller that
-  runs before any order is placed fails first — but it wants confirming
-  against a real resting order.
+- **`kis_client.open_orders()`'s response shape is confirmed.** Verified
+  2026-08-24 against ISA: a real 1-share 102110 order, priced 15% below
+  the bid to guarantee it would rest, was placed via
+  `kis_client.place_order()`, read back correctly by `open_orders()`
+  (`odno`/`ord_gno_brno`/`ord_qty`/`tot_ccld_qty` matched exactly what
+  was predicted), and cancelled via `kis_client.cancel()` - confirmed
+  gone on a second `open_orders()` call. KIS has no paper environment, so
+  this was also the first real order this code has ever sent - it went
+  through cleanly.
+- **Still unproven: `executor.execute()`'s retry loop against KIS.** The
+  2026-08-24 check went through `place_order`/`open_orders`/`cancel`
+  directly, not `executor.execute()` - that loop reprices through the
+  touch to seek a fill, wait-polls, and handles partial fills, none of
+  which the check above exercised (the order was deliberately priced to
+  never fill). **Decision: the guard stays until that loop is verified
+  live too, right before the first real tranche in September** - not
+  lifted on this narrower check alone.
 
-To lift it: place one small unfillable limit order by hand through the
-KIS app, confirm `open_orders()` parses it, then delete the
+To lift it: exercise `executor.execute()` against a KIS account the same
+deliberate way - e.g. a small order priced to rest, run through the real
+retry/reprice/cancel path rather than called directly - then delete the
 `account != "toss-bot"` guard in `rebalance_run.py` and re-enable the
 `cancel_open_orders` call above it. `KIS_DRY_RUN` is the same
 unlock/lock dance as `TOSS_DRY_RUN` in steps 3-6.

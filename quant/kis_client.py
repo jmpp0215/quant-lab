@@ -527,17 +527,15 @@ def place_order(client: "KisClient", order, price: Decimal
 def open_orders(client: "KisClient") -> list[broker.OpenOrder]:
     """Our resting orders.
 
-    UNVERIFIED RESPONSE SHAPE. The account held no open order when this
-    was written, so TTTC8036R is confirmed only as far as rt_cd=0 - its
-    row fields were never seen. The names below are the ones this same
-    account's inquire-daily-ccld rows really do carry (odno /
-    ord_gno_brno / ord_qty / tot_ccld_qty), and KIS reuses them across
-    order endpoints, but CLAUDE.md's rule stands: confirm against a live
-    resting order before trusting this. Keys are read directly rather
-    than with .get() defaults so a wrong guess raises instead of quietly
-    reporting an order as unfilled - and the caller that runs before any
-    order is placed (executor.cancel_open_orders) would fail loudly,
-    before money moves.
+    Verified live on 2026-08-24 against ISA (102110, 1 share, deliberately
+    priced 15% below the bid to guarantee it would rest): TTTC8036R's row
+    fields are exactly odno / ord_gno_brno / ord_qty / tot_ccld_qty, as
+    predicted from this same account's inquire-daily-ccld rows. The
+    parse below, the resulting handle, and cancel() were all exercised
+    against that real order, which was then cancelled. Keys are still
+    read directly rather than with .get() defaults, so a KIS response
+    shape change in the future raises instead of quietly reporting an
+    order as unfilled.
     """
     rows = client.list_orders().get("output") or []
     return [
