@@ -238,6 +238,17 @@ def snapshot(client: "TossClient") -> storage.AccountSnapshot:
                                    total=total, cash=cash, positions=pos_rows)
 
 
+def available_cash(client: "TossClient", prices: dict[str, Decimal]) -> Decimal:
+    """Cash available for a fresh buy right now (주문가능금액), for resizing
+    a buy plan after sells fill.
+
+    prices is unused - Toss's buying-power endpoint is account-level, not
+    symbol-scoped - but kept in the signature so every broker's adapter
+    looks the same to the caller (see kis_client.available_cash).
+    """
+    return Decimal(client.buying_power("KRW")["result"]["cashBuyingPower"])
+
+
 def batch_price(client: "TossClient", symbols: set[str]) -> dict[str, Decimal]:
     """Last price for each symbol, in one comma-joined call."""
     if not symbols:

@@ -236,6 +236,13 @@ class FakeKisClient:
         return {"output1": [{"odno": "0024989600", "tot_ccld_qty": "10",
                              "avg_prvs": "109510"}]}
 
+    def buying_power(self, symbol, price):
+        # ord_psbl_cash left deliberately different from nrcvb_buy_amt,
+        # matching the live kis-isa response that showed they diverge -
+        # a regression here should fail loudly rather than pass by luck.
+        return {"output": {"ord_psbl_cash": "142107",
+                           "nrcvb_buy_amt": "3000000"}}
+
 
 class TestKisAdapters:
     def test_orderbook_maps_kis_fields_to_touch(self):
@@ -301,6 +308,105 @@ class TestKisAdapters:
         assert ex["averageFilledPrice"] == "109510"
         assert ex["commission"] is None and ex["tax"] is None
 
+    def test_available_cash_reads_nrcvb_buy_amt(self):
+        # Not ord_psbl_cash (confirmed live to equal dnca_tot_amt, ignoring
+        # unsettled sell proceeds entirely) - nrcvb_buy_amt is what
+        # resizing a buy right after a sell must use.
+        cash = kis_client.available_cash(
+            FakeKisClient(), {"102110": Decimal("109510")})
+        assert cash == Decimal("3000000")
+
+
+class ScriptedKisClient:
+    """Drives executor.execute() through the real kis_client adapter
+    functions (not FakeBroker), scripting which orders are still resting.
+
+    TestKisAdapters checks each adapter translation in isolation; this
+    checks that executor.execute()'s cancel/reprice/poll loop still works
+    once wired to kis_client's actual functions end to end - the piece
+    RUNBOOK.md flags as unverified against KIS.
+    """
+
+    def __init__(self, fill_on_attempt: int | None = 2):
+        # Orders rest until cancelled on every attempt before
+        # fill_on_attempt; None means every attempt rests (never fills).
+        self._next_odno = 0
+        self.created: list[str] = []
+        self.cancelled: list[str] = []
+        self._resting_odno: str | None = None
+        self.fill_on_attempt = fill_on_attempt
+        self.fills: dict[str, dict] = {}
+
+    def orderbook(self, symbol):
+        return {"output1": {
+            "askp1": "109620", "bidp1": "109615",
+            "askp_rsqn1": "4222", "bidp_rsqn1": "300",
+        }}
+
+    def create_order(self, symbol, side, order_type, quantity, price=None):
+        self._next_odno += 1
+        odno = f"{self._next_odno:010d}"
+        self.created.append(odno)
+        if self._next_odno == self.fill_on_attempt:
+            self.fills[odno] = {"tot_ccld_qty": str(quantity),
+                                "avg_prvs": str(price)}
+        else:
+            self._resting_odno = odno
+        return {"output": {"ODNO": odno, "KRX_FWDG_ORD_ORGNO": "91252"}}
+
+    def cancel_order(self, orgn_odno, quantity=0, branch_id=""):
+        self.cancelled.append(orgn_odno)
+        if self._resting_odno == orgn_odno:
+            self._resting_odno = None
+        return {"output": {}}
+
+    def list_orders(self):
+        if self._resting_odno is None:
+            return {"output": []}
+        return {"output": [{"odno": self._resting_odno,
+                            "ord_gno_brno": "91252", "pdno": "102110",
+                            "ord_qty": "10", "tot_ccld_qty": "0"}]}
+
+    def daily_orders(self, start, end):
+        return {"output1": [{"odno": odno, **fill}
+                            for odno, fill in self.fills.items()]}
+
+
+class TestExecuteAgainstKis:
+    def test_fills_on_first_attempt(self):
+        client = ScriptedKisClient(fill_on_attempt=1)
+        results = executor.execute(kis_client, client, [order("BUY")],
+                                   {"102110": Decimal("109615")})
+
+        assert results["102110"]["filled"]
+        assert results["102110"]["filled_quantity"] == 10
+        assert len(client.created) == 1
+        assert client.cancelled == []
+
+    def test_cancels_and_reprices_when_unfilled(self):
+        # First order rests through the poll timeout; executor must
+        # cancel it via the real kis_client.cancel (org_no included) and
+        # reissue for the remainder before a second attempt fills.
+        client = ScriptedKisClient(fill_on_attempt=2)
+        results = executor.execute(kis_client, client, [order("BUY")],
+                                   {"102110": Decimal("109615")})
+
+        assert results["102110"]["filled"]
+        assert len(client.created) == 2
+        assert client.cancelled == [client.created[0]]
+
+    def test_never_leaves_an_order_resting_on_failure(self):
+        # Every attempt rests; after MAX_ATTEMPTS the order must be
+        # cancelled, not left open, via the real KIS cancel path.
+        client = ScriptedKisClient(fill_on_attempt=None)
+        results = executor.execute(kis_client, client, [order("BUY")],
+                                   {"102110": Decimal("109615")})
+
+        assert not results["102110"]["filled"]
+        assert len(client.created) == executor.MAX_ATTEMPTS
+        assert client.cancelled == client.created
+        assert client.list_orders()["output"] == []
+
 
 class TestTossAdaptersUnchanged:
     """The Toss path must behave exactly as it did before the refactor."""
@@ -322,6 +428,9 @@ class TestTossAdaptersUnchanged:
         def cancel_order(self, order_id):
             self.cancelled.append(order_id)
 
+        def buying_power(self, currency="KRW"):
+            return {"result": {"cashBuyingPower": "5000000"}}
+
     def test_orderbook(self):
         touch = toss_client.orderbook(self.Client(), "102110")
         assert (touch.ask, touch.bid) == (Decimal("109620"), Decimal("109615"))
@@ -336,3 +445,9 @@ class TestTossAdaptersUnchanged:
         client = self.Client()
         toss_client.cancel(client, OrderHandle(order_id="toss-1"))
         assert client.cancelled == ["toss-1"]
+
+    def test_available_cash_ignores_prices(self):
+        # Toss's buying-power endpoint is account-level, not symbol-scoped -
+        # the prices dict is only there so kis_client's adapter can match.
+        assert toss_client.available_cash(self.Client(), {}) == \
+            Decimal("5000000")

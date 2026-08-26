@@ -22,9 +22,11 @@ _kis_main_client = lambda: KisClient("main")
 ACCOUNTS = {
     "toss-bot": {"client": TossClient, "snapshot": toss_client.snapshot,
                  "price": toss_client.batch_price, "broker": toss_client,
+                 "buying_power": toss_client.available_cash,
                  "strategy": False},
     "kis-main": {"client": _kis_main_client, "snapshot": kis_client.snapshot,
                  "price": kis_client.batch_price, "broker": kis_client,
+                 "buying_power": kis_client.available_cash,
                  "strategy": False},
     # Domestic and overseas balance are separate endpoints on the same KIS
     # account - shares _kis_main_client with "kis-main" rather than
@@ -34,15 +36,18 @@ ACCOUNTS = {
     "kis-main-overseas": {"client": _kis_main_client,
                           "snapshot": kis_client.snapshot_overseas,
                           "price": kis_client.batch_price, "broker": None,
+                          "buying_power": None,
                           "strategy": False},
     "kis-isa": {"client": lambda: KisClient("isa"), "snapshot": kis_client.snapshot,
                 "price": kis_client.batch_price, "broker": kis_client,
+                "buying_power": kis_client.available_cash,
                 "strategy": True},
 }
 
 
 def resolve(account: str) -> dict:
-    """{"client", "snapshot", "price", "broker", "strategy"} for one account."""
+    """{"client", "snapshot", "price", "broker", "buying_power", "strategy"}
+    for one account."""
     try:
         return ACCOUNTS[account]
     except KeyError:

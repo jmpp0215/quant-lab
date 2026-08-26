@@ -352,6 +352,52 @@ class KisClient:
             },
         )
 
+    def buying_power(self, symbol: str, price: str) -> dict:
+        """Order-possible cash inquiry / 매수가능조회 (tr_id: TTTC8908R).
+
+        Verified live on 2026-08-26 against kis-isa, which had sold 5
+        symbols the previous day (holdings left only 현대차): the response
+        carried both ord_psbl_cash and nrcvb_buy_amt, and they are NOT
+        interchangeable -
+
+        - output.ord_psbl_cash was 142,107, identical to holdings()'s
+          dnca_tot_amt to the won. It does not reflect the prior day's
+          12,693,752 KRW of unsettled sell proceeds at all - despite the
+          name, it is a same-day-settled-cash figure like dnca_tot_amt, not
+          a post-sell buying-power one. This was the field used here
+          originally, which would have undersized a same-day rebuy by
+          about 99%.
+        - output.nrcvb_buy_amt ("미수없는매수가능금액") was 12,683,594,
+          which does include those proceeds: holdings().dnca_tot_amt +
+          bfdy_sll_amt - bfdy_tlex_amt = 142,107 + 12,693,752 - 14,945 =
+          12,820,914 (nxdy_excc_amt, the D+1-settled total); nrcvb_buy_amt
+          sits 137,320 KRW below that, a gap that held fixed across three
+          re-queries with different symbol/price pairs. So it is an
+          account-level cash figure like ord_psbl_cash, not order-specific,
+          and the 137,320 buffer's exact source is unconfirmed but
+          conservative (understates rather than overstates what is
+          actually spendable) - safe to trade against as-is.
+
+        nrcvb_buy_amt is therefore what available_cash() below reads. The
+        endpoint is shaped around one symbol/price (it also returns that
+        symbol's nrcvb_buy_qty at that price), but the KRW amount fields
+        are account-level, not specific to the symbol passed - confirmed
+        by the same re-query test above.
+        """
+        return self.get(
+            "/uapi/domestic-stock/v1/trading/inquire-psbl-order",
+            tr_id="TTTC8908R",
+            params={
+                "CANO": self.cano,
+                "ACNT_PRDT_CD": self.acnt_prdt_cd,
+                "PDNO": symbol,
+                "ORD_UNPR": price,
+                "ORD_DVSN": "00",
+                "CMA_EVLU_AMT_ICLD_YN": "N",
+                "OVRS_ICLD_YN": "N",
+            },
+        )
+
     def daily_orders(self, start: str, end: str) -> dict:
         """Orders and their fills over a date range (tr_id: TTTC8001R).
 
@@ -464,6 +510,20 @@ def snapshot_overseas(client: "KisClient") -> storage.AccountSnapshot:
         cash=cash,
         positions=positions
     )
+
+
+def available_cash(client: "KisClient", prices: dict[str, Decimal]) -> Decimal:
+    """Cash available for a fresh buy right now (주문가능금액), for resizing
+    a buy plan after sells fill - see KisClient.buying_power() for why this
+    reads nrcvb_buy_amt and not ord_psbl_cash or snapshot()'s dnca_tot_amt.
+
+    The underlying endpoint wants a symbol/price to query against; any one
+    from `prices` works, since nrcvb_buy_amt does not vary with which
+    symbol is passed (verified live - see buying_power()'s docstring).
+    """
+    symbol, price = next(iter(prices.items()))
+    resp = client.buying_power(symbol, str(price))
+    return Decimal(resp["output"]["nrcvb_buy_amt"])
 
 
 def batch_price(client: "KisClient", symbols: set[str]) -> dict[str, Decimal]:

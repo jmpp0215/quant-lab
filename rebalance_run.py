@@ -202,9 +202,10 @@ def main() -> int:
         results |= executor.execute(cfg["broker"], client, sells, prices)
 
     if buys:
-        # Recompute against the cash the sells actually raised.
-        cash = Decimal(
-            client.buying_power("KRW")["result"]["cashBuyingPower"])
+        # Recompute against the cash the sells actually raised, via each
+        # broker's own buying-power/order-possible-cash figure rather than
+        # a settled-cash balance that hasn't caught up with today's sells.
+        cash = cfg["buying_power"](client, prices)
         book_after = apply_fills(book, sells, results)
         value = tranche.tranche_value(book_after, prices, cash)
         targets = tranche.target_quantities(signal.weights, value, prices)
