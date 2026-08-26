@@ -9,7 +9,7 @@
     python show.py summary         every account's total/cash, latest date
     python show.py health          latest run status, tranche drift, unexplained cash
 
-    --account NAME   which account to show (default: toss-bot)
+    --account NAME   which account to show (default: kis-isa)
                      ignored by summary, which always shows every account
 """
 

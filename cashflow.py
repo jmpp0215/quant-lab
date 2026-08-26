@@ -1,8 +1,8 @@
 """Record an external deposit or withdrawal.
 
-    python cashflow.py 2026-08-14 3000000 "initial funding"
+    python cashflow.py 2026-08-14 3000000 "initial funding"      kis-isa (default)
     python cashflow.py 2026-09-01 -500000 "withdrawal"
-    python cashflow.py --account kis-isa 2026-08-14 3000000 "initial funding"
+    python cashflow.py --account toss-bot 2026-08-14 3000000 "initial funding"
 
 Neither Toss nor KIS expose transaction history through the API, so these
 have to be entered by hand. Without them a deposit looks exactly like a

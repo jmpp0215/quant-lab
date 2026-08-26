@@ -1,7 +1,7 @@
 """Manual rebalance run.
 
-    python rebalance_run.py                    toss-bot (default), places live orders
-    python rebalance_run.py --account kis-isa   plan only - see note below
+    python rebalance_run.py                    kis-isa (default) - plan only, see note below
+    python rebalance_run.py --account toss-bot  places live orders
 
 Capital is split across tranches that rebalance on different trading days
 of the month, so a run touches one sleeve and leaves the others alone.
@@ -10,9 +10,11 @@ Only that sleeve's holdings and its share of the cash pool are in scope.
 executor.py does now support KIS, but live order placement is still
 deliberately limited to toss-bot: the KIS execution path has never sent a
 real order, and KIS has no paper environment in which to prove it. So for
-any non-toss-bot account this script computes and prints the rebalance
-plan the same way, then stops before sending anything. Lifting that means
-editing the guard below - see RUNBOOK.md.
+kis-isa (and any other non-toss-bot account) this script computes and
+prints the rebalance plan the same way, then stops before sending
+anything. Lifting that means editing the guard below - see RUNBOOK.md.
+toss-bot is now the sandbox account: not on the regular tranche schedule,
+but still the only account this script will actually trade live.
 """
 
 import logging

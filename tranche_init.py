@@ -1,8 +1,8 @@
 """Assign the current account holdings to tranches.
 
-    python tranche_init.py                    toss-bot (default)
-    python tranche_init.py --account kis-isa
+    python tranche_init.py                    kis-isa (default)
     python tranche_init.py --account kis-isa --force
+    python tranche_init.py --account toss-bot
 
 No trading happens: this only writes down which sleeve owns which shares.
 Run once, when starting staggered rebalancing on an existing position.

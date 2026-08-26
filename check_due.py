@@ -1,7 +1,7 @@
 """Report whether a tranche is scheduled to rebalance today.
 
-    python check_due.py                    toss-bot (default)
-    python check_due.py --account kis-isa
+    python check_due.py                    kis-isa (default)
+    python check_due.py --account toss-bot
 
 Runs in the morning so there is time to act during the session. Places no
 orders: rebalancing stays a manual step until the process has been through

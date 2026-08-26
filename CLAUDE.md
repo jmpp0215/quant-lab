@@ -4,10 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A dual momentum trading system built on the Toss Securities Open API. Ranks a universe of
-eight Korea-listed ETFs by risk-adjusted momentum and rebalances a live brokerage account
-monthly, in staggered tranches. Personal research project, not a library — there is no
-paper trading environment, so all safety comes from code structure, not from a sandbox.
+A dual momentum trading system built on the Toss Securities and KIS (한국투자증권) Open
+APIs. Ranks a universe of eight Korea-listed ETFs by risk-adjusted momentum and
+rebalances a live brokerage account monthly, in staggered tranches. Personal research
+project, not a library — there is no paper trading environment, so all safety comes from
+code structure, not from a sandbox.
+
+Trading is multi-account (`quant/accounts.py`): `kis-isa` (a KIS ISA account) is the
+primary strategy account and the default for every script; `toss-bot` (Toss) is a
+sandbox account for ad hoc execution-path trials, off the regular tranche schedule;
+`kis-main`/`kis-main-overseas` are observed (snapshotted daily) but never traded by
+this strategy. See `RUNBOOK.md` for the current live-trading status per account.
 
 ## Commands
 
@@ -48,7 +55,10 @@ Changing strategy behavior almost always means editing constants here, not logic
 **Module responsibilities:**
 | Module | Responsibility |
 |---|---|
-| `toss_client.py` | REST client — token caching, 429 backoff, error envelope parsing |
+| `accounts.py` | Account registry (`toss-bot`, `kis-isa`, `kis-main`, `kis-main-overseas`) — which client/broker/snapshot backs each, `--account` flag parsing, default account |
+| `broker.py` | The execution interface every broker module (`toss_client`, `kis_client`) implements — dataclasses only, no logic |
+| `toss_client.py` | REST client for Toss — token caching, 429 backoff, error envelope parsing |
+| `kis_client.py` | REST client for KIS (한국투자증권) — backs `kis-isa`/`kis-main`; domestic + overseas endpoints, per-account credentials |
 | `candles.py` | Daily candle fetching, disk cache (`data/candles`), excludes in-progress candle |
 | `momentum.py` | Date-anchored lookback returns with dividend adjustment |
 | `indicators.py` | Technical indicators (e.g. moving-average trend filter) used by strategy variants |
@@ -58,12 +68,12 @@ Changing strategy behavior almost always means editing constants here, not logic
 | `tranche.py` | Splits capital into staggered sleeves; per-sleeve books, schedule, drift reconciliation |
 | `executor.py` | Places limit orders at the touch, polls fills, retries remainder, enforces deviation/auction guards |
 | `market.py` | Session detection, KRX tick sizes |
-| `storage.py` | SQLite persistence (`data/quant.db`) — signals, orders, portfolio snapshots, tranche books, cashflows |
+| `storage.py` | SQLite persistence (`data/quant.db`) — signals, orders, portfolio snapshots, tranche books, cashflows, all `account`-scoped except the shared signal tables |
 | `config.py` | Universe and all strategy parameters |
-| `daily.py` | Cron entry point: evaluate + record signal only, never trades |
-| `check_due.py` | Cron entry point: notify if a tranche is due, place no orders |
-| `rebalance_run.py` | Manual, interactive entry point that actually trades |
-| `tranche_init.py` | One-time: assign existing account holdings to tranches without trading |
+| `daily.py` | Cron entry point: evaluate + record signal (once, for the strategy account), snapshot every account, never trades |
+| `check_due.py` | Cron entry point: notify if a tranche is due for one account (`--account`, default `kis-isa`), place no orders |
+| `rebalance_run.py` | Manual, interactive entry point; computes the plan for any account (`--account`) but only sends real orders for `toss-bot` today — see `RUNBOOK.md` |
+| `tranche_init.py` | One-time: assign one account's existing holdings to tranches without trading |
 | `backtest.py` | Historical simulation, including tranched/staggered-entry backtesting |
 | `show.py` | Read-only views over recorded history |
 
@@ -77,9 +87,13 @@ strategy (manual trade, dividend paid in shares, unrecorded fill) and the run mu
 rather than trade through it.
 
 **Design decisions worth knowing before changing related code:**
-- `TOSS_DRY_RUN` defaults to `true`. Until explicitly set `false` in `.env`, `create_order`
-  logs the request and returns without sending it — this is the primary safety mechanism
-  since there is no paper trading environment.
+- `TOSS_DRY_RUN`/`KIS_DRY_RUN` default to `true`. Until explicitly set `false` in `.env`,
+  `create_order` logs the request and returns without sending it — this is the primary
+  safety mechanism since there is no paper trading environment.
+- `rebalance_run.py` additionally refuses to send real orders for any account other than
+  `toss-bot`, regardless of `KIS_DRY_RUN` — a second, deliberate gate on `kis-isa` until
+  `executor.execute()`'s retry loop is verified live against KIS. See `RUNBOOK.md`'s ISA
+  go-live checklist before removing it.
 - Momentum lookups resolve to the last trading day at or before a target date, never by
   candle index — symbols don't share one trading calendar, and index-based lookup once
   silently shifted an entire ranking when the cache added one candle.

@@ -11,7 +11,7 @@ from quant import kis_client, toss_client
 from quant.kis_client import KisClient
 from quant.toss_client import TossClient
 
-DEFAULT_ACCOUNT = "toss-bot"
+DEFAULT_ACCOUNT = "kis-isa"
 
 _kis_main_client = lambda: KisClient("main")
 
