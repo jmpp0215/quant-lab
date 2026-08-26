@@ -7,16 +7,21 @@
     python show.py orders          trade history
     python show.py tranches        current sleeve books
     python show.py summary         every account's total/cash, latest date
+    python show.py health          latest run status, tranche drift, unexplained cash
 
     --account NAME   which account to show (default: toss-bot)
                      ignored by summary, which always shows every account
 """
 
+import json
 import sys
 import unicodedata
 from decimal import Decimal
 
-from quant import accounts, config, storage
+# Shared with daily.py's own health check, so "no drift" here and "no
+# notification arrived" mean the same threshold was applied.
+from daily import CASH_ALERT_THRESHOLD
+from quant import accounts, config, storage, tranche
 
 
 def _name(symbol: str) -> str:
@@ -276,6 +281,53 @@ def summary() -> None:
         print(f"{_pad('total', 20)}{total:>14,.0f}  {currency}")
 
 
+def health() -> None:
+    """Latest run status, tranche drift, and unexplained cash.
+
+    Reads only recorded history - no live API calls - so it mirrors
+    exactly what daily.py's own health check would have found this
+    morning, for checking in on between notifications.
+    """
+    with storage.connect() as conn:
+        run = conn.execute(
+            "SELECT trade_date, ok FROM runs ORDER BY trade_date DESC LIMIT 1"
+        ).fetchone()
+        if run:
+            status = "ok" if run["ok"] else "FAILED"
+            print(f"latest run: {run['trade_date']} ({status})\n")
+        else:
+            print("no runs recorded\n")
+
+        print(f"{_pad('account', 20)}{'as of':<12}drift              cash")
+        for name in accounts.ACCOUNTS:
+            pf = conn.execute(
+                "SELECT trade_date, positions FROM portfolio "
+                "WHERE account = ? ORDER BY trade_date DESC LIMIT 1",
+                (name,),
+            ).fetchone()
+            if not pf:
+                print(f"{_pad(name, 20)}no portfolio data")
+                continue
+
+            books = storage.load_all_tranche_holdings(conn, name)
+            if books:
+                actual = {p["symbol"]: p["qty"]
+                          for p in json.loads(pf["positions"])}
+                drift = tranche.reconcile(books, actual)
+                drift_text = f"DRIFT {drift}" if drift else "in sync"
+            else:
+                drift_text = "no tranches"
+
+            unexplained = storage.unexplained_cash_change(
+                conn, name, pf["trade_date"])
+            cash_text = (f"UNEXPLAINED {unexplained:+,.0f}"
+                        if abs(unexplained) > CASH_ALERT_THRESHOLD
+                        else "ok")
+
+            print(f"{_pad(name, 20)}{pf['trade_date']:<12}"
+                  f"{_pad(drift_text, 19)}{cash_text}")
+
+
 # ranking/variants/summary ignore account - ranking/variants are the
 # shared signal, not per-account state, and summary always shows every
 # account regardless of which one --account points at.
@@ -287,6 +339,7 @@ COMMANDS = {
     "orders": lambda account: orders(account),
     "tranches": lambda account: tranches(account),
     "summary": lambda account: summary(),
+    "health": lambda account: health(),
 }
 
 

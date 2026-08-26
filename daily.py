@@ -22,11 +22,43 @@ from quant import (
     market,
     storage,
     strategy,
+    tranche,
 )
 from quant.kis_client import KisApiError
+from quant.notify import notify
 from quant.toss_client import TossApiError, TossClient
 
 log = logging.getLogger("daily")
+
+# Below this, a cash mismatch is more likely rounding/timing noise than
+# something worth waking up for.
+CASH_ALERT_THRESHOLD = Decimal("1000")
+
+
+def check_account_health(conn, account_name: str, snap: storage.AccountSnapshot,
+                         trade_date: str) -> list[str]:
+    """Read-only drift/cash checks against one account's fresh snapshot.
+
+    Returns human-readable problem descriptions, empty when nothing is
+    wrong. Never touches tranche books or places orders - this runs
+    unattended every day, not just when a tranche happens to be due, so it
+    must be safe to call regardless of what rebalance_run.py is doing.
+    """
+    problems = []
+
+    books = storage.load_all_tranche_holdings(conn, account_name)
+    if books:
+        actual = {p["symbol"]: p["qty"] for p in snap.positions}
+        drift = tranche.reconcile(books, actual)
+        if drift:
+            problems.append(f"tranche books disagree with the account: {drift}")
+
+    unexplained = storage.unexplained_cash_change(conn, account_name, trade_date)
+    if abs(unexplained) > CASH_ALERT_THRESHOLD:
+        problems.append(
+            f"unexplained cash change: {unexplained:+,.0f} {snap.currency}")
+
+    return problems
 
 
 def record_strategy(signal: strategy.Signal, trade_date: str,
@@ -122,11 +154,13 @@ def main() -> int:
             return 1
         trade_date = reference[0]["timestamp"][:10]
         log.info("trade date: %s", trade_date)
-    except Exception:
+    except Exception as e:
         log.exception("daily run failed")
+        notify("quant-lab", f"daily.py 실패 (candle/calendar fetch): {e}")
         return 1
 
     overall_ok = True
+    problem_accounts: list[str] = []
     # Seeded with the market client so the toss-bot account reuses it
     # instead of authenticating a second time: Toss keeps only one active
     # token per credential set, and a second one silently invalidates the
@@ -157,12 +191,24 @@ def main() -> int:
                     storage.save_portfolio(conn, trade_date, account_name,
                                            snap.currency, snap.total,
                                            snap.cash, snap.positions)
+                    problems = check_account_health(conn, account_name,
+                                                     snap, trade_date)
+                if problems:
+                    msg = "; ".join(problems)
+                    log.error("%s: %s", account_name, msg)
+                    problem_accounts.append(f"[{account_name}] {msg}")
+                    overall_ok = False
         except (TossApiError, KisApiError) as e:
             log.error("%s: api error: %s", account_name, e)
+            problem_accounts.append(f"[{account_name}] api error: {e}")
             overall_ok = False
-        except Exception:
+        except Exception as e:
             log.exception("%s: account run failed", account_name)
+            problem_accounts.append(f"[{account_name}] {e}")
             overall_ok = False
+
+    if problem_accounts:
+        notify("quant-lab", "daily.py: " + " / ".join(problem_accounts))
 
     log.info("daily run done")
     return 0 if overall_ok else 1

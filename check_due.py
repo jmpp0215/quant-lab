@@ -9,32 +9,14 @@ several live cycles.
 """
 
 import logging
-import subprocess
 import sys
 from datetime import datetime
 
 from quant import accounts, candles, config, logging_config, market, storage, tranche
+from quant.notify import notify
 from quant.toss_client import TossApiError, TossClient
 
 log = logging.getLogger("check-due")
-
-
-def notify(title: str, message: str) -> None:
-    """Best-effort desktop notification; never the reason a run fails.
-
-    AppleScript string literals only understand double quotes and a
-    backslash escape, so Python's repr() is not a safe way to quote them.
-    """
-    def quote(text: str) -> str:
-        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-
-    script = (f"display notification {quote(message)} "
-              f"with title {quote(title)}")
-    try:
-        subprocess.run(["osascript", "-e", script], timeout=5, check=False)
-    except Exception:
-        log.debug("notification failed", exc_info=True)
 
 
 def main() -> int:
@@ -77,9 +59,13 @@ def main() -> int:
 
     except TossApiError as e:
         log.error("api error: %s", e)
+        # A silent failure here reads identically to "no tranche due today"
+        # - the whole point of this notification is to break that tie.
+        notify("quant-lab", f"[{account}] check_due 실패 (api error): {e}")
         return 1
-    except Exception:
+    except Exception as e:
         log.exception("check failed")
+        notify("quant-lab", f"[{account}] check_due 실패: {e}")
         return 1
 
     return 0

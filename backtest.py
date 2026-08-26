@@ -98,7 +98,7 @@ def run(candles_by_symbol: dict[str, list[dict]],
             )
 
         sliced = {
-            sym: slice_at(cs, date)
+            sym: slice_at(cs, trade_date)
             for sym, cs in candles_by_symbol.items()
         }
         signal = strategy.evaluate(sliced)
@@ -135,7 +135,7 @@ def run(candles_by_symbol: dict[str, list[dict]],
                 basis[sym] = prices[sym]
 
         holdings = target
-        history.append(Rebalance(date=date, weights=weights,
+        history.append(Rebalance(date=trade_date, weights=weights,
                                  prices=prices, value=value))
 
     if holdings:
@@ -372,7 +372,7 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
             for sym, units in b.items()
             if sym in prices
         )
-        history.append(Rebalance(date=date, weights=weights,
+        history.append(Rebalance(date=trade_date, weights=weights,
                                  prices=prices, value=total))
 
     last = max(_date_of(c) for c in

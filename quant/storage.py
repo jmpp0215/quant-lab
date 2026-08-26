@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS orders (
     filled_qty      INTEGER,
     avg_fill_price  TEXT,
     commission      TEXT,
-    tax             TEXT
+    tax             TEXT,
+    executed_date   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS variants (
@@ -213,14 +214,15 @@ def save_order(conn: sqlite3.Connection, trade_date: str, placed_at: str,
     conn.execute(
         "INSERT INTO orders (trade_date, placed_at, account, tranche, symbol, "
         "side, quantity, limit_price, order_id, filled, filled_qty, "
-        "avg_fill_price, commission, tax) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "avg_fill_price, commission, tax, executed_date) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (trade_date, placed_at, account, tranche, symbol, side, quantity,
          str(limit_price), order_id, int(filled),
          int(ex["filledQuantity"]) if ex.get("filledQuantity") else None,
          ex.get("averageFilledPrice"),
          ex.get("commission"),
-         ex.get("tax")),
+         ex.get("tax"),
+         executed_date),
     )
 def tranches_done_this_month(conn: sqlite3.Connection, account: str,
                              trade_date: str) -> set[int]:
