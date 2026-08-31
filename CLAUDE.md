@@ -90,10 +90,11 @@ rather than trade through it.
 - `TOSS_DRY_RUN`/`KIS_DRY_RUN` default to `true`. Until explicitly set `false` in `.env`,
   `create_order` logs the request and returns without sending it — this is the primary
   safety mechanism since there is no paper trading environment.
-- `rebalance_run.py` additionally refuses to send real orders for any account other than
-  `toss-bot`, regardless of `KIS_DRY_RUN` — a second, deliberate gate on `kis-isa` until
-  `executor.execute()`'s retry loop is verified live against KIS. See `RUNBOOK.md`'s ISA
-  go-live checklist before removing it.
+- `rebalance_run.py` used to additionally refuse real orders for any account other than
+  `toss-bot`, regardless of `KIS_DRY_RUN` — a second, deliberate gate on `kis-isa` pending a
+  live verification of `executor.execute()`'s retry loop against KIS. That verification
+  passed and the guard was removed 2026-08-31; both accounts place real orders now. See
+  `RUNBOOK.md`'s ISA go-live checklist for the record.
 - Momentum lookups resolve to the last trading day at or before a target date, never by
   candle index — symbols don't share one trading calendar, and index-based lookup once
   silently shifted an entire ranking when the cache added one candle.

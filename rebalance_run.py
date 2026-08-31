@@ -1,20 +1,17 @@
 """Manual rebalance run.
 
-    python rebalance_run.py                    kis-isa (default) - plan only, see note below
-    python rebalance_run.py --account toss-bot  places live orders
+    python rebalance_run.py                    kis-isa (default) - places live orders
+    python rebalance_run.py --account toss-bot  sandbox account, ad hoc trials only
 
 Capital is split across tranches that rebalance on different trading days
 of the month, so a run touches one sleeve and leaves the others alone.
 Only that sleeve's holdings and its share of the cash pool are in scope.
 
-executor.py does now support KIS, but live order placement is still
-deliberately limited to toss-bot: the KIS execution path has never sent a
-real order, and KIS has no paper environment in which to prove it. So for
-kis-isa (and any other non-toss-bot account) this script computes and
-prints the rebalance plan the same way, then stops before sending
-anything. Lifting that means editing the guard below - see RUNBOOK.md.
-toss-bot is now the sandbox account: not on the regular tranche schedule,
-but still the only account this script will actually trade live.
+kis-isa is the live strategy account. The account != "toss-bot" guard that
+used to stop this script short of sending real KIS orders was removed once
+the ISA go-live checklist in RUNBOOK.md was complete, including a live
+verification of executor.execute()'s retry/reprice/wait-for-fill loop
+against KIS (2026-08-31) - see RUNBOOK.md for that record.
 """
 
 import logging
@@ -111,13 +108,7 @@ def main() -> int:
         log.error("closing auction has begun; no new orders")
         return 1
 
-    if account == "toss-bot":
-        executor.cancel_open_orders(cfg["broker"], client)
-    else:
-        # executor supports KIS now, but this flips together with the
-        # order-placement guard below, not before it.
-        log.info("%s: skipping open-order cleanup until live trading "
-                 "is enabled for this account", account)
+    executor.cancel_open_orders(cfg["broker"], client)
 
     data = {
         sym: candles.get(market_client, sym, days=config.HISTORY_DAYS)
@@ -162,9 +153,15 @@ def main() -> int:
     signal = strategy.evaluate(data)
     log.info("\n%s", strategy.format_signal(signal))
 
-    cash = snap.cash
     book = books.get(which, {})
     prices = cfg["price"](client, set(signal.weights) | set(book))
+
+    # Size against no-미수 buying power (KIS nrcvb_buy_amt / Toss available
+    # cash), not settled cash: after a recent sell the settled balance
+    # lags the proceeds by a day or two, which would undersize this plan.
+    # The post-sell buy recompute below already uses this figure - reading
+    # it here too keeps the previewed plan and the executed plan the same.
+    cash = cfg["buying_power"](client, prices)
 
     value = tranche.tranche_value(book, prices, cash)
     targets = tranche.target_quantities(signal.weights, value, prices)
@@ -180,17 +177,6 @@ def main() -> int:
     if not orders:
         log.info("nothing to do")
         return 0
-
-    if account != "toss-bot":
-        log.error(
-            "%s 계좌 주문은 의도적으로 막혀 있습니다 (구현이 없어서가 아님) - "
-            "executor.py는 이제 KIS를 지원하지만, KIS 주문 경로로 실제 주문을 "
-            "내본 적이 없고 KIS에는 페이퍼 환경도 없습니다. 위 계산된 플랜은 "
-            "정상이며 참고용으로 쓸 수 있습니다. 해제하려면 rebalance_run.py의 "
-            "이 가드를 제거하세요 (RUNBOOK.md 참고).",
-            account,
-        )
-        return 1
 
     if not confirm(f"Rebalance tranche {which}?"):
         log.info("aborted by user")
