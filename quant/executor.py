@@ -97,8 +97,13 @@ def cancel_open_orders(broker, client) -> int:
     """Clear the book of our own resting orders before planning.
 
     Recomputing from current holdings is only correct if nothing of ours
-    is still working.
+    is still working. broker is None for an account that can be
+    snapshotted but never traded (e.g. kis-main-overseas) - nothing to
+    clear there.
     """
+    if broker is None:
+        return 0
+
     resting = broker.open_orders(client)
     for entry in resting:
         broker.cancel(client, entry.handle)

@@ -23,11 +23,14 @@ ACCOUNTS = {
     "toss-bot": {"client": TossClient, "snapshot": toss_client.snapshot,
                  "price": toss_client.batch_price, "broker": toss_client,
                  "buying_power": toss_client.available_cash,
-                 "strategy": False},
+                 "strategy": False, "tradable": True},
+    # Observed (snapshotted daily) but never traded by this strategy -
+    # predates it and isn't tranche_init'd, so rebalance_run.py must
+    # refuse it rather than relying on that as an accident of empty books.
     "kis-main": {"client": _kis_main_client, "snapshot": kis_client.snapshot,
                  "price": kis_client.batch_price, "broker": kis_client,
                  "buying_power": kis_client.available_cash,
-                 "strategy": False},
+                 "strategy": False, "tradable": False},
     # Domestic and overseas balance are separate endpoints on the same KIS
     # account - shares _kis_main_client with "kis-main" rather than
     # authenticating twice for one account. No broker: overseas ordering
@@ -37,17 +40,26 @@ ACCOUNTS = {
                           "snapshot": kis_client.snapshot_overseas,
                           "price": kis_client.batch_price, "broker": None,
                           "buying_power": None,
-                          "strategy": False},
+                          "strategy": False, "tradable": False},
     "kis-isa": {"client": lambda: KisClient("isa"), "snapshot": kis_client.snapshot,
                 "price": kis_client.batch_price, "broker": kis_client,
                 "buying_power": kis_client.available_cash,
-                "strategy": True},
+                "strategy": True, "tradable": True},
 }
 
 
 def resolve(account: str) -> dict:
-    """{"client", "snapshot", "price", "broker", "buying_power", "strategy"}
-    for one account."""
+    """{"client", "snapshot", "price", "broker", "buying_power", "strategy",
+    "tradable"} for one account.
+
+    "strategy" and "tradable" answer different questions: "strategy" picks
+    the one account daily.py records the shared momentum signal against
+    (arbitrary - the signal doesn't depend on the account), while
+    "tradable" is which accounts rebalance_run.py is allowed to send
+    orders for. toss-bot is "strategy": False (daily.py doesn't need to
+    record the signal twice) but "tradable": True (it's the sandbox
+    account for ad hoc live trials) - the two are not interchangeable.
+    """
     try:
         return ACCOUNTS[account]
     except KeyError:

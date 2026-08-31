@@ -521,6 +521,11 @@ def available_cash(client: "KisClient", prices: dict[str, Decimal]) -> Decimal:
     from `prices` works, since nrcvb_buy_amt does not vary with which
     symbol is passed (verified live - see buying_power()'s docstring).
     """
+    if not prices:
+        raise ValueError(
+            "available_cash: prices is empty, no symbol to query "
+            "buying power with"
+        )
     symbol, price = next(iter(prices.items()))
     resp = client.buying_power(symbol, str(price))
     return Decimal(resp["output"]["nrcvb_buy_amt"])

@@ -359,9 +359,13 @@ def unexplained_cash_change(conn: sqlite3.Connection, account: str,
     today = Decimal(rows[0]["cash"])
     previous = Decimal(rows[1]["cash"])
 
+    # filled_qty > 0 rather than filled = 1: a partial fill (some quantity
+    # got shares before MAX_ATTEMPTS ran out) still moved real cash and
+    # must be netted out, even though executor.execute() marks it
+    # filled = 0.
     fills = conn.execute(
         "SELECT side, filled_qty, avg_fill_price, commission, tax "
-        "FROM orders WHERE account = ? AND executed_date = ? AND filled = 1",
+        "FROM orders WHERE account = ? AND executed_date = ? AND filled_qty > 0",
         (account, trade_date),
     ).fetchall()
 
@@ -374,14 +378,16 @@ def unexplained_cash_change(conn: sqlite3.Connection, account: str,
         traded -= Decimal(f["commission"] or 0)
         traded -= Decimal(f["tax"] or 0)
 
-    recorded = conn.execute(
-        "SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) AS total "
-        "FROM cashflows WHERE account = ? AND trade_date = ? "
+    # Summed in Python, not SQL SUM(CAST(... AS REAL)): amount is stored as
+    # text specifically so Decimal values never round-trip through a float.
+    recorded_rows = conn.execute(
+        "SELECT amount FROM cashflows WHERE account = ? AND trade_date = ? "
         "AND kind = 'deposit'",
         (account, trade_date),
-    ).fetchone()["total"]
+    ).fetchall()
+    recorded = sum((Decimal(r["amount"]) for r in recorded_rows), Decimal("0"))
 
-    return today - previous - traded - Decimal(str(recorded))
+    return today - previous - traded - recorded
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     init()

@@ -80,6 +80,10 @@ def main() -> int:
 
     account, _ = accounts.extract_account(sys.argv[1:])
     cfg = accounts.resolve(account)
+    if not cfg["tradable"]:
+        log.error("%s is not a tradable account for this script (see "
+                 "quant/accounts.py's ACCOUNTS registry)", account)
+        return 1
     client = cfg["client"]()
     log.info("account = %s, dry_run = %s", account, client.dry_run)
 
@@ -156,6 +160,13 @@ def main() -> int:
     book = books.get(which, {})
     prices = cfg["price"](client, set(signal.weights) | set(book))
 
+    if not prices:
+        # Only possible when this sleeve holds nothing and the signal
+        # itself wants no positions - nothing to price, nothing to trade.
+        log.info("tranche %d: no holdings and no signal weights, nothing "
+                 "to do", which)
+        return 0
+
     # Size against no-미수 buying power (KIS nrcvb_buy_amt / Toss available
     # cash), not settled cash: after a recent sell the settled balance
     # lags the proceeds by a day or two, which would undersize this plan.
@@ -168,6 +179,13 @@ def main() -> int:
 
     log.info("tranche %d: %s KRW (holdings + %s cash share)",
              which, f"{value:,.0f}", f"{tranche.cash_share(cash):,.0f}")
+    # buying_power and the snapshot's settled cash are read from different
+    # KIS fields (see buying_power's docstring) and are not cross-checked
+    # automatically - a gap here is expected for a day or two after a sell
+    # (T+2 settlement), but a much larger one is worth a second look before
+    # confirming.
+    log.info("buying power %s KRW vs settled cash %s KRW (snapshot)",
+             f"{cash:,.0f}", f"{snap.cash:,.0f}")
     log.info("current: %s", book)
     log.info("target : %s", targets)
 
@@ -204,10 +222,14 @@ def main() -> int:
         if buys and confirm("Proceed with buys?"):
             results |= executor.execute(cfg["broker"], client, buys, prices)
 
-    final_book = apply_fills(book, orders, results)
+    # sells + buys, not the original `orders`: buys was reassigned above to
+    # the post-sell revised plan, and record() must log what was actually
+    # sent to the broker, not the stale pre-resize quantities/prices.
+    executed_orders = sells + buys
+    final_book = apply_fills(book, executed_orders, results)
 
     if not client.dry_run:
-        record(account, trade_date, which, orders, results, final_book)
+        record(account, trade_date, which, executed_orders, results, final_book)
 
     log.info("tranche %d now holds: %s", which, final_book)
     return 0
