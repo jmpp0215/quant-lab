@@ -4,7 +4,7 @@ import logging
 import os
 import random
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -540,6 +540,71 @@ def batch_price(client: "KisClient", symbols: set[str]) -> dict[str, Decimal]:
     """
     return {sym: Decimal(client.price(sym)["output"]["stck_prpr"])
             for sym in symbols}
+
+
+def dividend_events(client: "KisClient", symbol: str, *,
+                    from_date: date, to_date: date) -> list[dict]:
+    """Raw per-event KSD payout history (예탁원정보 배당일정 / HHKDB669102C0)
+    between the two dates, confirmed live to cover ETF distributions, not
+    just stock dividends.
+
+    Returns [{"record_date": "YYYY-MM-DD", "amount": Decimal}, ...],
+    newest-or-oldest order as KIS returns it (callers sort if they need
+    to). Zero-amount rows are dropped. Uses per_sto_divi_amt (actual won
+    paid per share) - the endpoint's own divi_rate(%) field is not used,
+    since face_val comes back "0" for ETFs, so it's unclear what that
+    percentage is relative to; a won amount is unambiguous.
+
+    F_DT/T_DT genuinely filter server-side by record_date - verified live
+    2026-09-01 by narrowing the range around a known event and watching it
+    appear/disappear as expected. Load-bearing for any caller that caches
+    this incrementally by date range.
+
+    Does not follow pagination (tr_cont): the shared get()/_request()
+    wrapper doesn't expose response headers to check it, and no symbol in
+    this universe has come close to a full page of events over a 24-month
+    window when this was checked live (2026-09-01: at most 8 rows). If
+    that ever changes this will silently undercount rather than raise,
+    since it only ever sees the first page.
+    """
+    resp = client.get(
+        "/uapi/domestic-stock/v1/ksdinfo/dividend",
+        "HHKDB669102C0",
+        params={
+            "CTS": "",
+            "GB1": "0",
+            "F_DT": from_date.strftime("%Y%m%d"),
+            "T_DT": to_date.strftime("%Y%m%d"),
+            "SHT_CD": symbol,
+            "HIGH_GB": "",
+        },
+    )
+    out = []
+    for row in resp.get("output1", []):
+        amount = Decimal(row.get("per_sto_divi_amt") or "0")
+        if amount <= 0:
+            continue
+        raw = row["record_date"]
+        out.append({"record_date": f"{raw[:4]}-{raw[4:6]}-{raw[6:]}",
+                    "amount": amount})
+    return out
+
+
+def dividend_yield(client: "KisClient", symbol: str, price: Decimal, *,
+                   months: int = 12, today: date | None = None) -> Decimal:
+    """Trailing distribution yield from real KSD payout history, as a
+    fraction of `price`. Thin wrapper over dividend_events() - see there
+    for the underlying endpoint/caveats.
+    """
+    today = today or datetime.now(KST).date()
+    events = dividend_events(
+        client, symbol,
+        from_date=today - timedelta(days=31 * months), to_date=today,
+    )
+    total = sum((e["amount"] for e in events), Decimal("0"))
+    if price <= 0:
+        return Decimal("0")
+    return total / price
 
 
 # --- execution interface (see quant/broker.py) ------------------------

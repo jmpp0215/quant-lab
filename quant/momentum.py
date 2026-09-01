@@ -68,3 +68,41 @@ def total_return(candles: list[dict], months: int,
 
     holding_months = Decimal(months - skip_months)
     return base + annual_yield * holding_months / Decimal(12)
+
+
+def trailing_yield(candles: list[dict], events: list[dict],
+                   months: int = 12) -> Decimal:
+    """Real distributions paid in the trailing `months`, as a fraction of
+    the latest price - a live-computed stand-in for a hand-maintained
+    annual yield estimate, meant to be fed straight into total_return()'s
+    `annual_yield` parameter.
+
+    events: [{"record_date": "YYYY-MM-DD", "amount": Decimal}, ...] - the
+    payout history a caller has already fetched/cached (never fetched here;
+    this stays a pure function like the rest of the module).
+
+    Anchored to the candles' own latest date, like price_return - never
+    datetime.now() - so a caller can hand this pre-sliced historical
+    candles/events during a backtest and get the answer that date would
+    actually have seen, with no look-ahead.
+
+    The boundary uses each event's record_date, not its payment date
+    (divi_pay_dt can lag record_date by weeks) - the amount may not have
+    actually been public knowledge quite this early, a minor imprecision
+    left as-is given how few historical decisions this ever affects.
+    """
+    if not candles:
+        return Decimal("0")
+
+    anchor = _date_of(candles[0])
+    price = Decimal(candles[0]["closePrice"])
+    if price <= 0:
+        return Decimal("0")
+
+    since = anchor - timedelta(days=int(months * DAYS_PER_MONTH))
+    total = sum(
+        (e["amount"] for e in events
+         if since < date.fromisoformat(e["record_date"]) <= anchor),
+        Decimal("0"),
+    )
+    return total / price

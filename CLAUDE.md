@@ -60,7 +60,8 @@ Changing strategy behavior almost always means editing constants here, not logic
 | `toss_client.py` | REST client for Toss — token caching, 429 backoff, error envelope parsing |
 | `kis_client.py` | REST client for KIS (한국투자증권) — backs `kis-isa`/`kis-main`; domestic + overseas endpoints, per-account credentials |
 | `candles.py` | Daily candle fetching, disk cache (`data/candles`), excludes in-progress candle |
-| `momentum.py` | Date-anchored lookback returns with dividend adjustment |
+| `dividends.py` | Distribution-event fetching from KIS + incremental SQLite cache (`dividend_events`/`dividend_fetch_state`) — imperative-shell counterpart to `momentum.py`'s dividend math |
+| `momentum.py` | Date-anchored lookback returns with dividend adjustment (pure — `trailing_yield()` takes cached events in, never fetches) |
 | `indicators.py` | Technical indicators (e.g. moving-average trend filter) used by strategy variants |
 | `allocation.py` | Covariance/risk-parity/inverse-vol weighting math |
 | `strategy.py` | Dual momentum signal generation (pure) + recorded-but-unused allocation variants |
@@ -100,9 +101,15 @@ rather than trade through it.
   silently shifted an entire ranking when the cache added one candle.
 - Absolute momentum compares against a cash-proxy ETF (`config.CASH_SYMBOL`), not against
   zero — a small positive return isn't worth holding if cash yields more.
-- Dividends are estimated (`config.DIVIDEND_YIELD`, updated yearly from fund disclosures)
-  because Toss candles are price-only and would otherwise penalize high-yield holdings via
-  the invisible ex-dividend drop.
+- Dividends are computed live, not estimated: Toss candles are price-only and would
+  otherwise penalize high-yield holdings via the invisible ex-dividend drop, so
+  `momentum.trailing_yield()` sums real KIS payout history (`quant/dividends.py`'s cache,
+  fetched from KIS's 예탁원정보 배당일정 endpoint) over the trailing 12 months instead of
+  reading a hand-maintained constant. **Sharp edge:** because this is now time-varying
+  (unlike the old static `config.DIVIDEND_YIELD`), any code path calling
+  `strategy.evaluate()`/`variants()` for a historical date — `backtest.py`, a `daily.py
+  --date` backfill — must slice dividend events to that date first (`backtest.
+  slice_dividends_at()`), exactly like candles are already sliced, or risk look-ahead bias.
 - Orders are limit orders priced a tick or two through the touch, never market orders —
   a market order has no price ceiling and can fill far from the last trade during a thin or
   closing-auction book. `executor.MAX_DEVIATION` (2%) refuses to trade if the touch has

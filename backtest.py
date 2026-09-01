@@ -38,6 +38,12 @@ def slice_at(candles: list[dict], as_of: str) -> list[dict]:
     return [c for c in candles if _date_of(c) <= as_of]
 
 
+def slice_dividends_at(events: list[dict], as_of: str) -> list[dict]:
+    """Dividend events known as of `as_of` - the same no-look-ahead slice
+    slice_at() applies to candles, applied to payout history instead."""
+    return [e for e in events if e["record_date"] <= as_of]
+
+
 def close_at(candles: list[dict], as_of: str) -> Decimal | None:
     """Closing price on the last trading day at or before `as_of`."""
     sliced = slice_at(candles, as_of)
@@ -68,6 +74,7 @@ def rebalance_dates(candles_by_symbol: dict[str, list[dict]],
     ]
 
 def run(candles_by_symbol: dict[str, list[dict]],
+        dividend_events_by_symbol: dict[str, list[dict]],
         initial: Decimal = Decimal("10000000"),
         scheme: str = "equal",
         offset: int = 0,
@@ -77,6 +84,10 @@ def run(candles_by_symbol: dict[str, list[dict]],
     With costs=True, each rebalance pays the spread on both sides and tax
     on realised gains in foreign-tracking ETFs. Turnover is what makes
     tranching expensive, so comparing schedules without it is misleading.
+
+    dividend_events_by_symbol: raw payout history per symbol - required,
+    not defaulted, so a forgotten argument errors instead of silently
+    producing a zero-dividend backtest.
     """
     history: list[Rebalance] = []
     value = initial
@@ -101,7 +112,11 @@ def run(candles_by_symbol: dict[str, list[dict]],
             sym: slice_at(cs, trade_date)
             for sym, cs in candles_by_symbol.items()
         }
-        signal = strategy.evaluate(sliced)
+        sliced_dividends = {
+            sym: slice_dividends_at(evs, trade_date)
+            for sym, evs in dividend_events_by_symbol.items()
+        }
+        signal = strategy.evaluate(sliced, sliced_dividends)
 
         weights = signal.weights
         if scheme != "equal" and weights:
@@ -275,6 +290,7 @@ def _tax_on_sale(symbol: str, proceeds: Decimal,
     return gain * config.GAINS_TAX_RATE if gain > 0 else Decimal("0")
 
 def run_tranched(candles_by_symbol: dict[str, list[dict]],
+                 dividend_events_by_symbol: dict[str, list[dict]],
                  initial: Decimal = Decimal("10000000"),
                  scheme: str = "equal",
                  costs: bool = False) -> list[Rebalance]:
@@ -283,6 +299,8 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
     Each sleeve rebalances on its own trading day of the month and holds
     its positions untouched in between. Cash is pooled: a sleeve treats
     1/N of the balance as its own, matching how the live system works.
+
+    dividend_events_by_symbol: see run() - required, not defaulted.
     """
     tranches = list(config.TRANCHES)
     n = len(tranches)
@@ -305,7 +323,11 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
 
     seed_sliced = {sym: slice_at(cs, first_date)
                    for sym, cs in candles_by_symbol.items()}
-    seed_signal = strategy.evaluate(seed_sliced)
+    seed_sliced_dividends = {
+        sym: slice_dividends_at(evs, first_date)
+        for sym, evs in dividend_events_by_symbol.items()
+    }
+    seed_signal = strategy.evaluate(seed_sliced, seed_sliced_dividends)
 
     per_sleeve = initial / n
     for t in tranches:
@@ -332,7 +354,11 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
             sym: slice_at(cs, trade_date)
             for sym, cs in candles_by_symbol.items()
         }
-        signal = strategy.evaluate(sliced)
+        sliced_dividends = {
+            sym: slice_dividends_at(evs, trade_date)
+            for sym, evs in dividend_events_by_symbol.items()
+        }
+        signal = strategy.evaluate(sliced, sliced_dividends)
 
         weights = signal.weights
         if scheme != "equal" and weights:

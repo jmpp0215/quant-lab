@@ -33,12 +33,18 @@ class Signal:
     cash_weight: Decimal             # unallocated, held as cash
     scores: list[Score]              # full ranking, for the log
 
-def evaluate(candles_by_symbol: dict[str, list[dict]]) -> Signal:
+def evaluate(candles_by_symbol: dict[str, list[dict]],
+            dividend_events_by_symbol: dict[str, list[dict]]) -> Signal:
     """Rank the universe by momentum and pick the top N.
 
     Absolute momentum is applied by requiring a symbol to beat the cash
     proxy, not merely to be positive - a 2% gain is not worth holding when
     risk-free cash returns 3%.
+
+    dividend_events_by_symbol: raw payout history per symbol (see
+    momentum.trailing_yield()), required rather than defaulted - a caller
+    replaying a historical date must explicitly pass events sliced to that
+    date, exactly like candles_by_symbol, or risk look-ahead bias.
     """
     scores = [
         Score(
@@ -48,7 +54,10 @@ def evaluate(candles_by_symbol: dict[str, list[dict]]) -> Signal:
                 candles_by_symbol.get(sym, []),
                 config.LOOKBACK_MONTHS,
                 config.SKIP_MONTHS,
-                config.DIVIDEND_YIELD.get(sym, Decimal("0")),
+                momentum.trailing_yield(
+                    candles_by_symbol.get(sym, []),
+                    dividend_events_by_symbol.get(sym, []),
+                ),
             ),
         )
         for sym, name in config.UNIVERSE.items()
@@ -103,13 +112,17 @@ class Variant:
 
 
 def _rank_by(candles_by_symbol: dict[str, list[dict]],
+             dividend_events_by_symbol: dict[str, list[dict]],
              months: int, skip: int = 0) -> list[tuple[str, Decimal]]:
     """Symbols with a computable return over the window, best first."""
     scored = []
     for sym in config.UNIVERSE:
         value = momentum.total_return(
             candles_by_symbol.get(sym, []), months, skip,
-            config.DIVIDEND_YIELD.get(sym, Decimal("0")),
+            momentum.trailing_yield(
+                candles_by_symbol.get(sym, []),
+                dividend_events_by_symbol.get(sym, []),
+            ),
         )
         if value is not None:
             scored.append((sym, value))
@@ -139,12 +152,15 @@ def _hurdle_for(ranked: list[tuple[str, Decimal]]) -> Decimal:
 
 
 def variant_single_lookback(candles_by_symbol: dict[str, list[dict]],
+                            dividend_events_by_symbol: dict[str, list[dict]],
                             months: int, skip: int = 0) -> dict[str, Decimal]:
-    ranked = _rank_by(candles_by_symbol, months, skip)
+    ranked = _rank_by(candles_by_symbol, dividend_events_by_symbol,
+                      months, skip)
     return _equal(_above_hurdle(ranked, _hurdle_for(ranked)))
 
 
-def variant_blended(candles_by_symbol: dict[str, list[dict]]
+def variant_blended(candles_by_symbol: dict[str, list[dict]],
+                    dividend_events_by_symbol: dict[str, list[dict]]
                     ) -> dict[str, Decimal]:
     """Average the rank across 3, 6 and 12 months.
 
@@ -152,7 +168,8 @@ def variant_blended(candles_by_symbol: dict[str, list[dict]]
     from dominating: a symbol up 300% over a year outranks everything on
     the twelve-month leg no matter how it has behaved since.
     """
-    legs = [_rank_by(candles_by_symbol, m) for m in (3, 6, 12)]
+    legs = [_rank_by(candles_by_symbol, dividend_events_by_symbol, m)
+            for m in (3, 6, 12)]
 
     positions: dict[str, list[int]] = {}
     for leg in legs:
@@ -194,6 +211,7 @@ def variant_trend_filtered(candles_by_symbol: dict[str, list[dict]],
 
 
 def variants(candles_by_symbol: dict[str, list[dict]],
+             dividend_events_by_symbol: dict[str, list[dict]],
              signal: Signal) -> list[Variant]:
     """Every alternative allocation for today, for the record.
 
@@ -206,10 +224,12 @@ def variants(candles_by_symbol: dict[str, list[dict]],
     selected = list(signal.weights)
 
     out = [
-        Variant("mom_6m", variant_single_lookback(candles_by_symbol, 6)),
-        Variant("mom_12m_no_skip",
-                variant_single_lookback(candles_by_symbol, 12, 0)),
-        Variant("blended_rank", variant_blended(candles_by_symbol)),
+        Variant("mom_6m", variant_single_lookback(
+            candles_by_symbol, dividend_events_by_symbol, 6)),
+        Variant("mom_12m_no_skip", variant_single_lookback(
+            candles_by_symbol, dividend_events_by_symbol, 12, 0)),
+        Variant("blended_rank",
+                variant_blended(candles_by_symbol, dividend_events_by_symbol)),
         Variant("trend_filtered",
                 variant_trend_filtered(candles_by_symbol, signal.weights)),
     ]

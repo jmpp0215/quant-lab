@@ -49,3 +49,83 @@ class TestSaveOrder:
             unexplained = storage.unexplained_cash_change(
                 conn, "test-acc", "2026-08-24")
         assert unexplained == Decimal("0")
+
+
+class TestDividendEvents:
+    def test_round_trips(self, tmp_path):
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_dividend_events(
+                conn, "379790",
+                [{"record_date": "2026-07-31", "amount": Decimal("210")},
+                 {"record_date": "2026-01-05", "amount": Decimal("477")}],
+                "2026-09-01T00:00:00",
+            )
+            loaded = storage.load_dividend_events(conn, "379790")
+        assert loaded == [
+            {"record_date": "2026-01-05", "amount": Decimal("477")},
+            {"record_date": "2026-07-31", "amount": Decimal("210")},
+        ]
+
+    def test_resaving_the_same_event_replaces_not_duplicates(self, tmp_path):
+        # A later, overlapping fetch window re-reports the same
+        # (symbol, record_date) - it must overwrite, not accumulate.
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_dividend_events(
+                conn, "379790",
+                [{"record_date": "2026-07-31", "amount": Decimal("210")}],
+                "2026-08-01T00:00:00",
+            )
+            storage.save_dividend_events(
+                conn, "379790",
+                [{"record_date": "2026-07-31", "amount": Decimal("999")}],
+                "2026-09-01T00:00:00",
+            )
+            loaded = storage.load_dividend_events(conn, "379790")
+        assert loaded == [{"record_date": "2026-07-31",
+                          "amount": Decimal("999")}]
+
+    def test_load_all_groups_by_symbol(self, tmp_path):
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_dividend_events(
+                conn, "379790",
+                [{"record_date": "2026-07-31", "amount": Decimal("210")}],
+                "2026-09-01T00:00:00",
+            )
+            storage.save_dividend_events(
+                conn, "133690",
+                [{"record_date": "2026-08-04", "amount": Decimal("255")}],
+                "2026-09-01T00:00:00",
+            )
+            loaded = storage.load_all_dividend_events(
+                conn, ["379790", "133690", "102110"])
+        assert loaded == {
+            "379790": [{"record_date": "2026-07-31",
+                       "amount": Decimal("210")}],
+            "133690": [{"record_date": "2026-08-04",
+                       "amount": Decimal("255")}],
+            "102110": [],
+        }
+
+
+class TestDividendFetchState:
+    def test_round_trips(self, tmp_path):
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_dividend_fetch_state(
+                conn, "379790", "2026-09-01", "2026-09-01T12:00:00")
+            fetched_to = storage.dividend_fetch_state(conn, "379790")
+        assert fetched_to == "2026-09-01"
+
+    def test_missing_symbol_returns_none(self, tmp_path):
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            fetched_to = storage.dividend_fetch_state(conn, "999999")
+        assert fetched_to is None

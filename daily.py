@@ -17,14 +17,16 @@ from quant import (
     accounts,
     candles,
     config,
+    dividends,
     indicators,
     logging_config,
     market,
+    momentum,
     storage,
     strategy,
     tranche,
 )
-from quant.kis_client import KisApiError
+from quant.kis_client import KisApiError, KisClient
 from quant.notify import notify
 from quant.toss_client import TossApiError, TossClient
 
@@ -63,7 +65,9 @@ def check_account_health(conn, account_name: str, snap: storage.AccountSnapshot,
 
 def record_strategy(signal: strategy.Signal, trade_date: str,
                     session: str | None,
-                    candles_by_symbol: dict[str, list[dict]]) -> None:
+                    candles_by_symbol: dict[str, list[dict]],
+                    dividend_events_by_symbol: dict[str, list[dict]]
+                    ) -> None:
     """Record the shared dual-momentum signal - not account state."""
     now = datetime.now().astimezone().isoformat()
     rows = [
@@ -82,13 +86,17 @@ def record_strategy(signal: strategy.Signal, trade_date: str,
         for symbol in config.all_symbols()
         for name, value in indicators.compute_all(
             candles_by_symbol.get(symbol, []),
-            config.DIVIDEND_YIELD.get(symbol, Decimal("0")),
+            momentum.trailing_yield(
+                candles_by_symbol.get(symbol, []),
+                dividend_events_by_symbol.get(symbol, []),
+            ),
         ).items()
     ]
 
     variant_rows = [
         (v.name, symbol, weight)
-        for v in strategy.variants(candles_by_symbol, signal)
+        for v in strategy.variants(candles_by_symbol,
+                                   dividend_events_by_symbol, signal)
         for symbol, weight in v.weights.items()
     ]
 
@@ -176,9 +184,27 @@ def main() -> int:
             client = client_cache[factory]
 
             if cfg["strategy"]:
-                signal = strategy.evaluate(data)
+                if not isinstance(client, KisClient):
+                    raise RuntimeError(
+                        f"{account_name}: strategy account must be "
+                        f"KIS-backed for live dividend sync, got "
+                        f"{type(client).__name__}")
+                with storage.connect() as conn:
+                    dividends.sync_all(conn, client, config.all_symbols())
+                    dividend_events = dividends.load_all(
+                        conn, config.all_symbols())
+                if target is not None:
+                    # Same look-ahead guard the candle slice above already
+                    # applies - a --date backfill must only see events
+                    # known as of that date, not today's full cache.
+                    dividend_events = {
+                        s: [e for e in evs if e["record_date"] <= target]
+                        for s, evs in dividend_events.items()
+                    }
+                signal = strategy.evaluate(data, dividend_events)
                 log.info("\n%s", strategy.format_signal(signal))
-                record_strategy(signal, trade_date, session, data)
+                record_strategy(signal, trade_date, session, data,
+                               dividend_events)
 
             if target is None:
                 # Holdings can only be observed now, never reconstructed,

@@ -61,25 +61,10 @@ HELD_ETFS = {
 # in either would quietly hand it the wrong grid.
 ETF_SYMBOLS = set(UNIVERSE) | set(WATCH_ONLY) | set(HELD_ETFS)
 
-# Annual distribution yield per symbol, used to approximate total return.
-# Toss candles are price-only, so a high-yield symbol would otherwise rank
-# unfairly low - the ex-dividend drop shows up in the price while the
-# payout does not. These are rough figures; update them yearly from each
-# fund's disclosure page.
-DIVIDEND_YIELD = {
-    "102110": Decimal("0.0090"),   # 코스피200
-    "466920": Decimal("0.0018"),   # 조선TOP3
-    "091170": Decimal("0.0376"),   # 은행
-    "133690": Decimal("0.0051"),   # 나스닥100
-    "379790": Decimal("0.0388"),   # 유로스탁스50 (RISE, 실물)
-    "371160": Decimal("0.0095"),   # 차이나항셍테크
-    "484790": Decimal("0.0522"),   # 미국30년국채
-    "497880": Decimal("0.0302"),   # CD금리&머니마켓
-    "487240": Decimal("0.0012"),   # AI전력 (watch only)
-    "241180": Decimal("0.0097"),   # 니케이225 (watch only)
-    "195930": Decimal("0.0170"),   # 유로스탁스50(합성H) (watch only)
-    "459580": Decimal("0.0271"),   # CD금리액티브(합성) (watch only)
-}
+# Distribution yield per symbol used to come from a hand-maintained,
+# yearly-updated dict here (DIVIDEND_YIELD). It's now computed live from
+# real KIS payout history instead - see quant/dividends.py (fetch/cache)
+# and momentum.trailing_yield() (the pure calculation strategy.py uses).
 
 # Half the quoted spread, measured from live order books on 2026-08-18.
 # A buy lifts the ask and a sell hits the bid, so a round trip costs the

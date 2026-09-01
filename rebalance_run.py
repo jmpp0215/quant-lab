@@ -23,6 +23,7 @@ from quant import (
     accounts,
     candles,
     config,
+    dividends,
     executor,
     logging_config,
     market,
@@ -154,7 +155,18 @@ def main() -> int:
         log.error("reconcile before rebalancing")
         return 1
 
-    signal = strategy.evaluate(data)
+    # Dividend data must always come from KIS, regardless of which account
+    # is being rebalanced - toss-bot uses a TossClient, which has no access
+    # to this endpoint. Reuse `client` when it's already the KIS account,
+    # otherwise resolve kis-isa's separately (same reuse-if-possible spirit
+    # as market_client above).
+    kis_isa_cfg = accounts.resolve("kis-isa")
+    dividend_client = client if account == "kis-isa" else kis_isa_cfg["client"]()
+    with storage.connect() as conn:
+        dividends.sync_all(conn, dividend_client, config.all_symbols())
+        dividend_events = dividends.load_all(conn, config.all_symbols())
+
+    signal = strategy.evaluate(data, dividend_events)
     log.info("\n%s", strategy.format_signal(signal))
 
     book = books.get(which, {})

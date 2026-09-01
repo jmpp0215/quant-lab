@@ -112,6 +112,19 @@ CREATE TABLE IF NOT EXISTS tranche_holdings (
     PRIMARY KEY (tranche, account, symbol)
 );
 
+CREATE TABLE IF NOT EXISTS dividend_events (
+    symbol       TEXT NOT NULL,
+    record_date  TEXT NOT NULL,
+    amount       TEXT NOT NULL,
+    fetched_at   TEXT NOT NULL,
+    PRIMARY KEY (symbol, record_date)
+);
+CREATE TABLE IF NOT EXISTS dividend_fetch_state (
+    symbol      TEXT PRIMARY KEY,
+    fetched_to  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_cashflows_date ON cashflows(trade_date);
 
 CREATE INDEX IF NOT EXISTS idx_scores_symbol ON scores(symbol, trade_date);
@@ -388,6 +401,57 @@ def unexplained_cash_change(conn: sqlite3.Connection, account: str,
     recorded = sum((Decimal(r["amount"]) for r in recorded_rows), Decimal("0"))
 
     return today - previous - traded - recorded
+
+
+def save_dividend_events(conn: sqlite3.Connection, symbol: str,
+                         events: list[dict], fetched_at: str) -> None:
+    """events: [{"record_date": "YYYY-MM-DD", "amount": Decimal}, ...].
+
+    INSERT OR REPLACE, not delete-then-insert: unlike scores/indicators/
+    variants (one full snapshot per trade_date, wiped and rewritten every
+    run), these accumulate across many overlapping fetch windows over time
+    and must not be wiped by a later, narrower query.
+    """
+    conn.executemany(
+        "INSERT OR REPLACE INTO dividend_events "
+        "(symbol, record_date, amount, fetched_at) VALUES (?, ?, ?, ?)",
+        [(symbol, e["record_date"], str(e["amount"]), fetched_at)
+         for e in events],
+    )
+
+
+def load_dividend_events(conn: sqlite3.Connection, symbol: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT record_date, amount FROM dividend_events "
+        "WHERE symbol = ? ORDER BY record_date",
+        (symbol,),
+    ).fetchall()
+    return [{"record_date": r["record_date"], "amount": Decimal(r["amount"])}
+            for r in rows]
+
+
+def load_all_dividend_events(conn: sqlite3.Connection,
+                             symbols: list[str]) -> dict[str, list[dict]]:
+    return {sym: load_dividend_events(conn, sym) for sym in symbols}
+
+
+def dividend_fetch_state(conn: sqlite3.Connection, symbol: str) -> str | None:
+    row = conn.execute(
+        "SELECT fetched_to FROM dividend_fetch_state WHERE symbol = ?",
+        (symbol,),
+    ).fetchone()
+    return row["fetched_to"] if row else None
+
+
+def save_dividend_fetch_state(conn: sqlite3.Connection, symbol: str,
+                              fetched_to: str, updated_at: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO dividend_fetch_state "
+        "(symbol, fetched_to, updated_at) VALUES (?, ?, ?)",
+        (symbol, fetched_to, updated_at),
+    )
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     init()
