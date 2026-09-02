@@ -1,0 +1,131 @@
+"""SQLite schema for PEAD strategy in quant.db."""
+
+PEAD_SCHEMA = """
+-- 원본 공시 데이터 (정정 공시 덮어쓰기 금지, config-agnostic 전체 저장)
+-- metric: operating_income, net_income, eps, operating_cash_flow
+CREATE TABLE IF NOT EXISTS pead_dart_raw (
+    symbol TEXT NOT NULL,
+    target_year TEXT NOT NULL,
+    rcept_dt TEXT NOT NULL,
+    report_code TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    value REAL,
+    basis TEXT NOT NULL,
+    is_correction INTEGER DEFAULT 0,
+    original_rcept_dt TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(symbol, target_year, rcept_dt, report_code, metric, basis, is_correction)
+);
+
+-- YTD 누적 값을 단일 분기 값으로 환산한 테이블
+CREATE TABLE IF NOT EXISTS pead_quarterly_normalized (
+    symbol TEXT NOT NULL,
+    target_year TEXT NOT NULL,
+    rcept_dt TEXT NOT NULL,
+    report_code TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    basis TEXT NOT NULL,
+    quarterly_value REAL,
+    is_estimable INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (symbol, target_year, rcept_dt, report_code, metric, basis)
+);
+
+-- OHLCV 및 거래대금(liquidity) 데이터 저장을 위한 테이블
+CREATE TABLE IF NOT EXISTS pead_price_raw (
+    date TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    open REAL,
+    high REAL,
+    low REAL,
+    close REAL,
+    volume REAL,
+    trading_value REAL,
+    PRIMARY KEY (date, symbol)
+);
+
+-- 1차 레이어: Surprise 계산 결과
+CREATE TABLE IF NOT EXISTS pead_surprises (
+    symbol TEXT NOT NULL,
+    rcept_dt TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    basis TEXT NOT NULL,
+    surprise_score REAL NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (symbol, rcept_dt, metric, basis)
+);
+
+-- 2차 레이어: Quality Scores (enable 여부 무관하게 항상 저장)
+CREATE TABLE IF NOT EXISTS pead_quality_scores (
+    symbol TEXT NOT NULL,
+    rcept_dt TEXT NOT NULL,
+    ocf_to_oi_ratio REAL,
+    passes_quality_filter INTEGER NOT NULL,
+    PRIMARY KEY (symbol, rcept_dt)
+);
+
+-- 3차 레이어: Flow Scores (enable 여부 무관하게 항상 저장)
+CREATE TABLE IF NOT EXISTS pead_flow_scores (
+    symbol TEXT NOT NULL,
+    rcept_dt TEXT NOT NULL,
+    institutional_net_buy_ratio REAL,
+    foreign_net_buy_ratio REAL,
+    individual_net_buy_ratio REAL,
+    PRIMARY KEY (symbol, rcept_dt)
+);
+
+-- 최종 레이어: Combined Scores
+CREATE TABLE IF NOT EXISTS pead_combined_scores (
+    symbol TEXT NOT NULL,
+    rcept_dt TEXT NOT NULL,
+    config_hash TEXT NOT NULL,
+    final_score REAL NOT NULL,
+    PRIMARY KEY (symbol, rcept_dt, config_hash)
+);
+
+-- 이벤트 타임라인 (수익률 로그)
+CREATE TABLE IF NOT EXISTS pead_event_returns (
+    symbol TEXT NOT NULL,
+    rcept_dt TEXT NOT NULL,
+    entry_timing TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    return_5d REAL,
+    return_10d REAL,
+    return_20d REAL,
+    return_40d REAL,
+    return_60d REAL,
+    PRIMARY KEY (symbol, rcept_dt, entry_timing)
+);
+
+-- 섹터 분류 (pykrx 기반)
+CREATE TABLE IF NOT EXISTS pead_sector_map (
+    symbol TEXT NOT NULL,
+    sector_code TEXT NOT NULL,
+    sector_name TEXT NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    PRIMARY KEY (symbol, snapshot_date)
+);
+
+-- 포지션 로그 (스켈레톤)
+CREATE TABLE IF NOT EXISTS pead_portfolio_log (
+    trade_date TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    weight REAL NOT NULL,
+    PRIMARY KEY (trade_date, symbol)
+);
+"""
+
+import sqlite3
+import logging
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+DB_PATH = Path(__file__).parent.parent.parent / "data" / "quant.db"
+
+def init_db():
+    """Execute PEAD schemas to initialize tables in quant.db."""
+    log.info("Initializing PEAD tables in %s", DB_PATH)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.executescript(PEAD_SCHEMA)
