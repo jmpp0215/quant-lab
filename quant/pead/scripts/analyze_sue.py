@@ -11,6 +11,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 from quant.pead.config import PeadConfig
 from quant.pead.signal import build_event_timeline, calculate_surprise
 from quant.pead.storage import save_surprise
+from quant.pead.benchmark import calculate_excess_return
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("analyze_sue")
@@ -38,7 +39,15 @@ def main():
         
     df_price['date'] = pd.to_datetime(df_price['date'])
     df_price = df_price.sort_values('date')
-    
+
+    # 2b. Load benchmark (KOSPI) index data
+    df_bench = pd.read_sql("SELECT date, close FROM pead_benchmark_raw WHERE index_symbol = 'KS11'", conn)
+    if df_bench.empty:
+        log.error("No benchmark data found. Please run backfill_benchmark.py first.")
+        return
+    # benchmark.calculate_excess_return이 요구하는 {YYYYMMDD 문자열: 종가} 형태의 Series로 변환
+    benchmark_price_series = pd.Series(df_bench['close'].values, index=df_bench['date'])
+
     config = PeadConfig(lookback_quarters=4, earnings_metric="operating_income", dart_basis="CFS")
     
     # 3. Calculate SUE and Forward Returns
@@ -83,6 +92,11 @@ def main():
 
         ret_20d = timeline['return_20d']
 
+        # 종목 수익률과 동일한 기준(entry_timing)으로 벤치마크(KOSPI) 대비 초과수익 계산
+        excess_ret_20d = calculate_excess_return(
+            sym, rcept_dt_str, ret_20d, benchmark_price_series, config
+        )
+
         # Calculate ADTV (Average Daily Traded Value) past 20 days
         p_df = price_by_sym[sym]
         event_dt = pd.to_datetime(rcept_dt_str)
@@ -97,6 +111,7 @@ def main():
             'rcept_dt': rcept_dt_str,
             'sue': sue,
             'ret_20d': ret_20d,
+            'excess_ret_20d': excess_ret_20d,
             'adtv': adtv
         })
         
@@ -120,23 +135,30 @@ def main():
     # 5. Analysis: Average and Median 20-day return for SUE Top Decile by ADTV Quintile
     top_sue = df_res[df_res['sue_decile'] == 10]
     
-    # Calculate Mean, Median, and Count
-    summary = top_sue.groupby('adtv_quintile')['ret_20d'].agg(['mean', 'median', 'count']).reset_index()
-    summary['mean_pct'] = summary['mean'] * 100
-    summary['median_pct'] = summary['median'] * 100
-    
-    print("\n=== [분석 결과] SUE 상위 Decile (Top 10%) 종목의 거래대금 Quintile별 20일 수익률 ===")
-    print(f"{'유동성 Quintile':<15} | {'N (표본수)':<10} | {'평균 수익률(%)':<15} | {'중앙값(Median)(%)':<15}")
-    print("-" * 65)
+    # Calculate Mean, Median, and Count for both raw and benchmark-excess returns
+    summary = top_sue.groupby('adtv_quintile').agg(
+        count=('ret_20d', 'count'),
+        mean_raw=('ret_20d', 'mean'),
+        median_raw=('ret_20d', 'median'),
+        mean_excess=('excess_ret_20d', 'mean'),
+        median_excess=('excess_ret_20d', 'median'),
+    ).reset_index()
+
+    print("\n=== [분석 결과] SUE 상위 Decile (Top 10%) 종목의 거래대금 Quintile별 20일 수익률 (절대 vs KOSPI 대비 초과) ===")
+    print(f"{'유동성 Quintile':<15} | {'N (표본수)':<10} | {'평균(절대,%)':<12} | {'중앙값(절대,%)':<14} | {'평균(초과,%)':<12} | {'중앙값(초과,%)':<14}")
+    print("-" * 95)
     for _, row in summary.iterrows():
         q = int(row['adtv_quintile'])
         count = int(row['count'])
         if count < 30:
-            print(f"Q{q:<14} | {count:<10} | 표본 부족        | 표본 부족")
+            print(f"Q{q:<14} | {count:<10} | 표본 부족     | 표본 부족       | 표본 부족     | 표본 부족")
         else:
-            print(f"Q{q:<14} | {count:<10} | {row['mean_pct']:>11.2f}% | {row['median_pct']:>13.2f}%")
-        
-    print("\n(참고: Q1 = 거래대금 하위 20%, Q5 = 거래대금 상위 20%)")
+            print(
+                f"Q{q:<14} | {count:<10} | {row['mean_raw']*100:>10.2f}% | {row['median_raw']*100:>12.2f}% "
+                f"| {row['mean_excess']*100:>10.2f}% | {row['median_excess']*100:>12.2f}%"
+            )
+
+    print("\n(참고: Q1 = 거래대금 하위 20%, Q5 = 거래대금 상위 20%. 초과수익 = 종목 20일 수익률 - 같은 기간 KOSPI 20일 수익률)")
     print(f"분석 대상 이벤트 수(Top SUE): {len(top_sue)}건")
     
     # 6. Spearman Rank Correlation (using ranked pearson to avoid scipy dependency)

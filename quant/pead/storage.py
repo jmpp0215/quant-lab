@@ -44,6 +44,21 @@ CREATE TABLE IF NOT EXISTS pead_price_raw (
     PRIMARY KEY (date, symbol)
 );
 
+-- 벤치마크(코스피 등) 지수 OHLCV. pead_price_raw와 분리해 개별 종목 유니버스 조회(예: DISTINCT
+-- symbol)에 지수가 섞여 들어가는 것을 방지한다. index_symbol은 FinanceDataReader의 지수
+-- 티커(예: 코스피 종합지수 'KS11')를 그대로 사용한다.
+CREATE TABLE IF NOT EXISTS pead_benchmark_raw (
+    date TEXT NOT NULL,
+    index_symbol TEXT NOT NULL,
+    open REAL,
+    high REAL,
+    low REAL,
+    close REAL,
+    volume REAL,
+    trading_value REAL,
+    PRIMARY KEY (date, index_symbol)
+);
+
 -- 1차 레이어: Surprise 계산 결과
 -- lookback_quarters 등 metric/basis만으로는 구분되지 않는 config 값도 surprise_score에
 -- 영향을 주므로 config_hash를 키에 포함해 config 조합별로 별도 저장한다.
