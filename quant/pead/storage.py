@@ -45,14 +45,19 @@ CREATE TABLE IF NOT EXISTS pead_price_raw (
 );
 
 -- 1차 레이어: Surprise 계산 결과
+-- lookback_quarters 등 metric/basis만으로는 구분되지 않는 config 값도 surprise_score에
+-- 영향을 주므로 config_hash를 키에 포함해 config 조합별로 별도 저장한다.
+-- is_estimable=0(계산 불가)인 경우 surprise_score는 NULL로 저장된다.
 CREATE TABLE IF NOT EXISTS pead_surprises (
     symbol TEXT NOT NULL,
     rcept_dt TEXT NOT NULL,
     metric TEXT NOT NULL,
     basis TEXT NOT NULL,
-    surprise_score REAL NOT NULL,
+    config_hash TEXT NOT NULL,
+    surprise_score REAL,
+    is_estimable INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (symbol, rcept_dt, metric, basis)
+    PRIMARY KEY (symbol, rcept_dt, metric, basis, config_hash)
 );
 
 -- 2차 레이어: Quality Scores (enable 여부 무관하게 항상 저장)
@@ -119,6 +124,8 @@ import sqlite3
 import logging
 from pathlib import Path
 
+from .config import PeadConfig
+
 log = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "quant.db"
@@ -129,3 +136,35 @@ def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
         conn.executescript(PEAD_SCHEMA)
+
+
+def save_surprise(
+    symbol: str,
+    rcept_dt: str,
+    config: PeadConfig,
+    surprise_score: float | None,
+    is_estimable: bool,
+):
+    """signal.calculate_surprise()의 결과를 pead_surprises에 저장합니다.
+
+    동일한 (symbol, rcept_dt, metric, basis) 조합이라도 lookback_quarters 등 다른 config 값에
+    따라 surprise_score가 달라질 수 있으므로 config.get_hash()를 키에 포함해 config 조합별로
+    별도 저장한다. is_estimable=False인 경우 surprise_score는 NULL로 저장된다.
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO pead_surprises
+            (symbol, rcept_dt, metric, basis, config_hash, surprise_score, is_estimable)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                symbol,
+                rcept_dt,
+                config.earnings_metric,
+                config.dart_basis,
+                config.get_hash(),
+                surprise_score,
+                int(is_estimable),
+            ),
+        )

@@ -10,6 +10,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from quant.pead.config import PeadConfig
 from quant.pead.signal import build_event_timeline, calculate_surprise
+from quant.pead.storage import save_surprise
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("analyze_sue")
@@ -63,6 +64,10 @@ def main():
         # Calculate SUE (config.earnings_metric/dart_basis에 맞는 데이터만 내부에서 필터링됨)
         sym_records = df_fin[df_fin['symbol'] == sym].to_dict('records')
         sue, is_estimable = calculate_surprise(sym, rcept_dt_str, config, sym_records)
+
+        # is_estimable=False인 이벤트도 그대로 저장한다 (surprise_score=NULL) — 나중에
+        # 계산 불가 비율을 파악하려면 "계산을 시도했지만 데이터가 부족했다"는 기록 자체가 필요하다.
+        save_surprise(sym, rcept_dt_str, config, sue, is_estimable)
 
         if not is_estimable:
             continue
