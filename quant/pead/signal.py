@@ -5,6 +5,12 @@ from .flow import calculate_flow_score
 
 _REPORT_QUARTER_ORDER = {"11013": 1, "11012": 2, "11014": 3, "11011": 4}
 
+# _compute_sue가 표준편차를 구하려면 yoy_history에 최소 2개 항목이 필요하고, yoy_history는
+# past_values[i] - past_values[i+4] (i>=1)로 채워지므로 i=1,2가 모두 유효하려면
+# len(past_values) > 6, 즉 최소 7분기가 있어야 한다. 이보다 적으면 (None, False)를 반환해야
+# 하며, 절대 "표준편차 계산 불가 -> 0.0"으로 조용히 대체해서는 안 된다 (가짜 SUE=0.0 방지).
+_MIN_ALIGNED_QUARTERS = 7
+
 
 def _quarter_index(target_year: str, report_code: str) -> int | None:
     """연도+분기를 정수 하나로 환산 (year*4 + (quarter-1)). 두 분기가 1씩 차이나면 연속된 분기임을
@@ -115,7 +121,7 @@ def calculate_surprise(
     )
     aligned = _align_quarterly_series(periods)
 
-    if len(aligned) < 5:
+    if len(aligned) < _MIN_ALIGNED_QUARTERS:
         return None, False
 
     current_value = aligned[0]
@@ -155,11 +161,12 @@ def _compute_sue(current_value: float, past_values: list[float], lookback: int) 
 
 def combine_signal(symbol: str, rcept_dt: str, config: PeadConfig) -> float:
     """
-    각 레이어의 점수를 조합하여 최종 score를 산출합니다.
-    quality.py와 flow.py의 산출 함수를 호출하여 각 레이어의 원점수를 DB에 기록(항상 수행)한 후,
-    config.enable_quality_filter 및 config.enable_flow_overlay 플래그가
-    True일 때만 해당 점수를 필터링 및 가점에 반영합니다.
-    결과는 pead_combined_scores에 config_hash와 함께 저장됩니다.
+    [미구현 스텁] 각 레이어의 점수를 조합하여 최종 score를 산출할 예정인 함수입니다.
+    현재는 quality.py/flow.py를 호출하지 않고 항상 0.0을 반환합니다.
+
+    TODO: quality.py와 flow.py의 산출 함수를 호출하여 각 레이어의 원점수를 DB에 기록(항상 수행)한 후,
+    config.enable_quality_filter 및 config.enable_flow_overlay 플래그가 True일 때만 해당 점수를
+    필터링 및 가점에 반영하고, 결과를 pead_combined_scores에 config_hash와 함께 저장하도록 구현할 것.
     """
     # TODO: Implement layer combination logic
     # _ = calculate_quality_score(symbol, rcept_dt, config, normalized_records=...)

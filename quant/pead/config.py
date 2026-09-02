@@ -6,7 +6,8 @@ from typing import Literal
 @dataclass
 class PeadConfig:
     # 1차 레이어 (항상 적용)
-    earnings_metric: Literal['operating_income', 'net_income', 'eps'] = 'operating_income'
+    # 'eps'는 DART API(fnlttSinglAcnt.json)에 필드가 없어 미지원 — 추후 별도 데이터 소스 확보 시 추가할 것.
+    earnings_metric: Literal['operating_income', 'net_income'] = 'operating_income'
     entry_timing: Literal['t+1', 't+2'] = 't+1'
     dart_basis: Literal['CFS', 'OFS'] = 'CFS'
     lookback_quarters: int = 8

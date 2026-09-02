@@ -96,6 +96,10 @@ def test_calculate_surprise_point_in_time():
     current_rcept_dt = "20230515" # 23년 1Q(11013) 기준일
 
     normalized_records = [
+        # 21년 3Q, 4Q (아래 5개 분기만으로는 _MIN_ALIGNED_QUARTERS=7에 못 미치므로 추가)
+        {"target_year": "2021", "report_code": "11014", "rcept_dt": "20211115", "quarterly_value": 25, "metric": "operating_income", "basis": "CFS"},
+        {"target_year": "2021", "report_code": "11011", "rcept_dt": "20220215", "quarterly_value": 45, "metric": "operating_income", "basis": "CFS"},
+
         # 22년 1Q
         {"target_year": "2022", "report_code": "11013", "rcept_dt": "20220515", "quarterly_value": 90, "metric": "operating_income", "basis": "CFS"},
         # 22년 2Q
@@ -115,11 +119,50 @@ def test_calculate_surprise_point_in_time():
         {"target_year": "2022", "report_code": "11012", "rcept_dt": "20230601", "quarterly_value": 999, "metric": "operating_income", "basis": "CFS"},
     ]
 
-    # 올바른 필터링 후 시계열: 100 (당기), 90 (4Q), 100 (3Q), 80 (2Q, 원본사용), 100 (1Q, 정정본사용)
-    # YoY diff = 100 - 100 = 0
+    # 올바른 필터링 후 시계열(최신순): 100(당기), 90(4Q), 100(3Q), 80(2Q,원본), 100(1Q,정정본), 45(21년4Q), 25(21년3Q)
+    # yoy_diff = 100 - 100 = 0 이므로 분산과 무관하게 sue는 항상 0.0
     sue, is_estimable = calculate_surprise("A", current_rcept_dt, config, normalized_records)
     assert is_estimable is True
     assert sue == 0.0
+
+
+def test_calculate_surprise_five_quarters_is_not_estimable():
+    # 회귀 테스트: aligned 길이가 5(옛 기준으로는 통과)일 때, _compute_sue의 yoy_history가
+    # 비어 있는 채로 조용히 0.0을 반환하지 않고 (None, False)를 반환해야 한다.
+    config = PeadConfig(lookback_quarters=4, earnings_metric="operating_income", dart_basis="CFS")
+    current_rcept_dt = "20230515"
+
+    normalized_records = [
+        {"target_year": "2022", "report_code": "11013", "rcept_dt": "20220515", "quarterly_value": 50, "metric": "operating_income", "basis": "CFS"},
+        {"target_year": "2022", "report_code": "11012", "rcept_dt": "20220815", "quarterly_value": 60, "metric": "operating_income", "basis": "CFS"},
+        {"target_year": "2022", "report_code": "11014", "rcept_dt": "20221115", "quarterly_value": 70, "metric": "operating_income", "basis": "CFS"},
+        {"target_year": "2022", "report_code": "11011", "rcept_dt": "20230215", "quarterly_value": 80, "metric": "operating_income", "basis": "CFS"},
+        {"target_year": "2023", "report_code": "11013", "rcept_dt": "20230515", "quarterly_value": 90, "metric": "operating_income", "basis": "CFS"},
+    ]
+
+    sue, is_estimable = calculate_surprise("A", current_rcept_dt, config, normalized_records)
+    assert is_estimable is False
+    assert sue is None
+
+
+def test_calculate_surprise_six_quarters_is_not_estimable():
+    # 회귀 테스트: aligned 길이가 6이어도 여전히 _MIN_ALIGNED_QUARTERS(7)에 못 미치므로
+    # (None, False)를 반환해야 한다.
+    config = PeadConfig(lookback_quarters=4, earnings_metric="operating_income", dart_basis="CFS")
+    current_rcept_dt = "20230515"
+
+    normalized_records = [
+        {"target_year": "2021", "report_code": "11011", "rcept_dt": "20220215", "quarterly_value": 40, "metric": "operating_income", "basis": "CFS"},
+        {"target_year": "2022", "report_code": "11013", "rcept_dt": "20220515", "quarterly_value": 50, "metric": "operating_income", "basis": "CFS"},
+        {"target_year": "2022", "report_code": "11012", "rcept_dt": "20220815", "quarterly_value": 60, "metric": "operating_income", "basis": "CFS"},
+        {"target_year": "2022", "report_code": "11014", "rcept_dt": "20221115", "quarterly_value": 70, "metric": "operating_income", "basis": "CFS"},
+        {"target_year": "2022", "report_code": "11011", "rcept_dt": "20230215", "quarterly_value": 80, "metric": "operating_income", "basis": "CFS"},
+        {"target_year": "2023", "report_code": "11013", "rcept_dt": "20230515", "quarterly_value": 90, "metric": "operating_income", "basis": "CFS"},
+    ]
+
+    sue, is_estimable = calculate_surprise("A", current_rcept_dt, config, normalized_records)
+    assert is_estimable is False
+    assert sue is None
 
 
 def test_calculate_surprise_filters_by_metric_and_basis():
@@ -130,6 +173,9 @@ def test_calculate_surprise_filters_by_metric_and_basis():
     current_rcept_dt = "20230515"
 
     oi_series = [
+        # _MIN_ALIGNED_QUARTERS(7)를 충족하기 위해 21년 3Q, 4Q도 포함
+        ("2021", "11014", "20211115", 70),
+        ("2021", "11011", "20220215", 85),
         ("2022", "11013", "20220515", 90),
         ("2022", "11012", "20220815", 80),
         ("2022", "11014", "20221115", 100),
