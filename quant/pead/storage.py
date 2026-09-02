@@ -183,3 +183,28 @@ def save_surprise(
                 int(is_estimable),
             ),
         )
+
+
+def save_quality_score(
+    symbol: str,
+    rcept_dt: str,
+    ocf_to_oi_ratio: float | None,
+    passes_quality_filter: bool,
+):
+    """quality.calculate_quality_score()의 결과를 pead_quality_scores에 저장합니다.
+
+    (주의) pead_quality_scores의 기존 PK는 (symbol, rcept_dt)뿐이라 config_hash가 없습니다
+    — 계산 불가능한 경우 ocf_to_oi_ratio=None을 저장하는 것은 pead_surprises와 동일하지만,
+    dart_basis나 quality_threshold를 바꿔 다시 계산하면 이전 결과를 덮어씁니다. 이는 이
+    함수가 새로 만든 제약이 아니라 기존 스키마의 한계이며, 이번 요청 범위에서는 스키마를
+    바꾸지 않았습니다.
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO pead_quality_scores
+            (symbol, rcept_dt, ocf_to_oi_ratio, passes_quality_filter)
+            VALUES (?, ?, ?, ?)
+            """,
+            (symbol, rcept_dt, ocf_to_oi_ratio, int(passes_quality_filter)),
+        )

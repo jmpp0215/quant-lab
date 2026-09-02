@@ -20,6 +20,8 @@ class PeadConfig:
     enable_quality_filter: bool = False
     quality_metric: Literal['ocf_to_oi_ratio'] = 'ocf_to_oi_ratio'
     quality_threshold: float = 0.5
+    # OCF/OI 비율을 단일 분기가 아닌 최근 N분기 평균으로 계산 (분기별 노이즈 완화).
+    quality_lookback_quarters: int = 4
 
     # 3차 레이어 (수급 오버레이)
     enable_flow_overlay: bool = False

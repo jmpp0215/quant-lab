@@ -69,12 +69,16 @@ def _get_point_in_time_series(
     return periods
 
 
-def _align_quarterly_series(periods: list[dict]) -> list[float]:
+def _align_periods(periods: list[dict]) -> list[dict]:
     """
     quarter_index가 최신부터 1씩 연속으로 감소하는 구간만 남기고, 중간에 분기가 비면 그 지점에서
-    자릅니다. 이렇게 해야 정렬된 리스트의 i번째 값이 항상 정확히 "i분기 전" 값이라는
+    자릅니다. 이렇게 해야 정렬된 리스트의 i번째 항목이 항상 정확히 "i분기 전" 값이라는
     _compute_sue의 가정이 깨지지 않습니다 (분기가 하나 비면 그 뒤 인덱스가 전부 밀려서 예:
     전년 동기 자리에 5분기 전 값이 들어가는 식의 조용한 오계산을 방지).
+
+    target_year/report_code 등 메타데이터를 유지한 채 periods 자체를 반환합니다 — 값만
+    필요하면 _align_quarterly_series를, 같은 분기를 다른 metric과 매칭해야 하면(예:
+    quality.calculate_quality_score의 OI/OCF 매칭) 이 함수를 직접 쓰세요.
     """
     if not periods:
         return []
@@ -83,9 +87,14 @@ def _align_quarterly_series(periods: list[dict]) -> list[float]:
     for p in periods:
         if p["quarter_index"] != expected_index:
             break
-        aligned.append(p["quarterly_value"])
+        aligned.append(p)
         expected_index -= 1
     return aligned
+
+
+def _align_quarterly_series(periods: list[dict]) -> list[float]:
+    """_align_periods와 동일한 연속성 규칙을 적용하되 quarterly_value만 추출합니다."""
+    return [p["quarterly_value"] for p in _align_periods(periods)]
 
 
 def calculate_surprise(

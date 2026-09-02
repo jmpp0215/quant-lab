@@ -10,13 +10,15 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from quant.pead.config import PeadConfig
 from quant.pead.signal import build_event_timeline, calculate_surprise
-from quant.pead.storage import save_surprise
+from quant.pead.storage import save_surprise, save_quality_score
 from quant.pead.benchmark import calculate_excess_return
+from quant.pead.quality import calculate_quality_score
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("analyze_sue")
 
 DB_PATH = Path(__file__).parent.parent.parent.parent / "data" / "quant.db"
+MIN_SAMPLE_SIZE = 30
 
 def main():
     if not DB_PATH.exists():
@@ -78,6 +80,11 @@ def main():
         # 계산 불가 비율을 파악하려면 "계산을 시도했지만 데이터가 부족했다"는 기록 자체가 필요하다.
         save_surprise(sym, rcept_dt_str, config, sue, is_estimable)
 
+        # Quality score(OCF/OI)는 SUE의 estimability와 무관하게 독립적으로 계산·저장한다 —
+        # combine_signal 배선 전까지도 저장이 누락되지 않도록 계산 직후 바로 저장.
+        quality_ratio, passes_quality_filter = calculate_quality_score(sym, rcept_dt_str, config, sym_records)
+        save_quality_score(sym, rcept_dt_str, quality_ratio, passes_quality_filter)
+
         if not is_estimable:
             continue
 
@@ -112,6 +119,7 @@ def main():
             'sue': sue,
             'ret_20d': ret_20d,
             'excess_ret_20d': excess_ret_20d,
+            'quality_ratio': quality_ratio,
             'adtv': adtv
         })
         
@@ -150,7 +158,7 @@ def main():
     for _, row in summary.iterrows():
         q = int(row['adtv_quintile'])
         count = int(row['count'])
-        if count < 30:
+        if count < MIN_SAMPLE_SIZE:
             print(f"Q{q:<14} | {count:<10} | 표본 부족     | 표본 부족       | 표본 부족     | 표본 부족")
         else:
             print(
@@ -166,6 +174,58 @@ def main():
     print("\n=== [상관 분석] 전체 표본 대상 SUE와 20일 수익률의 Spearman 순위 상관계수 ===")
     print(f"전체 유효 이벤트 수: {len(df_res)}건")
     print(f"Spearman Correlation: {corr:.4f}")
-    
+
+    # 7. SUE x Quality(OCF/OI) cross analysis
+    print_quality_cross_analysis(df_res)
+
+
+def _print_group_stat(label: str, series: pd.Series):
+    n = series.count()
+    if n < MIN_SAMPLE_SIZE:
+        print(f"    {label:<28} N={n:<5} 표본 부족")
+    else:
+        print(f"    {label:<28} N={n:<5} mean={series.mean()*100:>7.2f}%  median={series.median()*100:>7.2f}%")
+
+
+def _median_split_and_print(df: pd.DataFrame, group_title: str):
+    sub = df.dropna(subset=['quality_ratio', 'excess_ret_20d'])
+    print(f"  {group_title} (quality 계산 가능 N={len(sub)} / 전체 N={len(df)})")
+    if sub.empty:
+        print("    quality 계산 가능한 이벤트가 없어 상/하위 분할 불가")
+        return
+    median_q = sub['quality_ratio'].median()
+    _print_group_stat("quality 상위 (>= median)", sub[sub['quality_ratio'] >= median_q]['excess_ret_20d'])
+    _print_group_stat("quality 하위 (< median)", sub[sub['quality_ratio'] < median_q]['excess_ret_20d'])
+
+
+def print_quality_cross_analysis(df_res: pd.DataFrame):
+    """SUE 상/하위 quintile 내에서 quality score(OCF/OI)로 median split한 교차분석.
+    이벤트 레벨과 종목 레벨(재집계) 결과를 모두 보여준다 — SUE 분석에서 이벤트 레벨과
+    종목 레벨 결론이 달랐던 것처럼 quality도 마찬가지일 수 있기 때문."""
+    print("\n" + "=" * 70)
+    print("=== [교차분석] SUE Quintile x Quality(OCF/OI) median split (초과수익 20일 기준) ===")
+    print("=" * 70)
+
+    df_res = df_res.copy()
+    df_res['sue_quintile_5'] = pd.qcut(df_res['sue'].rank(method='first'), 5, labels=[1, 2, 3, 4, 5])
+
+    print("\n[이벤트 레벨]")
+    for q, label in [(1, 'SUE Q1 (최저)'), (5, 'SUE Q5 (최고)')]:
+        _median_split_and_print(df_res[df_res['sue_quintile_5'] == q], label)
+
+    print("\n[종목 레벨 재집계] (종목별 평균 SUE / 평균 quality / 평균 초과수익)")
+    sym_agg = df_res.groupby('symbol').agg(
+        sue=('sue', 'mean'),
+        excess_ret_20d=('excess_ret_20d', 'mean'),
+        quality_ratio=('quality_ratio', 'mean'),
+    ).reset_index()
+    sym_agg['sue_quintile_5'] = pd.qcut(sym_agg['sue'].rank(method='first'), 5, labels=[1, 2, 3, 4, 5])
+
+    for q, label in [(1, 'SUE Q1 (최저)'), (5, 'SUE Q5 (최고)')]:
+        _median_split_and_print(sym_agg[sym_agg['sue_quintile_5'] == q], label)
+
+    print(f"\n(N < {MIN_SAMPLE_SIZE}인 그룹은 표본 부족으로 표시)")
+
+
 if __name__ == "__main__":
     main()
