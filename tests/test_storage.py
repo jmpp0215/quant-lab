@@ -51,6 +51,42 @@ class TestSaveOrder:
         assert unexplained == Decimal("0")
 
 
+class TestTranchesDoneThisMonth:
+    def test_filters_on_executed_date_not_trade_date(self, tmp_path):
+        # Regression: an order signalled on the last trading day of one
+        # month can execute on the first trading day of the next (e.g. an
+        # 8/31 signal filled 9/1). Filtering on trade_date would miss it
+        # when checking September, so the tranche would wrongly show as
+        # still due.
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_order(
+                conn, "2026-08-31", "2026-08-31T10:00:00", "test-acc",
+                "102110", "BUY", 10, Decimal("109620"), "order-1",
+                filled=True, tranche=1, executed_date="2026-09-01",
+            )
+            done_august = storage.tranches_done_this_month(
+                conn, "test-acc", "2026-08-31")
+            done_september = storage.tranches_done_this_month(
+                conn, "test-acc", "2026-09-01")
+        assert done_august == set()
+        assert done_september == {1}
+
+    def test_same_day_fill_still_counts(self, tmp_path):
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_order(
+                conn, "2026-09-02", "2026-09-02T10:00:00", "test-acc",
+                "102110", "BUY", 10, Decimal("109620"), "order-1",
+                filled=True, tranche=2, executed_date="2026-09-02",
+            )
+            done = storage.tranches_done_this_month(
+                conn, "test-acc", "2026-09-02")
+        assert done == {2}
+
+
 class TestDividendEvents:
     def test_round_trips(self, tmp_path):
         db = tmp_path / "test.db"

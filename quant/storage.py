@@ -238,16 +238,22 @@ def save_order(conn: sqlite3.Connection, trade_date: str, placed_at: str,
          executed_date),
     )
 def tranches_done_this_month(conn: sqlite3.Connection, account: str,
-                             trade_date: str) -> set[int]:
+                             today: str) -> set[int]:
     """Tranches that have already rebalanced in the same calendar month.
+
+    Filters on executed_date, not trade_date: the signal date and the
+    actual execution date can fall in different months (e.g. an 8/31
+    signal executed on 9/1), and it's the execution that counts as the
+    month's rebalance. Filtering on trade_date would miss that order when
+    checking September, so the tranche would wrongly show as due again.
 
     Drives the catch-up rule: a tranche that missed its scheduled day
     runs at the next opportunity instead of skipping the month.
     """
     rows = conn.execute(
         "SELECT DISTINCT tranche FROM orders "
-        "WHERE account = ? AND trade_date LIKE ? AND tranche IS NOT NULL",
-        (account, f"{trade_date[:7]}%"),
+        "WHERE account = ? AND executed_date LIKE ? AND tranche IS NOT NULL",
+        (account, f"{today[:7]}%"),
     ).fetchall()
     return {r["tranche"] for r in rows}
 
