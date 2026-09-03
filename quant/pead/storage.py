@@ -146,7 +146,15 @@ log = logging.getLogger(__name__)
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "quant.db"
 
 def init_db():
-    """Execute PEAD schemas to initialize tables in quant.db."""
+    """
+    데이터베이스 초기화 및 테이블 생성.
+    
+    [스키마 관련 중요 안내]
+    pead_dart_raw 및 pead_quarterly_normalized 테이블은 원래 PEAD 전략 전용으로 시작되었으나, 
+    현재는 GPA, PBR 등 여러 팩터(quant/stock_factors)가 공유하는 "통합 재무 데이터 저장소"로 사용됩니다.
+    매출액, 영업이익, 자산총계, 자본총계, 주식수 등 DART에서 수집되는 모든 재무 지표가 이곳에 함께 저장되므로 
+    새로운 전략이나 팩터를 추가할 때 이 테이블들을 범용 재무 DB로 활용하시기 바랍니다.
+    """
     log.info("Initializing PEAD tables in %s", DB_PATH)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:

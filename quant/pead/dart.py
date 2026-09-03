@@ -118,32 +118,126 @@ def fetch_financial_statements(symbol: str, target_year: str, report_code: str) 
     target_accounts = {
         "영업이익": "operating_income",
         "당기순이익": "net_income",
-        "기본주당이익": "eps" # May not exist in SinglAcnt, fallback handles it
+        "기본주당이익": "eps", # May not exist in SinglAcnt, fallback handles it
+        "자산총계": "total_assets",
+        "자본총계": "total_equity",
+        "매출액": "revenue"
     }
     
     for item in data.get("list", []):
         act_nm = item.get("account_nm", "")
         for k, v in target_accounts.items():
-            if k in act_nm:
-                # thstrm_amount: 당기금액
+            if k == act_nm or (k in act_nm and k not in ["영업이익", "당기순이익"]): # exact match for BS items is safer if possible, but DART varies. Let's just use exact match for Assets/Equity to avoid '유동자산' matching '자산'
+                # wait, let's just use 'in' but exclude some known bad matches, or just use precise list
+                pass
+        
+        # better matching logic
+        # ... actually, let's rewrite the loop
+
+    for item in data.get("list", []):
+        act_nm = item.get("account_nm", "").strip()
+        matched_metric = None
+        
+        if "영업이익" in act_nm: matched_metric = "operating_income"
+        elif "당기순이익" in act_nm: matched_metric = "net_income"
+        elif "기본주당이익" in act_nm: matched_metric = "eps"
+        elif act_nm == "자산총계": matched_metric = "total_assets"
+        elif act_nm == "자본총계": matched_metric = "total_equity"
+        elif act_nm == "매출액": matched_metric = "revenue"
+        
+        if matched_metric:
+            try:
+                amount = float(item.get("thstrm_amount", "0").replace(",", ""))
+            except ValueError:
+                amount = None
+                
+            if amount is not None:
+                results.append({
+                    "symbol": symbol,
+                    "target_year": target_year,
+                    "report_code": report_code,
+                    "metric": matched_metric,
+                    "value": amount,
+                    "basis": item.get("fs_div"), # 'CFS' or 'OFS'
+                    "rcept_dt": item.get("rcept_no", "")[:8],
+                    "original_rcept_dt": None
+                })
+    return results
+
+def fetch_issued_shares(symbol: str, target_year: str, report_code: str) -> list[dict]:
+    """OpenDART '주식의 총수 등' API를 호출하여 발행주식수를 수집합니다."""
+    corp_code = _get_corp_code(symbol)
+    if not corp_code: return []
+    
+    results = []
+    url = f"{OPENDART_BASE_URL}/stockTotqySttus.json"
+    params = {
+        "crtfc_key": _get_api_key(),
+        "corp_code": corp_code,
+        "bsns_year": target_year,
+        "reprt_code": report_code
+    }
+    
+    data = _rate_limit_and_retry(url, params)
+    for item in data.get("list", []):
+        if item.get("se") == "보통주":
+            issued = item.get("istc_totqy", "0").replace(",", "")
+            try:
+                val = float(issued)
+                results.append({
+                    "symbol": symbol,
+                    "target_year": target_year,
+                    "report_code": report_code,
+                    "metric": "issued_shares",
+                    "value": val,
+                    "basis": "CFS",
+                    "rcept_dt": item.get("rcept_no", "")[:8],
+                    "original_rcept_dt": None
+                })
+            except ValueError: pass
+            
+    return results
+
+def fetch_gross_profit(symbol: str, target_year: str, report_code: str) -> list[dict]:
+    """OpenDART '단일회사 전체재무제표' API를 호출하여 매출총이익을 수집합니다."""
+    corp_code = _get_corp_code(symbol)
+    if not corp_code: return []
+    
+    results = []
+    url = f"{OPENDART_BASE_URL}/fnlttSinglAcntAll.json"
+    params = {
+        "crtfc_key": _get_api_key(),
+        "corp_code": corp_code,
+        "bsns_year": target_year,
+        "reprt_code": report_code,
+        "fs_div": "CFS"
+    }
+    
+    try:
+        data = _rate_limit_and_retry(url, params)
+        for item in data.get("list", []):
+            act_nm = item.get("account_nm", "").strip()
+            if act_nm == "매출총이익":
                 try:
-                    amount = float(item.get("thstrm_amount", "0").replace(",", ""))
-                except ValueError:
-                    amount = None
-                    
-                if amount is not None:
+                    val = float(item.get("thstrm_amount", "0").replace(",", ""))
                     results.append({
                         "symbol": symbol,
                         "target_year": target_year,
                         "report_code": report_code,
-                        "metric": v,
-                        "value": amount,
-                        "basis": item.get("fs_div"), # 'CFS' or 'OFS'
+                        "metric": "gross_profit",
+                        "value": val,
+                        "basis": "CFS",
                         "rcept_dt": item.get("rcept_no", "")[:8],
                         "original_rcept_dt": None
                     })
-    return results
+                except ValueError: pass
+    except Exception as e:
+        if "max calls exceeded" in str(e).lower():
+            raise
+        if "No data found" not in str(e):
+            log.warning(f"Failed to fetch gross profit for {symbol}: {e}")
 
+    return results
 
 def fetch_cash_flow_statement(symbol: str, target_year: str, report_code: str) -> list[dict]:
     """
@@ -304,12 +398,16 @@ def batch_fetch_with_checkpoint(
 
     fin_completed = set(checkpoint.get("fin_completed", []))
     cf_completed = set(checkpoint.get("cf_completed", []))
-    log.info(f"Loaded checkpoint. FIN completed: {len(fin_completed)}, CF completed: {len(cf_completed)}")
+    shares_completed = set(checkpoint.get("shares_completed", checkpoint.get("extra_completed", [])))
+    gp_completed = set(checkpoint.get("gp_completed", checkpoint.get("extra_completed", [])))
+    log.info(f"Loaded checkpoint. FIN: {len(fin_completed)}, CF: {len(cf_completed)}, SHARES: {len(shares_completed)}, GP: {len(gp_completed)}")
 
     def _save_checkpoint():
         _atomic_write_json(CHECKPOINT_FILE, {
             "fin_completed": list(fin_completed),
             "cf_completed": list(cf_completed),
+            "shares_completed": list(shares_completed),
+            "gp_completed": list(gp_completed),
         })
 
     def _save_and_normalize(symbol, new_metrics):
@@ -347,6 +445,21 @@ def batch_fetch_with_checkpoint(
                         cf_metrics = fetch_cash_flow_statement(symbol, target_year, report_code)
                         _save_and_normalize(symbol, cf_metrics)
                         cf_completed.add(key)
+                        
+                    # 3. 주식수 수집
+                    if key not in shares_completed:
+                        log.info(f"Fetching Issued Shares for {key}...")
+                        shares_metrics = fetch_issued_shares(symbol, target_year, report_code)
+                        _save_and_normalize(symbol, shares_metrics)
+                        shares_completed.add(key)
+                        
+                    # 4. 매출총이익 수집
+                    if key not in gp_completed:
+                        log.info(f"Fetching Gross Profit for {key}...")
+                        gp_metrics = fetch_gross_profit(symbol, target_year, report_code)
+                        _save_and_normalize(symbol, gp_metrics)
+                        gp_completed.add(key)
+
             except Exception as e:
                 if "max calls exceeded" in str(e).lower():
                     raise
@@ -369,8 +482,13 @@ def normalize_to_quarterly(raw_records: list[dict]) -> list[dict]:
     DART API에서 수집된 원본 YTD(누적) 데이터 리스트를 단일 분기 데이터로 환산합니다.
     환산에 사용되는 이전 분기 데이터는 반드시 현재 처리 중인 보고서의 rcept_dt 이전에 가용했던 
     가장 최신 정정본을 사용하도록 point-in-time 필터링을 거칩니다.
+    
+    주의: 자산총계, 자본총계, 발행주식수는 누적이 아닌 스냅샷(snapshot) 지표이므로 이전 분기값을 빼지 않습니다.
     """
     from collections import defaultdict
+    
+    # 누적 지표 목록 (YTD에서 분기값을 구하기 위해 이전 분기값을 빼야 하는 지표들)
+    ytd_metrics = {"operating_income", "net_income", "eps", "revenue", "operating_cash_flow", "gross_profit"}
     
     # group_key: (symbol, target_year, metric, basis) -> list of records
     groups = defaultdict(list)
@@ -408,7 +526,7 @@ def normalize_to_quarterly(raw_records: list[dict]) -> list[dict]:
             quarterly_val = None
             is_estimable = True
             
-            if prev_code is None:
+            if prev_code is None or metric not in ytd_metrics:
                 quarterly_val = val
             else:
                 prev_val = _get_pit_value(records, prev_code, rcept_dt)

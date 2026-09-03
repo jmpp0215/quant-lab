@@ -23,10 +23,16 @@ def main():
     # KRX 봇 차단 이슈로 인해 pykrx 대신 FinanceDataReader 사용
     import FinanceDataReader as fdr
     
-    # 빠른 데모 분석을 위해 임시로 시총 상위 50종목 수집
+    # KOSPI ALL
     kospi_df = fdr.StockListing('KOSPI')
     kospi_tickers = kospi_df['Code'].tolist()
-    log.info(f"KOSPI Tickers count: {len(kospi_tickers)} (KOSPI ALL)")
+    
+    # 팩터 시뮬레이션 시 시가총액 편향을 막기 위해 무작위로 섞어서 수집 (API 한도 도달 대비)
+    import random
+    random.seed(42)
+    random.shuffle(kospi_tickers)
+    
+    log.info(f"KOSPI Tickers count: {len(kospi_tickers)} (KOSPI ALL, Shuffled)")
     
     # 2020년부터 2023년까지 수집 (4년치)
     target_years = ["2020", "2021", "2022", "2023"]
