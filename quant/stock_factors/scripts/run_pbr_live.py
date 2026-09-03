@@ -142,6 +142,31 @@ def main():
     print(f" - 주식 잔고: {len(sim_positions)} 종목")
     print(f" - 총 자산: {sim_total:,.0f} KRW (슬리피지/수수료 미반영)")
     
+    # 6. Execute Orders (if not dry run)
+    if not client.dry_run:
+        print("\n" + "!"*50)
+        print("!!! EXECUTING ACTUAL ORDERS !!!")
+        print("!"*50)
+        
+        # We need an interactive prompt to prevent accidental execution if someone just exports the env var
+        ans = input("Proceed with live execution? (yes/no): ")
+        if ans.lower() != 'yes':
+            print("Aborted by user.")
+            return 0
+            
+        results = {}
+        if sells:
+            log.info("Executing SELLS...")
+            results |= executor.execute(cfg["broker"], client, sells, final_prices)
+            
+        if buys:
+            log.info("Executing BUYS...")
+            results |= executor.execute(cfg["broker"], client, buys, final_prices)
+            
+        log.info("Execution complete.")
+    else:
+        print("\n(DRY_RUN mode: No actual orders were placed. Run with TOSS_DRY_RUN=false to execute.)")
+        
     return 0
 
 if __name__ == "__main__":
