@@ -17,15 +17,24 @@ def main():
     cursor.execute("SELECT DISTINCT symbol, target_year, report_code, metric FROM pead_dart_raw")
     rows = cursor.fetchall()
     
+    # First, collect metrics per key
+    metrics_by_key = {}
     for symbol, target_year, report_code, metric in rows:
         key = f"{symbol}_{target_year}_{report_code}"
-        if metric in ('operating_income', 'net_income', 'total_assets', 'total_equity', 'revenue'):
+        if key not in metrics_by_key:
+            metrics_by_key[key] = set()
+        metrics_by_key[key].add(metric)
+        
+    for key, metrics in metrics_by_key.items():
+        # fin_completed ONLY if total_equity is present (meaning new fetch was done)
+        if 'total_equity' in metrics:
             fin_completed.add(key)
-        elif metric == 'operating_cash_flow':
+        
+        if 'operating_cash_flow' in metrics:
             cf_completed.add(key)
-        elif metric == 'issued_shares':
+        if 'issued_shares' in metrics:
             shares_completed.add(key)
-        elif metric == 'gross_profit':
+        if 'gross_profit' in metrics:
             gp_completed.add(key)
             
     conn.close()
