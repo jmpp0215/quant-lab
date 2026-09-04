@@ -34,8 +34,8 @@ def main():
     
     log.info(f"KOSPI Tickers count: {len(kospi_tickers)} (KOSPI ALL, Shuffled)")
     
-    # 2020년부터 2023년까지 수집 (4년치)
-    target_years = ["2020", "2021", "2022", "2023"]
+    # 2020년부터 2026년까지 수집
+    target_years = ["2020", "2021", "2022", "2023", "2024", "2025", "2026"]
     report_codes = ["11013", "11012", "11014", "11011"]
     
     for year in target_years:
