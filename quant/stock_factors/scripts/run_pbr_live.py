@@ -1,5 +1,6 @@
 import sys
 import logging
+import argparse
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -16,14 +17,27 @@ from quant.stock_factors.portfolio_construction import (
     calculate_diff, 
     format_orders
 )
+from quant.stock_factors.scripts import pbr_storage
 import FinanceDataReader as fdr
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("run_pbr_live")
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run PBR live execution")
+    parser.add_argument("--auto", action="store_true", help="Skip interactive prompts and run automatically")
+    # Accounts logic is custom, we'll manually pull --account out via extract_account first
+    return parser.parse_known_args(sys.argv)
+
 def main():
-    account, _ = accounts.extract_account(sys.argv, default="toss-bot")
+    account, remaining_argv = accounts.extract_account(sys.argv, default="toss-bot")
+    parser = argparse.ArgumentParser(description="Run PBR live execution")
+    parser.add_argument("--auto", action="store_true", help="Skip interactive prompts")
+    args, _ = parser.parse_known_args(remaining_argv)
+    
+    pbr_storage.init()
+    
     log.info(f"Connecting to account: {account}")
     
     cfg = accounts.resolve(account)
@@ -39,6 +53,7 @@ def main():
     # 1. Fetch current account state
     snap = cfg["snapshot"](client)
     cash = cfg["buying_power"](client, {})
+    cash_before = cash
     
     log.info(f"Settled Cash (Snapshot): {snap.cash:,.0f} KRW")
     log.info(f"Buying Power: {cash:,.0f} KRW")
@@ -55,6 +70,7 @@ def main():
         )
         
     total_assets = cash + sum(pos.value for pos in positions.values())
+    assets_before = total_assets
     log.info(f"Total Assets Before Rebalance: {total_assets:,.0f} KRW")
     log.info(f"Current Holdings: {len(positions)} stocks")
     
@@ -68,7 +84,6 @@ def main():
         return 1
         
     # 3. Get Prices
-    # In live, we should get real-time prices for the union of target symbols and held symbols
     symbols_to_price = set(target_weights.keys()) | set(positions.keys())
     
     try:
@@ -77,7 +92,6 @@ def main():
         log.warning(f"Failed to fetch live prices from broker: {e}. Falling back to recent close.")
         live_prices = {}
         
-    # Merge with last available DB prices if missing
     from quant.stock_factors.portfolio_construction import get_latest_prices
     db_prices = get_latest_prices(today_str)
     
@@ -85,8 +99,8 @@ def main():
     for sym in symbols_to_price:
         final_prices[sym] = live_prices.get(sym, db_prices.get(sym, Decimal("0")))
         
-    # Update cash with prices (just in case buying power depends on it)
     cash = cfg["buying_power"](client, final_prices)
+    cash_before = cash
     
     # 4. Generate Diff Orders
     orders = calculate_diff(target_weights, positions, final_prices, cash)
@@ -148,24 +162,25 @@ def main():
         print("!!! EXECUTING ACTUAL ORDERS !!!")
         print("!"*50)
         
-        # We need an interactive prompt to prevent accidental execution if someone just exports the env var
-        ans = input("Proceed with live execution? (yes/no): ")
-        if ans.lower() != 'yes':
-            print("Aborted by user.")
-            return 0
+        if not args.auto:
+            ans = input("Proceed with live execution? (yes/no): ")
+            if ans.lower() != 'yes':
+                print("Aborted by user.")
+                return 0
+        else:
+            log.info("AUTO mode enabled. Skipping interactive prompt.")
             
         results = {}
         if sells:
             log.info("Executing SELLS...")
             results |= executor.execute(cfg["broker"], client, sells, final_prices)
             
+        executed_orders = list(sells)
+            
         if buys:
-            # Recompute cash and buys after sells
             log.info("Recomputing BUYS based on actual cash after SELLS...")
-            # Wait a moment for settlement cash to reflect if broker updates it immediately
             cash_after_sells = cfg["buying_power"](client, final_prices)
             
-            # Apply actual fills to positions
             def apply_fills(pos_dict, executed_sells, res):
                 updated = dict(pos_dict)
                 for o in executed_sells:
@@ -182,7 +197,6 @@ def main():
                 
             positions_after_sells = apply_fills(positions, sells, results)
             
-            # Recalculate target buys
             revised_orders = calculate_diff(target_weights, positions_after_sells, final_prices, cash_after_sells)
             revised_buys = [o for o in revised_orders if o.side == "BUY"]
             
@@ -190,13 +204,48 @@ def main():
             if revised_buys:
                 log.info("Executing revised BUYS...")
                 results |= executor.execute(cfg["broker"], client, revised_buys, final_prices)
+                executed_orders.extend(revised_buys)
             
         log.info("Execution complete.")
         
-        # 7. Summary
+        # 7. Data Logging
+        cash_after = cfg["buying_power"](client, final_prices)
+        snap_after = cfg["snapshot"](client)
+        assets_after = cash_after + sum(
+            Decimal(str(p.get("qty", 0))) * Decimal(str(p.get("lastPrice", p.get("price", "0")))) 
+            for p in snap_after.positions if p.get("currency", "KRW") == "KRW"
+        )
+        
         failed = [sym for sym, r in results.items() if not r.get("filled", False) and r.get("filled_quantity", 0) == 0]
         partial = [sym for sym, r in results.items() if not r.get("filled", False) and r.get("filled_quantity", 0) > 0]
         
+        summary_data = {
+            "failed": failed,
+            "partial": partial,
+            "all_clear": not failed and not partial
+        }
+        
+        target_dict = {sym: float(w) for sym, w in target_weights.items()}
+        
+        with pbr_storage.connect() as conn:
+            pbr_storage.save_rebalance(
+                conn, today_str, pbr_config.target_n_stocks, 
+                assets_before, assets_after, cash_before, cash_after,
+                target_dict, summary_data
+            )
+            
+            for o in executed_orders:
+                r = results.get(o.symbol, {})
+                filled_qty = r.get("filled_quantity", 0)
+                # Toss might provide average price in execution block if filled
+                exec_block = r.get("execution", {})
+                avg_price = Decimal(str(exec_block.get("avg_fill_price", o.limit_price))) if filled_qty > 0 else Decimal("0")
+                
+                pbr_storage.save_order(
+                    conn, today_str, o.symbol, o.side, o.quantity, o.limit_price,
+                    filled_qty, avg_price, r.get("order_id")
+                )
+                
         print("\n" + "="*50)
         print("=== EXECUTION SUMMARY ===")
         print("="*50)
@@ -206,6 +255,11 @@ def main():
             print(f"[부분 체결 종목]: {', '.join(partial)}")
         if not failed and not partial:
             print("[모든 종목 정상 체결 완료]")
+            
+        if args.auto:
+            # Here we could theoretically send a Slack/Telegram message if the project has one.
+            # But the user said "구체적 알림 방식은 momentum이 쓰는 방식이 있다면 그걸 재사용, 없다면 로그 파일 + 터미널 출력으로 충분"
+            log.info("Summary logged to pbr_live.db successfully.")
             
     else:
         print("\n(DRY_RUN mode: No actual orders were placed. Run with TOSS_DRY_RUN=false to execute.)")
