@@ -160,10 +160,53 @@ def main():
             results |= executor.execute(cfg["broker"], client, sells, final_prices)
             
         if buys:
-            log.info("Executing BUYS...")
-            results |= executor.execute(cfg["broker"], client, buys, final_prices)
+            # Recompute cash and buys after sells
+            log.info("Recomputing BUYS based on actual cash after SELLS...")
+            # Wait a moment for settlement cash to reflect if broker updates it immediately
+            cash_after_sells = cfg["buying_power"](client, final_prices)
+            
+            # Apply actual fills to positions
+            def apply_fills(pos_dict, executed_sells, res):
+                updated = dict(pos_dict)
+                for o in executed_sells:
+                    r = res.get(o.symbol)
+                    if not r: continue
+                    filled = r.get("filled_quantity", 0)
+                    if not filled: continue
+                    updated[o.symbol] = rebalance.Position(
+                        symbol=o.symbol, name=o.name,
+                        quantity=updated[o.symbol].quantity - filled,
+                        last_price=o.limit_price
+                    )
+                return {s: p for s, p in updated.items() if p.quantity > 0}
+                
+            positions_after_sells = apply_fills(positions, sells, results)
+            
+            # Recalculate target buys
+            revised_orders = calculate_diff(target_weights, positions_after_sells, final_prices, cash_after_sells)
+            revised_buys = [o for o in revised_orders if o.side == "BUY"]
+            
+            log.info(f"Revised BUYS: {len(revised_buys)} orders")
+            if revised_buys:
+                log.info("Executing revised BUYS...")
+                results |= executor.execute(cfg["broker"], client, revised_buys, final_prices)
             
         log.info("Execution complete.")
+        
+        # 7. Summary
+        failed = [sym for sym, r in results.items() if not r.get("filled", False) and r.get("filled_quantity", 0) == 0]
+        partial = [sym for sym, r in results.items() if not r.get("filled", False) and r.get("filled_quantity", 0) > 0]
+        
+        print("\n" + "="*50)
+        print("=== EXECUTION SUMMARY ===")
+        print("="*50)
+        if failed:
+            print(f"[전량 미체결 종목]: {', '.join(failed)}")
+        if partial:
+            print(f"[부분 체결 종목]: {', '.join(partial)}")
+        if not failed and not partial:
+            print("[모든 종목 정상 체결 완료]")
+            
     else:
         print("\n(DRY_RUN mode: No actual orders were placed. Run with TOSS_DRY_RUN=false to execute.)")
         
