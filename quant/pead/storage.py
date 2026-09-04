@@ -44,6 +44,14 @@ CREATE TABLE IF NOT EXISTS pead_price_raw (
     PRIMARY KEY (date, symbol)
 );
 
+-- pead_price_raw 증분 갱신(scripts/refresh_prices.py)이 심볼별로 마지막까지 가져온 날짜를
+-- 기록하는 상태 테이블. quant/storage.py의 dividend_fetch_state와 동일한 패턴.
+CREATE TABLE IF NOT EXISTS pead_price_fetch_state (
+    symbol      TEXT PRIMARY KEY,
+    fetched_to  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
 -- 벤치마크(코스피 등) 지수 OHLCV. pead_price_raw와 분리해 개별 종목 유니버스 조회(예: DISTINCT
 -- symbol)에 지수가 섞여 들어가는 것을 방지한다. index_symbol은 FinanceDataReader의 지수
 -- 티커(예: 코스피 종합지수 'KS11')를 그대로 사용한다.
@@ -159,6 +167,23 @@ def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
         conn.executescript(PEAD_SCHEMA)
+
+
+def price_fetch_state(conn: sqlite3.Connection, symbol: str) -> str | None:
+    row = conn.execute(
+        "SELECT fetched_to FROM pead_price_fetch_state WHERE symbol = ?",
+        (symbol,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def save_price_fetch_state(conn: sqlite3.Connection, symbol: str,
+                           fetched_to: str, updated_at: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO pead_price_fetch_state "
+        "(symbol, fetched_to, updated_at) VALUES (?, ?, ?)",
+        (symbol, fetched_to, updated_at),
+    )
 
 
 def save_surprise(

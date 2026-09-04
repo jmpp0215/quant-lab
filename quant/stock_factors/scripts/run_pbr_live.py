@@ -12,10 +12,14 @@ from quant import config as main_config
 from quant import accounts, market, rebalance, executor
 from quant.toss_client import TossClient
 from quant.stock_factors.portfolio_construction import (
-    PBRConfig, 
-    construct_target_portfolio, 
-    calculate_diff, 
-    format_orders
+    PBRConfig,
+    construct_target_portfolio,
+    calculate_diff,
+    format_orders,
+    get_latest_prices,
+    latest_price_date,
+    price_data_is_stale,
+    MAX_STALE_TRADING_DAYS,
 )
 from quant.stock_factors.scripts import pbr_storage
 import FinanceDataReader as fdr
@@ -49,7 +53,13 @@ def main():
         
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
-    
+
+    if executor.auction_imminent(now.strftime("%H:%M")):
+        log.error("closing auction has begun; no new orders")
+        return 1
+
+    executor.cancel_open_orders(cfg["broker"], client)
+
     # 1. Fetch current account state
     snap = cfg["snapshot"](client)
     cash = cfg["buying_power"](client, {})
@@ -75,6 +85,16 @@ def main():
     log.info(f"Current Holdings: {len(positions)} stocks")
     
     # 2. Get Target Portfolio
+    latest = latest_price_date()
+    if price_data_is_stale(today_str, latest):
+        log.error(
+            "price data is stale: latest cached date is %s, more than %d "
+            "trading day(s) behind %s; refusing to construct a target "
+            "portfolio on stale data",
+            latest, MAX_STALE_TRADING_DAYS, today_str,
+        )
+        return 1
+
     pbr_config = PBRConfig(target_n_stocks=50)
     log.info(f"Constructing Target Portfolio (Top {pbr_config.target_n_stocks}) as of {today_str}...")
     target_weights = construct_target_portfolio(today_str, pbr_config)
@@ -92,7 +112,6 @@ def main():
         log.warning(f"Failed to fetch live prices from broker: {e}. Falling back to recent close.")
         live_prices = {}
         
-    from quant.stock_factors.portfolio_construction import get_latest_prices
     db_prices = get_latest_prices(today_str)
     
     final_prices = {}
@@ -239,7 +258,7 @@ def main():
                 filled_qty = r.get("filled_quantity", 0)
                 # Toss might provide average price in execution block if filled
                 exec_block = r.get("execution", {})
-                avg_price = Decimal(str(exec_block.get("avg_fill_price", o.limit_price))) if filled_qty > 0 else Decimal("0")
+                avg_price = Decimal(str(exec_block.get("averageFilledPrice", o.limit_price))) if filled_qty > 0 else Decimal("0")
                 
                 pbr_storage.save_order(
                     conn, today_str, o.symbol, o.side, o.quantity, o.limit_price,

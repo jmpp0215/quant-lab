@@ -1,7 +1,9 @@
 import os
 import logging
+from datetime import date
 from decimal import Decimal
 import sqlite3
+import numpy as np
 import pandas as pd
 from pathlib import Path
 
@@ -14,6 +16,11 @@ log = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "quant.db"
 
+# Refuse to build a target portfolio when pead_price_raw is this many trading
+# days (weekends excluded, KRX holidays not) or more behind as_of_date - a
+# stale price table would otherwise silently rank symbols on old data.
+MAX_STALE_TRADING_DAYS = 2
+
 class PBRConfig:
     def __init__(self, target_n_stocks: int = 50, rebalance_days: int = 20):
         self.target_n_stocks = target_n_stocks
@@ -22,19 +29,48 @@ class PBRConfig:
 
 def get_latest_prices(date_str: str) -> dict[str, Decimal]:
     """Fetch prices as of the given date (or the most recent trading day)."""
+    # pead_price_raw stores dates as YYYYMMDD; strip any dashes so the
+    # comparison below isn't comparing against the wrong lexical ordering
+    # (e.g. "2026-09-04" sorts before "20260902" - see latest_price_date()).
+    date_key = date_str.replace("-", "")
     conn = sqlite3.connect(DB_PATH)
     # Get the exact or most recent date up to date_str
     query = f"""
-        SELECT symbol, close 
-        FROM pead_price_raw 
+        SELECT symbol, close
+        FROM pead_price_raw
         WHERE date = (
-            SELECT MAX(date) FROM pead_price_raw WHERE date <= '{date_str}'
+            SELECT MAX(date) FROM pead_price_raw WHERE date <= '{date_key}'
         )
     """
     df = pd.read_sql(query, conn)
     conn.close()
-    
+
     return {row['symbol']: Decimal(str(row['close'])) for _, row in df.iterrows()}
+
+
+def latest_price_date() -> str | None:
+    """Most recent date (YYYYMMDD) present in pead_price_raw, or None if empty."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT MAX(date) FROM pead_price_raw").fetchone()
+    conn.close()
+    return row[0]
+
+
+def price_data_is_stale(as_of_date: str, latest: str | None,
+                        max_trading_days: int = MAX_STALE_TRADING_DAYS) -> bool:
+    """True if latest is more than max_trading_days behind as_of_date.
+
+    Trading-day gap (numpy.busday_count - weekends excluded, KRX holidays
+    not) rather than calendar days, so an ordinary Friday-cached/Monday-run
+    gap doesn't false-positive as stale.
+    """
+    if latest is None:
+        return True
+    as_of_key = as_of_date.replace("-", "")
+    latest_dt = date.fromisoformat(f"{latest[:4]}-{latest[4:6]}-{latest[6:]}")
+    as_of_dt = date.fromisoformat(f"{as_of_key[:4]}-{as_of_key[4:6]}-{as_of_key[6:]}")
+    gap = int(np.busday_count(latest_dt, as_of_dt))
+    return gap > max_trading_days
 
 def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, Decimal]:
     """
@@ -52,9 +88,16 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
     df_bps = prepare_pbr_signals(start_fetch_date)
     
     # 2. Get Universe Snapshot prices
+    # pead_price_raw stores dates as YYYYMMDD (no dashes) - both bounds must
+    # use that same format, or the lexical string comparison silently drops
+    # every date whose year matches as_of_date's (e.g. bounding by the dashed
+    # "2026-09-04" excludes all of 2026, since '-' sorts before any digit).
     conn = sqlite3.connect(DB_PATH)
-    start_date_dash = f"{year-1}-01-01"
-    df_price = pd.read_sql(f"SELECT date, symbol, close FROM pead_price_raw WHERE date >= '{start_date_dash}' AND date <= '{as_of_date}'", conn)
+    df_price = pd.read_sql(
+        f"SELECT date, symbol, close FROM pead_price_raw "
+        f"WHERE date >= '{start_fetch_date}' AND date <= '{as_of_date_stripped}'",
+        conn,
+    )
     conn.close()
     
     df_price['date'] = pd.to_datetime(df_price['date'])

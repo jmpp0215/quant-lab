@@ -1,8 +1,9 @@
 [tool.pytest.ini_options]
-# tests/ is the main suite; quant/pead/tests/ is the PEAD research package's own
-# suite. scratch/ holds throwaway API probes whose names start with test_, so
-# pytest would otherwise try to import them as tests and fail on collection.
-testpaths = ["tests", "quant/pead/tests"]
+# tests/ is the main suite; quant/pead/tests/ and quant/stock_factors/tests/ are
+# the PEAD/factor research packages' own suites. scratch/ holds throwaway API
+# probes whose names start with test_, so pytest would otherwise try to import
+# them as tests and fail on collection.
+testpaths = ["tests", "quant/pead/tests", "quant/stock_factors/tests"]
 
 [tool.ruff]
 line-length = 88
