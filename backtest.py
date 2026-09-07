@@ -12,7 +12,6 @@ to see whether the ranking ever actually rotates.
 """
 
 import logging
-import warnings
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -72,189 +71,6 @@ def dividend_income(holdings: dict[str, Decimal],
             Decimal("0"),
         )
         total += units * paid
-    return total
-
-
-def rebalance_dates(candles_by_symbol: dict[str, list[dict]],
-                    skip_months: int = 13,
-                    offset: int = 0) -> list[str]:
-    """The (offset+1)-th trading date of each month, once history allows.
-
-    Months without enough trading days are skipped rather than falling
-    back to their last day: substituting a different day would quietly
-    turn a timing-luck comparison into a comparison of different
-    schedules.
-    """
-    reference = candles_by_symbol[next(iter(config.UNIVERSE))]
-    dates = sorted(_date_of(c) for c in reference)
-
-    by_month: dict[str, list[str]] = {}
-    for d in dates:
-        by_month.setdefault(d[:7], []).append(d)
-
-    months = sorted(by_month)[skip_months:]
-    return [
-        by_month[m][offset] for m in months
-        if len(by_month[m]) > offset
-    ]
-
-def run(candles_by_symbol: dict[str, list[dict]],
-        dividend_events_by_symbol: dict[str, list[dict]],
-        initial: Decimal = Decimal("10000000"),
-        scheme: str = "equal",
-        offset: int = 0,
-        costs: bool = False) -> list[Rebalance]:
-    """DEPRECATED: use run_tranched(tranches=(0,)) instead - confirmed to
-    produce identical numbers for every case that doesn't trigger the bug
-    below, and correct ones for the cases that do. Kept only because
-    tests/test_backtest.py still exercises it; not removed since deleting
-    a working (if bugged) function that nothing currently imports isn't
-    worth the churn.
-
-    Bug: this function has no cash ledger at all - value is recomputed
-    purely from mark-to-market of `holdings` each rebalance. If
-    strategy.evaluate()'s weights ever sum to less than 1 (the absolute
-    momentum filter leaving fewer than TOP_N names eligible), the
-    unallocated fraction is not carried forward as cash - it is silently
-    dropped from value on the next rebalance, compounding every period
-    after. Confirmed by direct reproduction: flat prices, weights summing
-    to 2/3 every rebalance, 10,000,000 -> 585,277 after 8 rebalances
-    (should stay flat at 10,000,000). run_tranched() has no such bug -
-    it debits a real `cash` variable only for what actually gets bought,
-    so an unallocated fraction naturally stays in cash. Never observed to
-    have actually triggered in this project's history (cached candles or
-    daily.py's recorded scores), but is a live risk for any period where
-    it does.
-
-    Replay monthly rebalances, holding the selected names in between.
-
-    With costs=True, each rebalance pays the spread on both sides and tax
-    on realised gains in foreign-tracking ETFs. Turnover is what makes
-    tranching expensive, so comparing schedules without it is misleading.
-
-    dividend_events_by_symbol: raw payout history per symbol - required,
-    not defaulted, so a forgotten argument errors instead of silently
-    producing a zero-dividend backtest.
-    """
-    warnings.warn(
-        "backtest.run() has a bug that silently loses uninvested capital "
-        "when signal weights sum to less than 1 (see docstring) - use "
-        "run_tranched(tranches=(0,)) instead.",
-        DeprecationWarning, stacklevel=2,
-    )
-    history: list[Rebalance] = []
-    value = initial
-    holdings: dict[str, Decimal] = {}
-    basis: dict[str, Decimal] = {}      # symbol -> cost per unit
-    previous_date: str | None = None    # start of the current holding period
-
-    for trade_date in rebalance_dates(candles_by_symbol, offset=offset):
-        prices = {
-            sym: close_at(cs, trade_date)
-            for sym, cs in candles_by_symbol.items()
-        }
-        prices = {s: p for s, p in prices.items() if p is not None}
-
-        if holdings:
-            value = sum(
-                units * prices[sym]
-                for sym, units in holdings.items()
-                if sym in prices
-            )
-            # There is no separate cash ledger here - the whole portfolio
-            # is always fully reinvested at each rebalance - so dividends
-            # collected while holding `holdings` are folded straight into
-            # value before it gets split into the new target weights below.
-            if previous_date is not None:
-                value += dividend_income(
-                    holdings, dividend_events_by_symbol, previous_date, trade_date)
-
-        sliced = {
-            sym: slice_at(cs, trade_date)
-            for sym, cs in candles_by_symbol.items()
-        }
-        sliced_dividends = {
-            sym: slice_dividends_at(evs, trade_date)
-            for sym, evs in dividend_events_by_symbol.items()
-        }
-        signal = strategy.evaluate(sliced, sliced_dividends)
-
-        weights = signal.weights
-        if scheme != "equal" and weights:
-            scores = {s.symbol: s.momentum for s in signal.scores
-                      if s.momentum is not None}
-            weights = strategy._weights_by_scheme(
-                sliced, list(weights), scheme, scores)
-
-        target = {
-            sym: (value * weight) / prices[sym]
-            for sym, weight in weights.items()
-            if sym in prices
-        }
-
-        if costs:
-            value -= _rebalance_cost(holdings, target, prices, basis)
-            target = {
-                sym: (value * weight) / prices[sym]
-                for sym, weight in weights.items()
-                if sym in prices
-            }
-
-        # Carry basis forward for held units, set it for newly bought ones.
-        for sym, units in target.items():
-            previous = holdings.get(sym, Decimal("0"))
-            if units > previous:
-                bought = units - previous
-                old_cost = previous * basis.get(sym, prices[sym])
-                basis[sym] = (old_cost + bought * prices[sym]) / units
-            elif sym not in basis:
-                basis[sym] = prices[sym]
-
-        holdings = target
-        history.append(Rebalance(date=trade_date, weights=weights,
-                                 prices=prices, value=value))
-        previous_date = trade_date
-
-    if holdings:
-        last = max(_date_of(c) for c in
-                   candles_by_symbol[next(iter(config.UNIVERSE))])
-        final_prices = {
-            sym: close_at(cs, last)
-            for sym, cs in candles_by_symbol.items()
-        }
-        value = sum(units * final_prices[sym]
-                    for sym, units in holdings.items()
-                    if final_prices.get(sym))
-        if previous_date is not None:
-            value += dividend_income(
-                holdings, dividend_events_by_symbol, previous_date, last)
-        history.append(Rebalance(date=last, weights={}, prices=final_prices,
-                                 value=value))
-
-    return history
-
-
-def _rebalance_cost(current: dict[str, Decimal], target: dict[str, Decimal],
-                    prices: dict[str, Decimal],
-                    basis: dict[str, Decimal]) -> Decimal:
-    """Total cost of moving from `current` to `target` holdings."""
-    total = Decimal("0")
-
-    for sym in set(current) | set(target):
-        if sym not in prices:
-            continue
-        delta = target.get(sym, Decimal("0")) - current.get(sym, Decimal("0"))
-        if delta == 0:
-            continue
-
-        notional = abs(delta) * prices[sym]
-        total += _spread_cost(sym, notional)
-
-        if delta < 0:
-            sold = abs(delta)
-            cost_basis = sold * basis.get(sym, prices[sym])
-            total += _tax_on_sale(sym, sold * prices[sym], cost_basis)
-
     return total
 
 
@@ -340,20 +156,6 @@ def _spread_cost(symbol: str, notional: Decimal) -> Decimal:
     return notional * half
 
 
-def _tax_on_sale(symbol: str, proceeds: Decimal,
-                 cost_basis: Decimal) -> Decimal:
-    """Tax due on realising a gain.
-
-    Only foreign-tracking ETFs are taxed; a domestic equity ETF can be
-    rotated freely. Losses are treated as zero rather than as a credit,
-    which understates the benefit of loss harvesting but avoids modelling
-    an annual offset the backtest has no way to track.
-    """
-    if symbol not in config.FOREIGN_ETF:
-        return Decimal("0")
-    gain = proceeds - cost_basis
-    return gain * config.GAINS_TAX_RATE if gain > 0 else Decimal("0")
-
 def _pooled_holdings(books: dict[int, dict[str, Decimal]]) -> dict[str, Decimal]:
     """Units held per symbol, summed across every sleeve's book."""
     pooled: dict[str, Decimal] = {}
@@ -375,12 +177,14 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
     its positions untouched in between. Cash is pooled: a sleeve treats
     1/N of the balance as its own, matching how the live system works.
 
-    dividend_events_by_symbol: see run() - required, not defaulted.
+    dividend_events_by_symbol: raw payout history per symbol - required,
+    not defaulted, so a forgotten argument errors instead of silently
+    producing a zero-dividend backtest.
 
     tranches: defaults to config.TRANCHES. Pass tranches=(0,) for a single
-    monthly rebalance with correct cash accounting - this reproduces run()'s
-    numbers exactly (see run()'s docstring) without having to mutate
-    config.TRANCHES globally to get a one-off single-sleeve check.
+    monthly rebalance (first trading day of each month) with correct cash
+    accounting, without having to mutate config.TRANCHES globally to get a
+    one-off single-sleeve check.
     """
     tranches = list(tranches) if tranches is not None else list(config.TRANCHES)
     n = len(tranches)
