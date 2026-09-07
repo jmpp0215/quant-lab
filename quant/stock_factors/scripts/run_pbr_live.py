@@ -34,6 +34,37 @@ def parse_args():
     # Accounts logic is custom, we'll manually pull --account out via extract_account first
     return parser.parse_known_args(sys.argv)
 
+
+def filter_admin_stocks(target_weights: dict, df_admin) -> dict:
+    """Remove KRX-ADMIN (관리종목/투자주의) symbols from target_weights and
+    re-normalize the remaining weights. df_admin is whatever
+    fdr.StockListing('KRX-ADMIN') returns - its 'Symbol' column comes back
+    as int64 (e.g. 40), not the zero-padded 6-digit string (e.g. "000040")
+    used everywhere else in this codebase, so it must be normalized before
+    comparing against target_weights' keys.
+    """
+    if df_admin is None or df_admin.empty:
+        return target_weights
+
+    df_admin = df_admin.assign(sym6=df_admin["Symbol"].apply(lambda s: f"{int(s):06d}"))
+    admin_symbols = set(df_admin["sym6"])
+
+    filtered_target = {}
+    for sym, w in target_weights.items():
+        if sym in admin_symbols:
+            name = df_admin[df_admin["sym6"] == sym]["Name"].iloc[0]
+            log.warning(f"🚨 LIVE GUARDRAIL: {name}({sym}) is an ADMIN stock. Removing from target portfolio.")
+        else:
+            filtered_target[sym] = w
+
+    if len(filtered_target) < len(target_weights):
+        total_w = sum(filtered_target.values())
+        target_weights = {sym: w / total_w for sym, w in filtered_target.items()}
+        log.info(f"Target portfolio re-normalized to {len(target_weights)} stocks.")
+        return target_weights
+
+    return target_weights
+
 def main():
     account, remaining_argv = accounts.extract_account(sys.argv, default="toss-bot")
     parser = argparse.ArgumentParser(description="Run PBR live execution")
@@ -106,20 +137,7 @@ def main():
     # --- LIVE GUARDRAIL: Remove Admin/Warning Stocks ---
     try:
         df_admin = fdr.StockListing('KRX-ADMIN')
-        if not df_admin.empty:
-            admin_symbols = set(df_admin['Symbol'].tolist())
-            filtered_target = {}
-            for sym, w in target_weights.items():
-                if sym in admin_symbols:
-                    name = df_admin[df_admin['Symbol'] == sym]['Name'].iloc[0]
-                    log.warning(f"🚨 LIVE GUARDRAIL: {name}({sym}) is an ADMIN stock. Removing from target portfolio.")
-                else:
-                    filtered_target[sym] = w
-                    
-            if len(filtered_target) < len(target_weights):
-                total_w = sum(filtered_target.values())
-                target_weights = {sym: w / total_w for sym, w in filtered_target.items()}
-                log.info(f"Target portfolio re-normalized to {len(target_weights)} stocks.")
+        target_weights = filter_admin_stocks(target_weights, df_admin)
     except Exception as e:
         log.error(f"Failed to fetch KRX-ADMIN list: {e}")
     # ---------------------------------------------------
