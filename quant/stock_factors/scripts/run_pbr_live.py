@@ -58,6 +58,9 @@ def filter_admin_stocks(target_weights: dict, df_admin) -> dict:
             filtered_target[sym] = w
 
     if len(filtered_target) < len(target_weights):
+        if not filtered_target:
+            log.error("ALL target stocks are ADMIN stocks. Returning empty portfolio.")
+            return {}
         total_w = sum(filtered_target.values())
         target_weights = {sym: w / total_w for sym, w in filtered_target.items()}
         log.info(f"Target portfolio re-normalized to {len(target_weights)} stocks.")
@@ -140,6 +143,10 @@ def main():
         target_weights = filter_admin_stocks(target_weights, df_admin)
     except Exception as e:
         log.error(f"Failed to fetch KRX-ADMIN list: {e}")
+        
+    if not target_weights:
+        log.error("Target portfolio is empty after Admin filter. Aborting.")
+        return 1
     # ---------------------------------------------------
         
     # 3. Get Prices
