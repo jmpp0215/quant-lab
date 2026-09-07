@@ -87,14 +87,10 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
     # 1. Prepare Signals
     df_bps = prepare_pbr_signals(start_fetch_date)
     
-    # 2. Get Universe Snapshot prices
-    # pead_price_raw stores dates as YYYYMMDD (no dashes) - both bounds must
-    # use that same format, or the lexical string comparison silently drops
-    # every date whose year matches as_of_date's (e.g. bounding by the dashed
-    # "2026-09-04" excludes all of 2026, since '-' sorts before any digit).
+    # 2. Get Universe Snapshot prices and volume
     conn = sqlite3.connect(DB_PATH)
     df_price = pd.read_sql(
-        f"SELECT date, symbol, close FROM pead_price_raw "
+        f"SELECT date, symbol, close, volume FROM pead_price_raw "
         f"WHERE date >= '{start_fetch_date}' AND date <= '{as_of_date_stripped}'",
         conn,
     )
@@ -106,6 +102,10 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
     trading_dates = sorted(df_price['date'].dt.strftime('%Y%m%d').unique())
     all_dates_idx = pd.to_datetime(trading_dates)
     df_price_pivot = df_price.pivot(index='date', columns='symbol', values='close').reindex(all_dates_idx)
+    df_vol_pivot = df_price.pivot(index='date', columns='symbol', values='volume').reindex(all_dates_idx)
+    
+    # Calculate Suspension Filter (20-day zero volume)
+    df_susp_20 = (df_vol_pivot == 0).astype(int).rolling(window=20, min_periods=1).max()
     
     # Find the most recent available trading date <= as_of_date_stripped
     valid_dates = [d for d in trading_dates if d <= as_of_date_stripped]
@@ -116,6 +116,13 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
     # 3. Apply Signal Function
     base_func = get_pbr_signal_func(df_bps, df_price_pivot, top_percentile=0.2)
     selected_symbols = base_func(target_date_str)
+    
+    # Apply Suspension Filter
+    target_dt = pd.to_datetime(target_date_str)
+    if target_dt in df_susp_20.index:
+        susp_row = df_susp_20.loc[target_dt]
+        valid_symbols = susp_row[susp_row == 0].index
+        selected_symbols = [sym for sym in selected_symbols if sym in valid_symbols]
     
     # Slice to target concentration
     if config.target_n_stocks and len(selected_symbols) > config.target_n_stocks:

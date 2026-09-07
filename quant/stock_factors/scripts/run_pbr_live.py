@@ -103,6 +103,27 @@ def main():
         log.error("Failed to construct target portfolio (no symbols returned).")
         return 1
         
+    # --- LIVE GUARDRAIL: Remove Admin/Warning Stocks ---
+    try:
+        df_admin = fdr.StockListing('KRX-ADMIN')
+        if not df_admin.empty:
+            admin_symbols = set(df_admin['Symbol'].tolist())
+            filtered_target = {}
+            for sym, w in target_weights.items():
+                if sym in admin_symbols:
+                    name = df_admin[df_admin['Symbol'] == sym]['Name'].iloc[0]
+                    log.warning(f"🚨 LIVE GUARDRAIL: {name}({sym}) is an ADMIN stock. Removing from target portfolio.")
+                else:
+                    filtered_target[sym] = w
+                    
+            if len(filtered_target) < len(target_weights):
+                total_w = sum(filtered_target.values())
+                target_weights = {sym: w / total_w for sym, w in filtered_target.items()}
+                log.info(f"Target portfolio re-normalized to {len(target_weights)} stocks.")
+    except Exception as e:
+        log.error(f"Failed to fetch KRX-ADMIN list: {e}")
+    # ---------------------------------------------------
+        
     # 3. Get Prices
     symbols_to_price = set(target_weights.keys()) | set(positions.keys())
     
