@@ -332,6 +332,72 @@ class KisClient:
             },
         )
 
+    def price_detail_overseas(self, symbol: str, exchange: str = "NAS") -> dict:
+        """Overseas stock current-price detail incl. valuation ratios
+        (해외주식 현재가상세, tr_id: HHDFS76200200). Response body's "output"
+        carries perx/pbrx/epsx/bpsx/tomv/shar/tvol/last among other fields -
+        confirmed against koreainvestment/open-trading-api's official
+        price_detail.py sample.
+
+        Note: overseas quote endpoints require a live (실전) account -
+        confirmed unusable against a paper-trading (모의투자) account.
+        """
+        return self.get(
+            "/uapi/overseas-price/v1/quotations/price-detail",
+            tr_id="HHDFS76200200",
+            params={
+                "AUTH": "",
+                "EXCD": exchange,
+                "SYMB": symbol,
+            },
+        )
+
+    def news_title_overseas(self, symbol: str = "", nation_cd: str = "US",
+                             exchange_cd: str = "", data_dt: str = "",
+                             data_tm: str = "", cts: str = "") -> dict:
+        """해외뉴스종합(제목) headlines (tr_id: HHPSTH60100C1). Response body's
+        "outblock1" is a list of {title, data_dt, data_tm, source, symb,
+        symb_name, news_key, ...}. Confirmed against
+        koreainvestment/open-trading-api's official news_title.py sample.
+        """
+        return self.get(
+            "/uapi/overseas-price/v1/quotations/news-title",
+            tr_id="HHPSTH60100C1",
+            params={
+                "INFO_GB": "",
+                "CLASS_CD": "",
+                "NATION_CD": nation_cd,
+                "EXCHANGE_CD": exchange_cd,
+                "SYMB": symbol,
+                "DATA_DT": data_dt,
+                "DATA_TM": data_tm,
+                "CTS": cts,
+            },
+        )
+
+    def brknews_title_overseas(self, symbol: str = "") -> dict:
+        """해외속보(제목) headlines, up to 100 most recent (tr_id:
+        FHKST01011801). Response body's "output" is a list of
+        {hts_pbnt_titl_cntt (headline), data_dt, data_tm, dorg (source),
+        iscd1..iscd10 (related symbols), ...}. Confirmed against
+        koreainvestment/open-trading-api's official brknews_title.py sample.
+        """
+        return self.get(
+            "/uapi/overseas-price/v1/quotations/brknews-title",
+            tr_id="FHKST01011801",
+            params={
+                "FID_NEWS_OFER_ENTP_CODE": "0",
+                "FID_COND_SCR_DIV_CODE": "11801",
+                "FID_COND_MRKT_CLS_CODE": "",
+                "FID_INPUT_ISCD": symbol,
+                "FID_TITL_CNTT": "",
+                "FID_INPUT_DATE_1": "",
+                "FID_INPUT_HOUR_1": "",
+                "FID_RANK_SORT_CLS_CODE": "",
+                "FID_INPUT_SRNO": "",
+            },
+        )
+
     def holdings(self) -> dict:
         """Domestic stock balance inquiry (실전 tr_id: TTTC8434R)."""
         return self.get(
