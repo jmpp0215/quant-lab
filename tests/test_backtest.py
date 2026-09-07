@@ -199,3 +199,51 @@ class TestRunTranchedDividends:
         assert len(history) >= 2
         for r in history:
             assert r.value == Decimal("10000000")
+
+
+class TestRunTranchedTranchesParam:
+    """run() is deprecated in favour of run_tranched(tranches=(0,)) - this
+    locks in the override this replacement depends on."""
+
+    def test_explicit_tranches_overrides_config_without_mutating_it(
+            self, candles_by_symbol, monkeypatch):
+        monkeypatch.setattr(config, "TRANCHES", (0, 5, 10))
+        divs = {"A": [], "B": []}
+
+        backtest.run_tranched(candles_by_symbol, divs, tranches=(0,))
+
+        assert config.TRANCHES == (0, 5, 10)  # untouched by the call
+
+    def test_default_still_falls_back_to_config_tranches(
+            self, candles_by_symbol, monkeypatch):
+        monkeypatch.setattr(config, "TRANCHES", (0,))
+        divs = {"A": [], "B": []}
+
+        with_default = backtest.run_tranched(candles_by_symbol, divs)
+        with_explicit = backtest.run_tranched(candles_by_symbol, divs, tranches=(0,))
+
+        assert [r.date for r in with_default] == [r.date for r in with_explicit]
+
+    def test_single_tranche_matches_run_exactly(self, candles_by_symbol):
+        """The actual claim backing the deprecation: for any case that
+        doesn't trigger run()'s cash bug, run_tranched(tranches=(0,))
+        reproduces run()'s numbers exactly."""
+        divs = {"A": [], "B": []}
+
+        with pytest.warns(DeprecationWarning):
+            run_history = backtest.run(candles_by_symbol, divs)
+        tranched_history = backtest.run_tranched(candles_by_symbol, divs, tranches=(0,))
+
+        # run() records one extra leading point (the initial seed at value
+        # == initial) that run_tranched() doesn't - compare from run()'s
+        # second entry onward, which is where run_tranched() starts.
+        run_tail = run_history[1:]
+        assert [r.date for r in run_tail] == [r.date for r in tranched_history]
+        assert [r.value for r in run_tail] == [r.value for r in tranched_history]
+
+
+class TestRunDeprecation:
+    def test_run_emits_deprecation_warning(self, candles_by_symbol):
+        divs = {"A": [], "B": []}
+        with pytest.warns(DeprecationWarning, match="run_tranched"):
+            backtest.run(candles_by_symbol, divs)

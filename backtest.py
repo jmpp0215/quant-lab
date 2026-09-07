@@ -12,6 +12,7 @@ to see whether the ranking ever actually rotates.
 """
 
 import logging
+import warnings
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -103,7 +104,29 @@ def run(candles_by_symbol: dict[str, list[dict]],
         scheme: str = "equal",
         offset: int = 0,
         costs: bool = False) -> list[Rebalance]:
-    """Replay monthly rebalances, holding the selected names in between.
+    """DEPRECATED: use run_tranched(tranches=(0,)) instead - confirmed to
+    produce identical numbers for every case that doesn't trigger the bug
+    below, and correct ones for the cases that do. Kept only because
+    tests/test_backtest.py still exercises it; not removed since deleting
+    a working (if bugged) function that nothing currently imports isn't
+    worth the churn.
+
+    Bug: this function has no cash ledger at all - value is recomputed
+    purely from mark-to-market of `holdings` each rebalance. If
+    strategy.evaluate()'s weights ever sum to less than 1 (the absolute
+    momentum filter leaving fewer than TOP_N names eligible), the
+    unallocated fraction is not carried forward as cash - it is silently
+    dropped from value on the next rebalance, compounding every period
+    after. Confirmed by direct reproduction: flat prices, weights summing
+    to 2/3 every rebalance, 10,000,000 -> 585,277 after 8 rebalances
+    (should stay flat at 10,000,000). run_tranched() has no such bug -
+    it debits a real `cash` variable only for what actually gets bought,
+    so an unallocated fraction naturally stays in cash. Never observed to
+    have actually triggered in this project's history (cached candles or
+    daily.py's recorded scores), but is a live risk for any period where
+    it does.
+
+    Replay monthly rebalances, holding the selected names in between.
 
     With costs=True, each rebalance pays the spread on both sides and tax
     on realised gains in foreign-tracking ETFs. Turnover is what makes
@@ -113,6 +136,12 @@ def run(candles_by_symbol: dict[str, list[dict]],
     not defaulted, so a forgotten argument errors instead of silently
     producing a zero-dividend backtest.
     """
+    warnings.warn(
+        "backtest.run() has a bug that silently loses uninvested capital "
+        "when signal weights sum to less than 1 (see docstring) - use "
+        "run_tranched(tranches=(0,)) instead.",
+        DeprecationWarning, stacklevel=2,
+    )
     history: list[Rebalance] = []
     value = initial
     holdings: dict[str, Decimal] = {}
@@ -338,7 +367,8 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
                  dividend_events_by_symbol: dict[str, list[dict]],
                  initial: Decimal = Decimal("10000000"),
                  scheme: str = "equal",
-                 costs: bool = False) -> list[Rebalance]:
+                 costs: bool = False,
+                 tranches: tuple[int, ...] | None = None) -> list[Rebalance]:
     """Replay the strategy with capital split across staggered sleeves.
 
     Each sleeve rebalances on its own trading day of the month and holds
@@ -346,8 +376,13 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
     1/N of the balance as its own, matching how the live system works.
 
     dividend_events_by_symbol: see run() - required, not defaulted.
+
+    tranches: defaults to config.TRANCHES. Pass tranches=(0,) for a single
+    monthly rebalance with correct cash accounting - this reproduces run()'s
+    numbers exactly (see run()'s docstring) without having to mutate
+    config.TRANCHES globally to get a one-off single-sleeve check.
     """
-    tranches = list(config.TRANCHES)
+    tranches = list(tranches) if tranches is not None else list(config.TRANCHES)
     n = len(tranches)
 
     books: dict[int, dict[str, Decimal]] = {t: {} for t in tranches}
