@@ -1,13 +1,28 @@
 # quant-lab
 
-Dual momentum trading system built on the Toss Securities Open API.
-Ranks a universe of eight Korea-listed ETFs and rebalances monthly.
+Personal quant research project built on the Toss Securities and KIS (한국투자증권) Open APIs.
+A place to prototype systematic strategies against real Korea/US market data and trade the
+survivors live on a personal brokerage account.
 
 > Personal research project. Not investment advice. Use at your own risk.
 
 ---
 
-## The constraints that shaped this
+## Research tracks
+
+| Track | Location | Status |
+|---|---|---|
+| Dual momentum — eight Korea-listed ETFs, monthly staggered rebalance | repo root + `quant/` | **Live** on `kis-isa` (see `RUNBOOK.md`) |
+| Value / quality stock factors — PBR, GPA | `quant/stock_factors/` | Live execution path exists (`scripts/run_pbr_live.py`), `DRY_RUN`-gated |
+| Post-earnings announcement drift (PEAD) | `quant/pead/` | Research concluded, not traded — see `quant/pead/RESEARCH_LOG.md` |
+| AMZN data-collection layer | `quant/amzn/` | Data collection only, no signal or execution yet — see `quant/amzn/README.md` |
+
+The rest of this document covers dual momentum — the most developed track, and the only one
+currently trading real money. The other tracks each carry their own README / research log.
+
+---
+
+## Dual momentum: the constraints that shaped it
 
 Three properties of the Toss Open API drove most of the design.
 
@@ -86,6 +101,10 @@ The codebase separates core logic (`quant/`) from executable entry points (proje
 
 `quant.strategy.evaluate` takes candles and returns target weights. It has no access to the network,
 the clock, or the filesystem, so live trading and backtesting can share the same code path.
+
+The other research tracks sit in their own packages beside these core modules —
+`quant/stock_factors/`, `quant/pead/`, `quant/amzn/`, `quant/common/` — each with its own
+modules, tests, and docs.
 
 ---
 
