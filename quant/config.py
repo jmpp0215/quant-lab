@@ -88,10 +88,6 @@ FOREIGN_ETF = {"133690", "379790", "371160", "484790"}
 
 GAINS_TAX_RATE = Decimal("0.154")
 
-# Domestic sales carry a transaction tax; ETFs are exempt from it, so this
-# stays zero and exists only to make the omission explicit.
-TRANSACTION_TAX_RATE = Decimal("0")
-
 # The risk-free proxy. Absolute momentum compares against this rather than
 # against zero, so a symbol must beat cash to be worth holding.
 CASH_SYMBOL = "459580"
@@ -115,9 +111,6 @@ TRANCHES = (0, 5, 10)   # nth trading day of the month, zero-indexed
 # which would defeat the point of staggering them.
 TRANCHE_START_MONTH = "2026-09"
 
-
-def tranche_cash_share(total_cash: Decimal) -> Decimal:
-    return total_cash / len(TRANCHES)
 
 def is_etf(symbol: str) -> bool:
     """True when the symbol prices on the 5-won ETF tick grid.

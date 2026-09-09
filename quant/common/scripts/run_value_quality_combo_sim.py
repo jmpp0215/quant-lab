@@ -1,4 +1,3 @@
-import os
 import sys
 import sqlite3
 import pandas as pd
@@ -250,7 +249,6 @@ def main():
     held_days = {}
     rebalance_counter = 0
     current_symbols = []
-    n_days = 0
     missing_events = 0
     
     mask = (df_merged.index >= '2021-01-01') & (df_merged.index <= '2024-12-31')

@@ -55,11 +55,3 @@ class OpenOrder:
     symbol: str
     quantity: int
     filled_quantity: int
-
-
-# The normalised execution dict returned by execution_for(). Toss's key
-# names are the interface because storage.save_order already writes
-# exactly these; the KIS adapter translates into them. commission and tax
-# are absent from KIS's order inquiry entirely and stay None there, which
-# storage stores as NULL rather than guessing at a fee.
-EXECUTION_KEYS = ("filledQuantity", "averageFilledPrice", "commission", "tax")

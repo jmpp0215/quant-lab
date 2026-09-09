@@ -6,7 +6,6 @@ import time
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Dict, List
 
 import requests
 
@@ -113,26 +112,6 @@ def fetch_financial_statements(symbol: str, target_year: str, report_code: str) 
     # Proper EPS requires reading 'fnlttSinglAcntAll.json' or computing it. 
     # For this implementation scope, we parse standard fields.
     results = []
-    
-    # Mapping DART account names to our metrics
-    target_accounts = {
-        "영업이익": "operating_income",
-        "당기순이익": "net_income",
-        "기본주당이익": "eps", # May not exist in SinglAcnt, fallback handles it
-        "자산총계": "total_assets",
-        "자본총계": "total_equity",
-        "매출액": "revenue"
-    }
-    
-    for item in data.get("list", []):
-        act_nm = item.get("account_nm", "")
-        for k, v in target_accounts.items():
-            if k == act_nm or (k in act_nm and k not in ["영업이익", "당기순이익"]): # exact match for BS items is safer if possible, but DART varies. Let's just use exact match for Assets/Equity to avoid '유동자산' matching '자산'
-                # wait, let's just use 'in' but exclude some known bad matches, or just use precise list
-                pass
-        
-        # better matching logic
-        # ... actually, let's rewrite the loop
 
     for item in data.get("list", []):
         act_nm = item.get("account_nm", "").strip()

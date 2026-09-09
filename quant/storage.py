@@ -308,16 +308,6 @@ def save_cashflow(conn: sqlite3.Connection, trade_date: str, account: str,
     )
 
 
-def cashflows_by_date(conn: sqlite3.Connection,
-                      account: str) -> dict[str, Decimal]:
-    """Net external flow per date, for stripping out of return figures."""
-    rows = conn.execute(
-        "SELECT trade_date, SUM(CAST(amount AS REAL)) AS total "
-        "FROM cashflows WHERE account = ? GROUP BY trade_date",
-        (account,),
-    ).fetchall()
-    return {r["trade_date"]: Decimal(str(r["total"])) for r in rows}
-
 def save_tranche_holdings(conn: sqlite3.Connection, tranche: int,
                           account: str, holdings: dict[str, int],
                           updated_at: str) -> None:

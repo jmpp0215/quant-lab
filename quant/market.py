@@ -63,11 +63,6 @@ def round_to_tick(price: Decimal, is_etf: bool = False) -> Decimal:
     tick = kr_tick_size(price, is_etf)
     return (price // tick) * tick
 
-def to_decimal(value: str | None) -> Decimal | None:
-    """Convert an API numeric string to Decimal, preserving exactness."""
-    return None if value is None else Decimal(value)
-
-
 def current_session(calendar: dict, now: datetime | None = None) -> str | None:
     """Return the name of the session we are currently in, or None if closed."""
     sessions = _sessions(calendar)
@@ -85,12 +80,3 @@ def current_session(calendar: dict, now: datetime | None = None) -> str | None:
             return name
 
     return None
-
-
-def seconds_until(calendar: dict, session: str,
-                  now: datetime | None = None) -> float:
-    """Seconds remaining until the given session starts. Negative if passed."""
-    window = _sessions(calendar)[session]
-    start = datetime.fromisoformat(window["startTime"])
-    now = now or datetime.now(timezone.utc)
-    return (start - now).total_seconds()

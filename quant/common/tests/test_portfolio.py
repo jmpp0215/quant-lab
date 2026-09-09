@@ -1,7 +1,6 @@
 import pytest
 import pandas as pd
-import numpy as np
-from quant.common.portfolio import simulate_portfolio, calculate_mdd, calculate_volatility
+from quant.common.portfolio import simulate_portfolio, calculate_mdd
 
 def test_simulate_portfolio():
     # Mock trading dates

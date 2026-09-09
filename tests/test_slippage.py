@@ -1,10 +1,7 @@
 import sqlite3
-import sys
-from io import StringIO
 from unittest.mock import patch
 
 import slippage
-from quant import storage
 
 def test_slippage_exclusions(capsys):
     """Test that unfilled orders are correctly excluded and reported."""

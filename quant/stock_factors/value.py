@@ -1,7 +1,6 @@
 import sqlite3
 import pandas as pd
 from pathlib import Path
-from quant.stock_factors.config import FactorConfig
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "quant.db"
 

@@ -119,37 +119,6 @@ def summarise(history: list[Rebalance], label: str = "") -> str:
         f"vol={vol:>6.2%}  sharpe={sharpe:>5.2f}  mdd={max_dd:>7.2%}"
     )
 
-def buy_and_hold(candles_by_symbol: dict[str, list[dict]], symbol: str,
-                 dates: list[str],
-                 initial: Decimal = Decimal("10000000")) -> Decimal:
-    """Value of holding one symbol for the whole period."""
-    cs = candles_by_symbol[symbol]
-    start = close_at(cs, dates[0])
-    end = close_at(cs, dates[-1])
-    if not start or not end:
-        return initial
-    return initial * end / start
-
-
-def equal_weight(candles_by_symbol: dict[str, list[dict]],
-                 dates: list[str],
-                 initial: Decimal = Decimal("10000000")) -> Decimal:
-    """Value of holding the whole universe equally, never rebalancing.
-
-    This is the benchmark that matters most: it isolates what the ranking
-    contributed, as opposed to simply being long these assets.
-    """
-    symbols = [s for s in config.UNIVERSE
-               if close_at(candles_by_symbol[s], dates[0])]
-    per = initial / len(symbols)
-    total = Decimal("0")
-    for sym in symbols:
-        cs = candles_by_symbol[sym]
-        start, end = close_at(cs, dates[0]), close_at(cs, dates[-1])
-        if start and end:
-            total += per * end / start
-    return total
-
 def _spread_cost(symbol: str, notional: Decimal) -> Decimal:
     """One-way cost of crossing the spread."""
     half = config.HALF_SPREAD.get(symbol, config.DEFAULT_HALF_SPREAD)

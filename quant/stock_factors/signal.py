@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple
 from .config import FactorConfig
 
 def calculate_momentum_score(

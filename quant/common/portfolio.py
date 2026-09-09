@@ -30,43 +30,7 @@ def simulate_portfolio(
     """
     if not trading_dates:
         return pd.DataFrame()
-        
-    portfolio_history = []
-    
-    current_holdings = [] # List of symbols currently held
-    portfolio_value = 1.0 # Base value 1.0
-    
-    # Track the number of shares (normalized to portfolio_value) for each held symbol
-    # to accurately simulate daily mark-to-market.
-    # shares = weight * portfolio_value / price
-    held_shares = {} 
-    
-    rebalance_counter = 0
-    
-    for date in trading_dates:
-        # 1. Mark-to-market current holdings
-        if held_shares:
-            daily_value = 0.0
-            valid_holdings = 0
-            for sym, shares in held_shares.items():
-                price = price_series_by_sym.get(sym, {}).get(date)
-                if price is not None:
-                    daily_value += shares * price
-                    valid_holdings += 1
-                else:
-                    # If price is missing (e.g. trading halt), we assume price is unchanged from yesterday.
-                    # Since we don't track yesterday's price explicitly in held_shares, 
-                    # a proper implementation would need it. 
-                    # For simplicity in this backtest, we assume the symbol holds its value contribution.
-                    pass # Handled below by a simpler approach
-                    
-            # Simpler Mark-to-Market: using daily returns of held symbols
-            pass
-            
-    # Let's rewrite MTM to be robust using daily returns
-    # We will compute daily returns of the portfolio.
-    
-    # We will rebuild it cleanly.
+
     daily_returns = []
     current_symbols = []
     

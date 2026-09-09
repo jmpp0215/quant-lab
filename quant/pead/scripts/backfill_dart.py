@@ -1,6 +1,4 @@
-import os
 import sys
-import sqlite3
 import logging
 from pathlib import Path
 
@@ -16,9 +14,6 @@ log = logging.getLogger("backfill_dart")
 
 def main():
     # KOSPI 전체 종목 가져오기 (가장 최근 영업일 기준)
-    # yyyymmdd 형식으로 오늘 날짜 가져오기
-    from datetime import datetime
-    today_str = datetime.today().strftime("%Y%m%d")
     
     # KRX 봇 차단 이슈로 인해 pykrx 대신 FinanceDataReader 사용
     import FinanceDataReader as fdr

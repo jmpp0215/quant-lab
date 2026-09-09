@@ -4,9 +4,7 @@ import sys
 import sqlite3
 import logging
 from pathlib import Path
-from datetime import datetime, timedelta
-import pandas as pd
-from pykrx import stock
+from datetime import datetime
 
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 

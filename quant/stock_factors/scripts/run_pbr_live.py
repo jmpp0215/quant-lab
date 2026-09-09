@@ -8,14 +8,11 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
-from quant import config as main_config
-from quant import accounts, market, rebalance, executor
-from quant.toss_client import TossClient
+from quant import accounts, rebalance, executor
 from quant.stock_factors.portfolio_construction import (
     PBRConfig,
     construct_target_portfolio,
     calculate_diff,
-    format_orders,
     get_latest_prices,
     latest_price_date,
     price_data_is_stale,

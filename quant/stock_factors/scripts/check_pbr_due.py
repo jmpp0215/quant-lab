@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from quant.stock_factors.scripts import pbr_storage
 from quant.toss_client import TossClient
-from quant import accounts, market
+from quant import market
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("check_pbr_due")
@@ -78,7 +78,7 @@ def main():
     log.info(f"Executing: {' '.join(cmd)}")
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=False)
+        subprocess.run(cmd, check=True, capture_output=False)
         log.info("run_pbr_live.py completed successfully.")
     except subprocess.CalledProcessError as e:
         log.error(f"run_pbr_live.py failed with exit code {e.returncode}")

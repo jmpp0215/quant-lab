@@ -1,16 +1,12 @@
-import os
 import sys
 import sqlite3
 import pandas as pd
-import numpy as np
 from pathlib import Path
 import logging
 
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from quant.common.portfolio import simulate_portfolio, calculate_mdd, calculate_volatility
-from quant.stock_factors.config import FactorConfig
-from quant.pead.config import PeadConfig
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("port_sim")
@@ -153,7 +149,6 @@ def main():
             bench_mdd = calculate_mdd(aligned['cum_ret_bench'])
             
             vol = calculate_volatility(aligned['daily_ret'])
-            bench_vol = calculate_volatility(aligned['daily_ret_bench'])
             
             # Sub-period analysis (Robustness)
             periods = {
