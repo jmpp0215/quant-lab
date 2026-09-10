@@ -47,17 +47,25 @@ class TossClient:
         if self._token and time.time() < self._expires_at:
             return self._token
 
-        response = self._session.post(
-            f"{BASE_URL}/oauth2/token",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            data={
-                "grant_type": "client_credentials",
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-            },
-            timeout=10,
-        )
-        response.raise_for_status()
+        try:
+            response = self._session.post(
+                f"{BASE_URL}/oauth2/token",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                },
+                timeout=10,
+            )
+            response.raise_for_status()
+        except requests.RequestException as e:
+            # Surface as the same typed error every other Toss call raises,
+            # so callers catch it instead of a bare requests exception.
+            status = getattr(e.response, "status_code", 0)
+            body = getattr(e.response, "text", "") or str(e)
+            raise TossApiError(status, "auth",
+                               f"token request failed: {body[:200]}") from e
 
         body = response.json()
         self._token = body["access_token"]
