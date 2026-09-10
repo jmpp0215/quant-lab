@@ -182,6 +182,42 @@ still the lower-stakes place to try an execution-path change against real
 fills before trusting it on `kis-isa`. Invoke every script with
 `--account toss-bot` explicitly - it is no longer the default.
 
+## Starting a new account, or adding/removing a tranche
+
+`tranche_value` sizes a sleeve as *its own holdings* + 1/N of the cash
+pool. That only equals 1/N of the whole account when every sleeve already
+holds roughly 1/N of the equity. **Seed all sleeves in one shot** so that
+is true from the first rebalance:
+
+    python tranche_init.py --account <acct> [--force]
+
+Do **not** let sleeves fill in one at a time on their scheduled days from a
+cash-heavy account. An empty sleeve sizes itself to `cash / N`, which is
+far below `account / N` while the other sleeves hold the equity; as those
+sleeves buy, the remaining cash shrinks and every not-yet-seeded sleeve's
+target shrinks with it. Late sleeves never reach 1/N and the account stays
+under-deployed - a self-reinforcing bias, not a one-off.
+
+Seen live on `kis-isa` (2026-09): tranche 0 was seeded 09-01, then tranche
+5 ran 09-10 from an empty book and sized to `cash/3` - about a third under
+its intended share; tranche 10 would have compounded it. Fixed 2026-09-10
+by re-running `tranche_init.py --account kis-isa --force` to split the
+then-current holdings (188/28/7/105 across 은행/코스피200/나스닥100/유로스탁스)
+evenly across tranches 0/5/10, then confirming `tranche.reconcile` came
+back empty against the live account.
+
+After any `tranche_init.py` run, verify the books tie out:
+
+    python -c "from quant import accounts, storage, tranche; \
+      cfg=accounts.resolve('<acct>'); snap=cfg['snapshot'](cfg['client']()); \
+      actual={p['symbol']:p['qty'] for p in snap.positions}; \
+      books=storage.load_all_tranche_holdings(storage.connect(),'<acct>'); \
+      print(tranche.reconcile(books, actual) or 'CLEAN')"
+
+`backtest.run_tranched` already seeds every sleeve up front (its `initial /
+n` split), so a backtest will not show this drift even though live can -
+keep that in mind when comparing the two.
+
 ## Notes
 
 - `ordered_today` blocks a second rebalance on the same trading date. It

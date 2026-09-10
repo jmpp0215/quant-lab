@@ -5,6 +5,24 @@ trading days of the month. Holdings are tracked per sleeve; cash is not,
 since attributing every deposit to a sleeve costs more complexity than
 the precision is worth. Each sleeve treats 1/N of the account balance as
 its own.
+
+**Sharp edge - the "1/N of the account" identity only holds once every
+sleeve already carries its share of the equity.** `tranche_value` sums
+*this* sleeve's own holdings plus 1/N of the cash pool; that equals 1/N of
+the account only when `own_equity == total_equity / N`. Seed all sleeves at
+once - `tranche_init.py`, or `backtest.run_tranched`'s up-front split - so
+that precondition is true from the first rebalance.
+
+Introducing sleeves one at a time from a cash-heavy account breaks it, with
+a self-reinforcing bias: an empty sleeve sizes to `cash / N`, far below
+`account / N` while the other sleeves hold the equity; as those sleeves
+buy, the cash pool shrinks and every not-yet-seeded sleeve's target shrinks
+with it, so late sleeves never reach 1/N and the account stays
+under-deployed. Seen live on kis-isa in 2026-09 (tranche 0 seeded 09-01,
+tranche 5 run 09-10 from an empty book at `cash/3`, ~33% under target);
+fixed by re-running `tranche_init.py --force` to split the current mixed
+holdings across all sleeves. Re-derive this before starting a new account
+or adding/removing a tranche - see RUNBOOK.md.
 """
 
 import logging
@@ -118,7 +136,12 @@ def target_quantities(weights: dict[str, Decimal], value: Decimal,
 
 def tranche_value(holdings: dict[str, int], prices: dict[str, Decimal],
                   cash: Decimal) -> Decimal:
-    """Market value of one sleeve, including its share of the cash pool."""
+    """Market value of one sleeve: its own holdings plus 1/N of the cash pool.
+
+    This equals 1/N of the whole account only when every sleeve already
+    holds ~1/N of the equity (see the module docstring's sharp edge). An
+    empty or underweight sleeve gets `cash / N`, not `account / N`.
+    """
     equity = sum(
         Decimal(quantity) * prices[symbol]
         for symbol, quantity in holdings.items()
