@@ -59,7 +59,7 @@ Changing strategy behavior almost always means editing constants here, not logic
 | `broker.py` | The execution interface every broker module (`toss_client`, `kis_client`) implements — dataclasses only, no logic |
 | `toss_client.py` | REST client for Toss — token caching, 429 backoff, error envelope parsing |
 | `kis_client.py` | REST client for KIS (한국투자증권) — backs `kis-isa`/`kis-main`; domestic + overseas endpoints, per-account credentials |
-| `candles.py` | Daily candle fetching, disk cache (`data/candles`), excludes in-progress candle |
+| `candles.py` | Daily candle fetching — Toss default, KIS optional via `source="kis"` (rows normalised to Toss field names); per-source disk cache (`data/candles`, `data/candles/kis`), excludes in-progress candle |
 | `dividends.py` | Distribution-event fetching from KIS + incremental SQLite cache (`dividend_events`/`dividend_fetch_state`) — imperative-shell counterpart to `momentum.py`'s dividend math |
 | `momentum.py` | Date-anchored lookback returns with dividend adjustment (pure — `trailing_yield()` takes cached events in, never fetches) |
 | `indicators.py` | Technical indicators (e.g. moving-average trend filter) used by strategy variants |

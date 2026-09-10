@@ -309,6 +309,41 @@ class KisClient:
             },
         )
 
+    def daily_chart(self, symbol: str, start: str, end: str, *,
+                    adjusted: bool = False) -> dict:
+        """Domestic daily OHLCV over a date range (국내주식기간별시세,
+        tr_id: FHKST03010100). `start`/`end` are YYYYMMDD.
+
+        The response's "output2" is the daily array, newest first, each row
+        carrying stck_bsop_date / stck_clpr / stck_oprc / stck_hgpr /
+        stck_lwpr / acml_vol / acml_tr_pbmn / flng_cls_code (all strings).
+        The endpoint returns at most 100 rows and has no continuation
+        cursor (no tr_cont): to reach further back, call again with `end`
+        set just before the oldest date received - candles.fetch_kis()
+        does this.
+
+        adjusted=True sends FID_ORG_ADJ_PRC="0" (수정주가), which tracks
+        Toss's candle series to within a won or two over 300 days of 102110
+        (verified live 2026-09-10). adjusted=False ("1", 원주가) diverges by
+        the cumulative distribution factor going back (~1.4% at 15 months),
+        so candles.fetch_kis uses adjusted=True to stay interchangeable
+        with the Toss path. Mid-session the endpoint also returns today's
+        forming row with the current price as stck_clpr; callers exclude it
+        the same way the Toss path does (candles.get's include_today).
+        """
+        return self.get(
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            tr_id="FHKST03010100",
+            params={
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": symbol,
+                "FID_INPUT_DATE_1": start,
+                "FID_INPUT_DATE_2": end,
+                "FID_PERIOD_DIV_CODE": "D",
+                "FID_ORG_ADJ_PRC": "0" if adjusted else "1",
+            },
+        )
+
     def orderbook(self, symbol: str) -> dict:
         """Domestic stock orderbook / asking price (tr_id: FHKST01010200)."""
         return self.get(
