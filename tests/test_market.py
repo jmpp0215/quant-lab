@@ -1,5 +1,6 @@
 """Tests for market session and tick size logic."""
 
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
@@ -64,19 +65,41 @@ class TestRoundToTick:
             assert market.is_valid_kr_price(snapped)
 
 class TestBusinessDay:
-    def test_holiday_has_no_sessions(self):
-        calendar = {"result": {"today": {"date": "2026-08-17",
-                                         "integrated": None}}}
-        assert not market.is_business_day(calendar)
-        assert market.current_session(calendar) is None
+    """is_business_day reads output[0].opnd_yn of a KisClient.holidays()
+    response - output[0] is the queried date itself."""
 
-    def test_trading_day_has_sessions(self):
-        calendar = {"result": {"today": {"date": "2026-08-14", "integrated": {
-            "regularMarket": {
-                "startTime": "2026-08-14T09:00:00.000+09:00",
-                "endTime": "2026-08-14T15:30:00.000+09:00",
-            }}}}}
-        assert market.is_business_day(calendar)
+    def test_open_day(self):
+        resp = {"output": [{"bass_dt": "20260914", "opnd_yn": "Y"}]}
+        assert market.is_business_day(resp)
+
+    def test_weekend_or_holiday(self):
+        resp = {"output": [{"bass_dt": "20260912", "opnd_yn": "N"}]}
+        assert not market.is_business_day(resp)
+
+    def test_missing_or_empty_output(self):
+        assert not market.is_business_day({"output": []})
+        assert not market.is_business_day({})
+
+
+class TestCurrentSession:
+    @pytest.mark.parametrize("hhmm,expected", [
+        ("08:30", "preMarket"),
+        ("09:00", "regularMarket"),
+        ("12:00", "regularMarket"),
+        ("15:29", "regularMarket"),
+        ("15:30", "afterMarket"),
+        ("17:00", "afterMarket"),
+    ])
+    def test_time_based_windows(self, hhmm, expected):
+        h, m = map(int, hhmm.split(":"))
+        now = datetime(2026, 9, 11, h, m, tzinfo=market.KST)
+        assert market.current_session(now) == expected
+
+    def test_converts_a_non_kst_now(self):
+        # 06:00 UTC == 15:00 KST -> still regular trading.
+        from datetime import timezone
+        now = datetime(2026, 9, 11, 6, 0, tzinfo=timezone.utc)
+        assert market.current_session(now) == "regularMarket"
 
 
 class TestEtfClassification:

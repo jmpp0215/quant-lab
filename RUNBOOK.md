@@ -37,9 +37,10 @@ is omitted). The mechanics are identical for `toss-bot` - substitute
 below, and add `--account toss-bot` to the `rebalance_run.py` calls.
 
 1. **Clear the candle cache.** A cache written earlier in the day holds
-   an unfinished candle for today.
+   an unfinished candle for today. `rebalance_run.py` pulls candles from
+   KIS, which caches under `data/candles/kis`.
 
-       rm -rf data/candles
+       rm -rf data/candles/kis
 
 2. **Dry run first.** Read the plan and sanity-check it: are the sells the
    symbols that dropped out of the top three, are the quantities plausible

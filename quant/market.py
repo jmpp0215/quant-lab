@@ -1,7 +1,16 @@
-"""Market session helpers based on the Toss market calendar."""
+"""Market session helpers: KIS holiday calendar + the KST clock."""
 
-from datetime import datetime, timezone
+from datetime import datetime, time
 from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+KST = ZoneInfo("Asia/Seoul")
+
+# KRX continuous session. The 15:20-15:30 closing single-price auction is
+# inside this window on purpose - executor.auction_imminent() guards that
+# separately; current_session() only answers "is the market open at all".
+REGULAR_OPEN = time(9, 0)
+REGULAR_CLOSE = time(15, 30)
 
 KR_TICK_SIZES = [
     (Decimal("1000"), Decimal("1")),
@@ -17,29 +26,31 @@ KR_TICK_SIZES = [
 ETF_TICK = Decimal("5")
 
 
-SESSION_NAMES = ("preMarket", "regularMarket", "afterMarket", "dayMarket")
+def is_business_day(holiday: dict) -> bool:
+    """True when KRX opens today.
 
-
-def _sessions(calendar: dict) -> dict:
-    """Today's session map, flattening the KR 'integrated' wrapper.
-
-    A holiday returns integrated: null rather than omitting the key, so
-    the fallback has to handle None as well as a missing key.
+    `holiday` is a KisClient.holidays() response: output[0] is the queried
+    date itself, and opnd_yn ('Y'/'N') is whether the market opens then -
+    a weekend or public holiday is 'N'. Distinguishes a holiday from merely
+    being outside session hours: only the former means there is no candle
+    for today at all.
     """
-    today = calendar["result"]["today"]
-    if "integrated" in today:
-        return today["integrated"] or {}
-    return today
+    rows = holiday.get("output") or []
+    return bool(rows) and rows[0].get("opnd_yn") == "Y"
 
 
-def is_business_day(calendar: dict) -> bool:
-    """True when the market trades today.
-
-    Distinguishes a holiday from merely being outside session hours: both
-    give current_session() == None, but only one means there will be no
-    candle for today at all.
+def current_session(now: datetime | None = None) -> str | None:
+    """Which session the KST clock is in: "preMarket" before the open,
+    "regularMarket" during continuous trading, "afterMarket" once the
+    close has passed. Callers check this only after is_business_day().
     """
-    return bool(_sessions(calendar))
+    now = (now or datetime.now(KST)).astimezone(KST).time()
+    if now < REGULAR_OPEN:
+        return "preMarket"
+    if now < REGULAR_CLOSE:
+        return "regularMarket"
+    return "afterMarket"
+
 
 def kr_tick_size(price: str | Decimal, is_etf: bool = False) -> Decimal:
     """Return the KRX tick size for a given price level."""
@@ -53,7 +64,6 @@ def kr_tick_size(price: str | Decimal, is_etf: bool = False) -> Decimal:
     return Decimal("1000")
 
 
-
 def is_valid_kr_price(price: str | Decimal, is_etf: bool = False) -> bool:
     p = Decimal(price)
     return p % kr_tick_size(p, is_etf) == 0
@@ -62,21 +72,3 @@ def is_valid_kr_price(price: str | Decimal, is_etf: bool = False) -> bool:
 def round_to_tick(price: Decimal, is_etf: bool = False) -> Decimal:
     tick = kr_tick_size(price, is_etf)
     return (price // tick) * tick
-
-def current_session(calendar: dict, now: datetime | None = None) -> str | None:
-    """Return the name of the session we are currently in, or None if closed."""
-    sessions = _sessions(calendar)
-    now = now or datetime.now(timezone.utc)
-
-    for name in SESSION_NAMES:
-        window = sessions.get(name)
-        if not window:
-            continue
-
-        start = datetime.fromisoformat(window["startTime"])
-        end = datetime.fromisoformat(window["endTime"])
-
-        if start <= now < end:
-            return name
-
-    return None

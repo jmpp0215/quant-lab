@@ -344,6 +344,23 @@ class KisClient:
             },
         )
 
+    def holidays(self, bass_dt: str) -> dict:
+        """Domestic exchange holiday calendar (국내휴장일조회, tr_id:
+        CTCA0903R). `bass_dt` is YYYYMMDD.
+
+        "output" is a list of days starting at `bass_dt`, each with
+        bass_dt / wday_dvsn_cd (01=Sun..07=Sat) / bzdy_yn (bank business
+        day) / tr_day_yn / opnd_yn (KRX open that day, 'Y'/'N') /
+        sttl_day_yn. Verified live 2026-09-11: weekends are opnd_yn 'N'.
+        The response paginates (tr_cont) but the first page covers ~3
+        weeks, so a caller checking one date reads output[0].
+        """
+        return self.get(
+            "/uapi/domestic-stock/v1/quotations/chk-holiday",
+            tr_id="CTCA0903R",
+            params={"BASS_DT": bass_dt, "CTX_AREA_NK": "", "CTX_AREA_FK": ""},
+        )
+
     def orderbook(self, symbol: str) -> dict:
         """Domestic stock orderbook / asking price (tr_id: FHKST01010200)."""
         return self.get(

@@ -32,7 +32,7 @@ from quant import (
     strategy,
     tranche,
 )
-from quant.toss_client import TossClient
+from quant.kis_client import KisClient
 
 log = logging.getLogger("rebalance")
 
@@ -88,25 +88,19 @@ def main() -> int:
     client = cfg["client"]()
     log.info("account = %s, dry_run = %s", account, client.dry_run)
 
-    # Candle/calendar data is shared market data, not account state - Toss
-    # is the source regardless of which account is being rebalanced.
-    # candles.fetch() also relies on a Toss-shaped client.get(path, params)
-    # call, which KisClient's get() (which requires a tr_id) does not
-    # support, so a KIS account still needs a Toss client alongside it.
-    #
-    # Reuse rather than construct when the account is itself Toss: Toss
-    # keeps only one active token per credential set, so a second client
-    # invalidates the first one's token the moment it authenticates, and
-    # whichever client is used next fails with 401 mid-run.
-    market_client = client if isinstance(client, TossClient) else TossClient()
+    # Calendar, candles and dividends are shared market data, not account
+    # state - all come from KIS regardless of which account is being
+    # rebalanced. Reuse `client` when it is already the KIS account,
+    # otherwise stand up kis-isa's client for the market-data calls.
+    market_data = client if isinstance(client, KisClient) else KisClient("isa")
 
     now = datetime.now().astimezone()
-    calendar = market_client.market_calendar("KR")
+    holiday = market_data.holidays(now.strftime("%Y%m%d"))
 
-    if not market.is_business_day(calendar):
+    if not market.is_business_day(holiday):
         log.error("market closed today")
         return 1
-    if market.current_session(calendar) != "regularMarket":
+    if market.current_session() != "regularMarket":
         log.error("outside the regular session")
         return 1
     if executor.auction_imminent(now.strftime("%H:%M")):
@@ -116,15 +110,17 @@ def main() -> int:
     executor.cancel_open_orders(cfg["broker"], client)
 
     data = {
-        sym: candles.get(market_client, sym, days=config.HISTORY_DAYS)
+        sym: candles.get(market_data, sym, days=config.HISTORY_DAYS,
+                         source="kis")
         for sym in config.all_symbols()
     }
     trade_date = data[next(iter(config.UNIVERSE))][0]["timestamp"][:10]
 
     # Schedule is keyed to the actual calendar day, not the signal date:
     # the signal lags by design, but the rebalance happens today.
-    dated = candles.get(market_client, next(iter(config.UNIVERSE)),
-                        days=config.HISTORY_DAYS, include_today=True)
+    dated = candles.get(market_data, next(iter(config.UNIVERSE)),
+                        days=config.HISTORY_DAYS, include_today=True,
+                        source="kis")
     today = now.date().isoformat()
     day_index = tranche.trading_day_index(dated, today)
 
@@ -155,15 +151,9 @@ def main() -> int:
         log.error("reconcile before rebalancing")
         return 1
 
-    # Dividend data must always come from KIS, regardless of which account
-    # is being rebalanced - toss-bot uses a TossClient, which has no access
-    # to this endpoint. Reuse `client` when it's already the KIS account,
-    # otherwise resolve kis-isa's separately (same reuse-if-possible spirit
-    # as market_client above).
-    kis_isa_cfg = accounts.resolve("kis-isa")
-    dividend_client = client if account == "kis-isa" else kis_isa_cfg["client"]()
+    # Dividend data also comes from KIS - reuse the market-data client.
     with storage.connect() as conn:
-        dividends.sync_all(conn, dividend_client, config.all_symbols())
+        dividends.sync_all(conn, market_data, config.all_symbols())
         dividend_events = dividends.load_all(conn, config.all_symbols())
 
     signal = strategy.evaluate(data, dividend_events)

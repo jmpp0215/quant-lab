@@ -13,8 +13,8 @@ import sys
 from datetime import datetime
 
 from quant import accounts, candles, config, logging_config, market, storage, tranche
+from quant.kis_client import KisApiError, KisClient
 from quant.notify import notify
-from quant.toss_client import TossApiError, TossClient
 
 log = logging.getLogger("check-due")
 
@@ -24,19 +24,20 @@ def main() -> int:
     account, _ = accounts.extract_account(sys.argv[1:])
 
     try:
-        # Candle/calendar data is shared market data, not account state -
-        # Toss is the source regardless of which account's tranche
-        # schedule we're checking.
-        client = TossClient()
-        calendar = client.market_calendar("KR")
+        # Calendar and candles are shared market data, not account state -
+        # KIS is the source regardless of which account's tranche schedule
+        # we're checking.
+        client = KisClient("isa")
+        holiday = client.holidays(datetime.now(market.KST).strftime("%Y%m%d"))
 
-        if not market.is_business_day(calendar):
+        if not market.is_business_day(holiday):
             log.info("market closed today")
             return 0
 
         today = datetime.now().astimezone().date().isoformat()
         dated = candles.get(client, next(iter(config.UNIVERSE)),
-                            days=config.HISTORY_DAYS, include_today=True)
+                            days=config.HISTORY_DAYS, include_today=True,
+                            source="kis")
         day_index = tranche.trading_day_index(dated, today)
 
         if day_index is None:
@@ -57,7 +58,7 @@ def main() -> int:
         notify("quant-lab",
                f"[{account}] 트랜치 {which} 리밸런싱 예정 (거래일 {day_index + 1})")
 
-    except TossApiError as e:
+    except KisApiError as e:
         log.error("api error: %s", e)
         # A silent failure here reads identically to "no tranche due today"
         # - the whole point of this notification is to break that tie.

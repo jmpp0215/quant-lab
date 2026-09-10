@@ -27,7 +27,7 @@ from quant import (
 )
 from quant.kis_client import KisApiError, KisClient
 from quant.notify import notify
-from quant.toss_client import TossApiError, TossClient
+from quant.toss_client import TossApiError
 
 log = logging.getLogger("daily")
 
@@ -118,17 +118,17 @@ def main() -> int:
         log.info("backfilling %s", target)
 
     try:
-        # Candle/calendar data is shared market data, not account state -
-        # Toss happens to be the source for it regardless of which account
-        # the ISA strategy signal ends up being recorded against.
-        market_client = TossClient()
+        # Calendar and candles are shared market data, not account state.
+        # Both come from KIS (holiday calendar + adjusted candles); this
+        # client is reused for the kis-isa account below.
+        market_data = KisClient("isa")
 
         if target is None:
-            calendar = market_client.market_calendar("KR")
-            if not market.is_business_day(calendar):
+            holiday = market_data.holidays(datetime.now(market.KST).strftime("%Y%m%d"))
+            if not market.is_business_day(holiday):
                 log.info("market closed today; nothing to record")
                 return 0
-            session = market.current_session(calendar)
+            session = market.current_session()
             session_closed = session in (None, "afterMarket")
         else:
             # A past date's candles are complete by definition.
@@ -138,8 +138,8 @@ def main() -> int:
         # Once the regular session has closed, today's candle is final and
         # should drive the signal; before that it is still moving.
         data = {
-            sym: candles.get(market_client, sym, days=config.HISTORY_DAYS,
-                             include_today=session_closed)
+            sym: candles.get(market_data, sym, days=config.HISTORY_DAYS,
+                             include_today=session_closed, source="kis")
             for sym in config.all_symbols()
         }
         if target is not None:
@@ -163,13 +163,9 @@ def main() -> int:
 
     overall_ok = True
     problem_accounts: list[str] = []
-    # Seeded with the market client so the toss-bot account reuses it
-    # instead of authenticating a second time: Toss keeps only one active
-    # token per credential set, and a second one silently invalidates the
-    # first. Today the candle work is all finished before this loop, so a
-    # second token would do no harm - but that is ordering luck, not a
-    # guarantee worth resting on.
-    client_cache: dict = {TossClient: market_client}
+    # Reuse the market-data client for the kis-isa account so it does not
+    # authenticate a second KIS session for the same credentials.
+    client_cache: dict = {accounts.ACCOUNTS["kis-isa"]["client"]: market_data}
     for account_name, cfg in accounts.ACCOUNTS.items():
         try:
             factory = cfg["client"]
