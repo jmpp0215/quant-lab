@@ -88,14 +88,13 @@ def drawdown_from_high(candles: list[dict],
     return (closes[0] - peak) / peak
 
 
-def compute_all(candles: list[dict],
-                annual_yield: Decimal = Decimal("0")) -> dict[str, Decimal | None]:
+def compute_all(candles: list[dict]) -> dict[str, Decimal | None]:
     """Every observational indicator for one symbol, keyed by name."""
     return {
-        "mom_3m": momentum.total_return(candles, 3, 0, annual_yield),
-        "mom_6m": momentum.total_return(candles, 6, 0, annual_yield),
-        "mom_12m": momentum.total_return(candles, 12, 0, annual_yield),
-        "mom_1m": momentum.total_return(candles, 1, 0, annual_yield),
+        "mom_3m": momentum.price_return(candles, 3),
+        "mom_6m": momentum.price_return(candles, 6),
+        "mom_12m": momentum.price_return(candles, 12),
+        "mom_1m": momentum.price_return(candles, 1),
         "vol_60d": volatility(candles),
         "above_ma200": above_moving_average(candles),
         "drawdown_52w": drawdown_from_high(candles),

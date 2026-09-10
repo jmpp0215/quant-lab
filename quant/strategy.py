@@ -41,23 +41,20 @@ def evaluate(candles_by_symbol: dict[str, list[dict]],
     proxy, not merely to be positive - a 2% gain is not worth holding when
     risk-free cash returns 3%.
 
-    dividend_events_by_symbol: raw payout history per symbol (see
-    momentum.trailing_yield()), required rather than defaulted - a caller
-    replaying a historical date must explicitly pass events sliced to that
-    date, exactly like candles_by_symbol, or risk look-ahead bias.
+    dividend_events_by_symbol: no longer read by the ranking. Toss/KIS
+    candles are adjusted prices, so price_return() already reflects
+    distributions; adding a yield term on top double-counted them (see
+    CLAUDE.md). Kept in the signature so callers, the backtest and the
+    dividend_events cache need no change.
     """
     scores = [
         Score(
             symbol=sym,
             name=name,
-            momentum=momentum.total_return(
+            momentum=momentum.price_return(
                 candles_by_symbol.get(sym, []),
                 config.LOOKBACK_MONTHS,
                 config.SKIP_MONTHS,
-                momentum.trailing_yield(
-                    candles_by_symbol.get(sym, []),
-                    dividend_events_by_symbol.get(sym, []),
-                ),
             ),
         )
         for sym, name in config.UNIVERSE.items()
@@ -114,16 +111,15 @@ class Variant:
 def _rank_by(candles_by_symbol: dict[str, list[dict]],
              dividend_events_by_symbol: dict[str, list[dict]],
              months: int, skip: int = 0) -> list[tuple[str, Decimal]]:
-    """Symbols with a computable return over the window, best first."""
+    """Symbols with a computable return over the window, best first.
+
+    dividend_events_by_symbol is unused (see evaluate's docstring) but kept
+    in the signature to match evaluate and the variant callers.
+    """
     scored = []
     for sym in config.UNIVERSE:
-        value = momentum.total_return(
-            candles_by_symbol.get(sym, []), months, skip,
-            momentum.trailing_yield(
-                candles_by_symbol.get(sym, []),
-                dividend_events_by_symbol.get(sym, []),
-            ),
-        )
+        value = momentum.price_return(
+            candles_by_symbol.get(sym, []), months, skip)
         if value is not None:
             scored.append((sym, value))
     return sorted(scored, key=lambda x: x[1], reverse=True)

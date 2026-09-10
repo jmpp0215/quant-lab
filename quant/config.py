@@ -61,10 +61,11 @@ HELD_ETFS = {
 # in either would quietly hand it the wrong grid.
 ETF_SYMBOLS = set(UNIVERSE) | set(WATCH_ONLY) | set(HELD_ETFS)
 
-# Distribution yield per symbol used to come from a hand-maintained,
-# yearly-updated dict here (DIVIDEND_YIELD). It's now computed live from
-# real KIS payout history instead - see quant/dividends.py (fetch/cache)
-# and momentum.trailing_yield() (the pure calculation strategy.py uses).
+# A hand-maintained DIVIDEND_YIELD dict used to live here, feeding the
+# momentum signal. Removed: Toss/KIS candles are adjusted prices, so
+# distributions are already in the price return and the signal adds no
+# dividend term (see CLAUDE.md). quant/dividends.py's cache is still
+# synced but only for reporting now.
 
 # Half the quoted spread, measured from live order books on 2026-08-18.
 # A buy lifts the ask and a sell hits the bid, so a round trip costs the

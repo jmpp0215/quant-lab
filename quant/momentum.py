@@ -30,6 +30,11 @@ def price_return(candles: list[dict], months: int,
                  skip_months: int = 0) -> Decimal | None:
     """Return over `months`, ending `skip_months` before the latest candle.
 
+    Toss/KIS candles are adjusted prices (distributions already folded into
+    the series as price appreciation), so this close-to-close figure is the
+    total return the strategy ranks on - no separate dividend term. See the
+    dividend design note in CLAUDE.md.
+
     Returns None when history does not reach far enough back, so the caller
     can exclude the symbol rather than rank it on a partial window.
     """
@@ -52,30 +57,16 @@ def price_return(candles: list[dict], months: int,
     return (recent - past) / past
 
 
-def total_return(candles: list[dict], months: int,
-                 skip_months: int = 0,
-                 annual_yield: Decimal = Decimal("0")) -> Decimal | None:
-    """Price return plus an approximation of distributions.
-
-    Toss candles are price-only, so a high-yield symbol ranks unfairly low:
-    the ex-dividend drop shows up in the price while the payout does not.
-    Spreading the annual yield evenly over the holding window is rough, but
-    far closer than ignoring distributions entirely.
-    """
-    base = price_return(candles, months, skip_months)
-    if base is None:
-        return None
-
-    holding_months = Decimal(months - skip_months)
-    return base + annual_yield * holding_months / Decimal(12)
-
-
 def trailing_yield(candles: list[dict], events: list[dict],
                    months: int = 12) -> Decimal:
     """Real distributions paid in the trailing `months`, as a fraction of
-    the latest price - a live-computed stand-in for a hand-maintained
-    annual yield estimate, meant to be fed straight into total_return()'s
-    `annual_yield` parameter.
+    the latest price.
+
+    No longer feeds the momentum signal: candles are adjusted prices, so
+    price_return() already contains distribution income and adding this on
+    top double-counted it (see CLAUDE.md). Kept as a pure helper for
+    reporting / ad hoc analysis; the dividend_events cache it reads is
+    still maintained by daily.py.
 
     events: [{"record_date": "YYYY-MM-DD", "amount": Decimal}, ...] - the
     payout history a caller has already fetched/cached (never fetched here;

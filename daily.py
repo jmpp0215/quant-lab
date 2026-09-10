@@ -21,7 +21,6 @@ from quant import (
     indicators,
     logging_config,
     market,
-    momentum,
     storage,
     strategy,
     tranche,
@@ -85,12 +84,7 @@ def record_strategy(signal: strategy.Signal, trade_date: str,
         (symbol, name, value)
         for symbol in config.all_symbols()
         for name, value in indicators.compute_all(
-            candles_by_symbol.get(symbol, []),
-            momentum.trailing_yield(
-                candles_by_symbol.get(symbol, []),
-                dividend_events_by_symbol.get(symbol, []),
-            ),
-        ).items()
+            candles_by_symbol.get(symbol, [])).items()
     ]
 
     variant_rows = [

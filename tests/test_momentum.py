@@ -46,28 +46,6 @@ class TestPriceReturn:
         assert momentum.price_return([], 12) is None
 
 
-class TestTotalReturn:
-    def test_adds_dividend_prorated_to_holding_window(self):
-        cs = candles([("2026-08-13", "110"), ("2025-08-13", "100")])
-        # 10% price + 12/12 of a 5% annual yield.
-        result = momentum.total_return(cs, 12, 0, Decimal("0.05"))
-        assert result == Decimal("0.15")
-
-    def test_prorates_dividend_over_skip_adjusted_window(self):
-        cs = candles([
-            ("2026-08-13", "110"),
-            ("2026-07-13", "110"),
-            ("2025-08-13", "100"),
-        ])
-        # 12-1 holds for 11 months, so only 11/12 of the yield applies.
-        result = momentum.total_return(cs, 12, 1, Decimal("0.12"))
-        assert result == Decimal("0.21")
-
-    def test_zero_yield_matches_price_return(self):
-        cs = candles([("2026-08-13", "110"), ("2025-08-13", "100")])
-        assert momentum.total_return(cs, 12) == momentum.price_return(cs, 12)
-
-
 def events(rows: list[tuple[str, str]]) -> list[dict]:
     """Build dividend events from (record_date, amount) pairs."""
     return [{"record_date": d, "amount": Decimal(a)} for d, a in rows]

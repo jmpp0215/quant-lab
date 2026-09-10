@@ -60,8 +60,8 @@ Changing strategy behavior almost always means editing constants here, not logic
 | `toss_client.py` | REST client for Toss — token caching, 429 backoff, error envelope parsing |
 | `kis_client.py` | REST client for KIS (한국투자증권) — backs `kis-isa`/`kis-main`; domestic + overseas endpoints, per-account credentials |
 | `candles.py` | Daily candle fetching — Toss default, KIS optional via `source="kis"` (rows normalised to Toss field names); per-source disk cache (`data/candles`, `data/candles/kis`), excludes in-progress candle |
-| `dividends.py` | Distribution-event fetching from KIS + incremental SQLite cache (`dividend_events`/`dividend_fetch_state`) — imperative-shell counterpart to `momentum.py`'s dividend math |
-| `momentum.py` | Date-anchored lookback returns with dividend adjustment (pure — `trailing_yield()` takes cached events in, never fetches) |
+| `dividends.py` | Distribution-event fetching from KIS + incremental SQLite cache (`dividend_events`/`dividend_fetch_state`) — kept synced for reporting; no longer feeds the signal |
+| `momentum.py` | Date-anchored lookback returns on adjusted-price candles (pure). `trailing_yield()` still here for reporting but not used by the signal |
 | `indicators.py` | Technical indicators (e.g. moving-average trend filter) used by strategy variants |
 | `allocation.py` | Covariance/risk-parity/inverse-vol weighting math |
 | `strategy.py` | Dual momentum signal generation (pure) + recorded-but-unused allocation variants |
@@ -101,15 +101,21 @@ rather than trade through it.
   silently shifted an entire ranking when the cache added one candle.
 - Absolute momentum compares against a cash-proxy ETF (`config.CASH_SYMBOL`), not against
   zero — a small positive return isn't worth holding if cash yields more.
-- Dividends are computed live, not estimated: Toss candles are price-only and would
-  otherwise penalize high-yield holdings via the invisible ex-dividend drop, so
-  `momentum.trailing_yield()` sums real KIS payout history (`quant/dividends.py`'s cache,
-  fetched from KIS's 예탁원정보 배당일정 endpoint) over the trailing 12 months instead of
-  reading a hand-maintained constant. **Sharp edge:** because this is now time-varying
-  (unlike the old static `config.DIVIDEND_YIELD`), any code path calling
-  `strategy.evaluate()`/`variants()` for a historical date — `backtest.py`, a `daily.py
-  --date` backfill — must slice dividend events to that date first (`backtest.
-  slice_dividends_at()`), exactly like candles are already sliced, or risk look-ahead bias.
+- **Toss/KIS candles are adjusted prices (수정주가); distributions are already in the
+  price series, so the momentum signal adds no dividend term.** Verified live 2026-09-10:
+  Toss `/api/v1/candles` returns adjusted prices by default (`adjusted=true`), matching KIS
+  `inquire-daily-itemchartprice` with `FID_ORG_ADJ_PRC=0` to the won over 300 days; the
+  money-market ETF 497880 shows zero ex-dividend drop across 15 distributions.
+  `momentum.total_return()` used to add `trailing_yield()` on top of the price return — that
+  double-counted the yield (inflated high-yield names like 484790/091170 by 3–5pp and
+  flipped the top-3 on some days). Removed: `strategy.evaluate()` now ranks on
+  `momentum.price_return()` alone, and `backtest.run_tranched()` no longer adds payout cash
+  (`dividend_income()` deleted — the same double-count in the backtest's valuation).
+- `dividend_events` (`quant/dividends.py`'s cache, fetched from KIS's 예탁원정보 배당일정
+  endpoint) is **not on the signal path** anymore — still synced by `daily.py`, kept for
+  reporting / ad hoc analysis (`momentum.trailing_yield()`, `update_dividend_yields.py`).
+  `strategy.evaluate()`/`_rank_by()`/`variants()` and `backtest.run_tranched()` still accept
+  a `dividend_events_by_symbol` argument but ignore it.
 - Orders are limit orders priced a tick or two through the touch, never market orders —
   a market order has no price ceiling and can fill far from the last trade during a thin or
   closing-auction book. `executor.MAX_DEVIATION` (2%) refuses to trade if the touch has

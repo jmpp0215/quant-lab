@@ -1,13 +1,15 @@
-"""Tests for backtest.py's dividend/cash accounting.
+"""Tests for backtest.py's cash/value bookkeeping.
 
 run_tranched() drives strategy.evaluate() for real, but that pulls in
 config.UNIVERSE/CASH_SYMBOL/LOOKBACK_MONTHS and months of realistic
 multi-symbol history to produce a ranking - none of which this module
-needs to exercise, since what's under test here is purely the value/cash
-bookkeeping around a given signal. strategy.evaluate is monkeypatched to
-a fixed "always 100% symbol A" signal so the holding schedule is
-deterministic, and prices are held flat so any change in value is
-attributable to dividends alone, not price movement.
+needs to exercise. strategy.evaluate is monkeypatched to a fixed "always
+100% symbol A" signal so the holding schedule is deterministic, and
+prices are held flat so value only moves if the bookkeeping moves it.
+
+Candles are adjusted prices, so distributions are already in the price
+path: run_tranched no longer adds payout cash (that was a double-count),
+and these tests pin that a dividend event changes nothing.
 """
 from datetime import date, timedelta
 from decimal import Decimal
@@ -60,8 +62,8 @@ def small_universe(monkeypatch):
 @pytest.fixture(autouse=True)
 def fixed_signal_on_a(monkeypatch):
     """Always 100% A, regardless of candles/dividends handed in - makes the
-    holding schedule deterministic so a flat price isolates the dividend
-    contribution exactly."""
+    holding schedule deterministic so a flat price isolates the
+    bookkeeping exactly."""
     def fake_evaluate(candles_by_symbol, dividend_events_by_symbol):
         return strategy.Signal(
             weights={"A": Decimal("1")}, cash_weight=Decimal("0"), scores=[])
@@ -76,46 +78,11 @@ def candles_by_symbol():
     }
 
 
-class TestDividendIncome:
-    def test_sums_units_times_amount(self):
-        holdings = {"A": Decimal("100")}
-        evs = {"A": events([("2024-03-01", "2")])}
-        assert backtest.dividend_income(
-            holdings, evs, "2024-02-01", "2024-04-01") == Decimal("200")
-
-    def test_since_is_exclusive(self):
-        # Already counted in the prior period - must not double-count.
-        holdings = {"A": Decimal("100")}
-        evs = {"A": events([("2024-02-01", "2")])}
-        assert backtest.dividend_income(
-            holdings, evs, "2024-02-01", "2024-04-01") == Decimal("0")
-
-    def test_until_is_inclusive(self):
-        holdings = {"A": Decimal("100")}
-        evs = {"A": events([("2024-04-01", "2")])}
-        assert backtest.dividend_income(
-            holdings, evs, "2024-02-01", "2024-04-01") == Decimal("200")
-
-    def test_skips_zero_unit_holdings(self):
-        holdings = {"A": Decimal("0")}
-        evs = {"A": events([("2024-03-01", "2")])}
-        assert backtest.dividend_income(
-            holdings, evs, "2024-02-01", "2024-04-01") == Decimal("0")
-
-    def test_ignores_symbols_with_no_events(self):
-        holdings = {"A": Decimal("100"), "B": Decimal("50")}
-        evs = {"A": events([("2024-03-01", "2")])}  # no "B" key at all
-        assert backtest.dividend_income(
-            holdings, evs, "2024-02-01", "2024-04-01") == Decimal("200")
-
-
-class TestRunTranchedDividends:
-    def test_pools_dividend_income_into_cash(self, candles_by_symbol):
+class TestRunTranchedIgnoresDividends:
+    def test_mid_run_dividend_event_changes_nothing(self, candles_by_symbol):
         schedule = backtest._tranche_schedule(candles_by_symbol, list(config.TRANCHES))
         assert len(schedule) >= 3, "fixture needs a seed date plus 2 loop iterations"
 
-        # Strictly between the second and third schedule entries (i.e.
-        # inside the first real loop iteration's window).
         second_date, third_date = (
             date.fromisoformat(schedule[1][0]),
             date.fromisoformat(schedule[2][0]),
@@ -125,35 +92,30 @@ class TestRunTranchedDividends:
             mid -= timedelta(days=1)
         assert second_date < mid < third_date
 
-        divs = {"A": events([(mid.isoformat(), "2")]), "B": []}
-        history = backtest.run_tranched(candles_by_symbol, divs)
+        with_div = backtest.run_tranched(
+            candles_by_symbol, {"A": events([(mid.isoformat(), "2")]), "B": []})
+        without = backtest.run_tranched(candles_by_symbol, {"A": [], "B": []})
 
-        # All sleeves are seeded 100% into A at price 100 -> initial/100
-        # units total, same as the single-book run() case.
-        units_held = Decimal("10000000") / Decimal("100")
-        before = next(r for r in history if r.date == schedule[1][0])
-        after = next(r for r in history if r.date == schedule[2][0])
-        assert after.value == before.value + units_held * Decimal("2")
+        assert [r.value for r in with_div] == [r.value for r in without]
 
-    def test_includes_dividend_income_in_final_valuation(self, candles_by_symbol):
+    def test_final_valuation_ignores_a_late_dividend_event(self, candles_by_symbol):
         schedule = backtest._tranche_schedule(candles_by_symbol, list(config.TRANCHES))
         last_date = date.fromisoformat(schedule[-1][0])
         after_last = last_date + timedelta(days=1)
         while after_last.weekday() >= 5:
             after_last += timedelta(days=1)
 
-        divs = {"A": events([(after_last.isoformat(), "3")]), "B": []}
-        history = backtest.run_tranched(candles_by_symbol, divs)
+        with_div = backtest.run_tranched(
+            candles_by_symbol,
+            {"A": events([(after_last.isoformat(), "3")]), "B": []})
+        without = backtest.run_tranched(candles_by_symbol, {"A": [], "B": []})
 
-        units_held = Decimal("10000000") / Decimal("100")
-        second_to_last, final = history[-2], history[-1]
-        assert final.value == second_to_last.value + units_held * Decimal("3")
+        assert with_div[-1].value == without[-1].value
 
-    def test_matches_no_dividend_when_no_events(self, candles_by_symbol):
+    def test_flat_price_no_events_value_never_moves(self, candles_by_symbol):
         """Regression: flat price, no dividends, every sleeve already
         holding its full target (A) from seeding -> value never moves."""
-        divs = {"A": [], "B": []}
-        history = backtest.run_tranched(candles_by_symbol, divs)
+        history = backtest.run_tranched(candles_by_symbol, {"A": [], "B": []})
 
         assert len(history) >= 2
         for r in history:

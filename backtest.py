@@ -50,30 +50,6 @@ def close_at(candles: list[dict], as_of: str) -> Decimal | None:
     return Decimal(sliced[0]["closePrice"]) if sliced else None
 
 
-def dividend_income(holdings: dict[str, Decimal],
-                    dividend_events_by_symbol: dict[str, list[dict]],
-                    since: str, until: str) -> Decimal:
-    """Cash paid on continuously-held `holdings` with record_date in
-    (since, until] - since is exclusive so a dividend already counted in
-    the prior period is never counted twice, until is inclusive to match
-    slice_dividends_at()'s own `<= as_of` convention. Backtest counterpart
-    to quant/momentum.py's trailing_yield(), which uses the same bounds
-    for the same reason: the ex-dividend price drop is already in the
-    candles, so this is the only place the payout itself gets counted.
-    """
-    total = Decimal("0")
-    for sym, units in holdings.items():
-        if units <= 0:
-            continue
-        events = dividend_events_by_symbol.get(sym, [])
-        paid = sum(
-            (e["amount"] for e in events if since < e["record_date"] <= until),
-            Decimal("0"),
-        )
-        total += units * paid
-    return total
-
-
 def summarise(history: list[Rebalance], label: str = "") -> str:
     if len(history) < 2:
         return "not enough history"
@@ -125,15 +101,6 @@ def _spread_cost(symbol: str, notional: Decimal) -> Decimal:
     return notional * half
 
 
-def _pooled_holdings(books: dict[int, dict[str, Decimal]]) -> dict[str, Decimal]:
-    """Units held per symbol, summed across every sleeve's book."""
-    pooled: dict[str, Decimal] = {}
-    for book in books.values():
-        for sym, units in book.items():
-            pooled[sym] = pooled.get(sym, Decimal("0")) + units
-    return pooled
-
-
 def run_tranched(candles_by_symbol: dict[str, list[dict]],
                  dividend_events_by_symbol: dict[str, list[dict]],
                  initial: Decimal = Decimal("10000000"),
@@ -146,9 +113,10 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
     its positions untouched in between. Cash is pooled: a sleeve treats
     1/N of the balance as its own, matching how the live system works.
 
-    dividend_events_by_symbol: raw payout history per symbol - required,
-    not defaulted, so a forgotten argument errors instead of silently
-    producing a zero-dividend backtest.
+    dividend_events_by_symbol: still required by the signature but unused.
+    Candles are adjusted prices, so distributions are already in the price
+    path - adding the payout as cash on top would double-count it, the
+    same reason strategy.evaluate() dropped its yield term (see CLAUDE.md).
 
     tranches: defaults to config.TRANCHES. Pass tranches=(0,) for a single
     monthly rebalance (first trading day of each month) with correct cash
@@ -195,12 +163,6 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
     # The first scheduled rebalance is now a no-op for that sleeve.
     schedule = schedule[1:]
 
-    # Tracks how far dividend income has been collected up to - cash is
-    # pooled across sleeves already, so dividends are too: every sleeve's
-    # current holdings are checked together at each step rather than
-    # attributed to whichever sleeve happens to be rebalancing that day.
-    last_dividend_check = first_date
-
     for trade_date, which in schedule:
         prices = {
             sym: close_at(cs, trade_date)
@@ -208,11 +170,6 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
         }
         prices = {s: p for s, p in prices.items() if p is not None}
         prices["cash"] = Decimal("1.0")
-
-        cash += dividend_income(
-            _pooled_holdings(books), dividend_events_by_symbol,
-            last_dividend_check, trade_date)
-        last_dividend_check = trade_date
 
         sliced = {
             sym: slice_at(cs, trade_date)
@@ -269,9 +226,6 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
                candles_by_symbol[next(iter(config.UNIVERSE))])
     final_prices = {sym: close_at(cs, last)
                     for sym, cs in candles_by_symbol.items()}
-    cash += dividend_income(
-        _pooled_holdings(books), dividend_events_by_symbol,
-        last_dividend_check, last)
     total = cash + sum(
         units * final_prices[sym]
         for b in books.values()
