@@ -1,7 +1,7 @@
 import os
 import logging
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import sqlite3
 import numpy as np
 import pandas as pd
@@ -134,49 +134,125 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
     weight = Decimal("1.0") / Decimal(len(selected_symbols))
     return {sym: weight for sym in selected_symbols}
 
-def calculate_diff(target_weights: dict[str, Decimal], 
-                   positions: dict[str, Position], 
-                   prices: dict[str, Decimal], 
+def resolve_target_quantities(
+    target_weights: dict[str, Decimal],
+    symbols: set[str],
+    held_qty: dict[str, int],
+    prices: dict[str, Decimal],
+    total: Decimal,
+    cash: Decimal,
+) -> dict[str, int]:
+    """Final target share count per symbol.
+
+    Rounds each symbol's ideal quantity (total * weight / price) to the
+    NEAREST integer (ROUND_HALF_UP) rather than always flooring - flooring
+    alone can leave a symbol's actual allocation far below its target weight
+    whenever the target amount doesn't divide evenly by price (e.g. a
+    ₩110,000 stock against a ₩200,000 target buys 1 share under floor, -45%
+    off target, vs. 2 shares under nearest, +10%). floor and nearest never
+    differ by more than one share.
+
+    Nearest-rounding applied uniformly can push total BUY notional above
+    `cash` (roughly half of symbols round up). When that happens, the
+    "bonus" share - the one unit that separates nearest from floor - is
+    given back one symbol at a time, cheapest-price-per-share first, until
+    back within budget. No symbol is ever trimmed below its own floor
+    quantity, so this can only ever match or improve on the pre-existing
+    floor-only allocation, never make one worse.
+    """
+    floor_qty: dict[str, int] = {}
+    target_qty: dict[str, int] = {}
+
+    for symbol in symbols:
+        price = prices[symbol]
+        weight = target_weights.get(symbol, Decimal("0"))
+        ideal = total * weight / price
+        floor_qty[symbol] = int(ideal)
+        target_qty[symbol] = int(ideal.to_integral_value(rounding=ROUND_HALF_UP))
+
+    def total_buy_notional() -> Decimal:
+        return sum(
+            (target_qty[s] - held_qty.get(s, 0)) * prices[s]
+            for s in symbols
+            if target_qty[s] > held_qty.get(s, 0)
+        )
+
+    bonus_buy_candidates = sorted(
+        (
+            symbol for symbol in symbols
+            if target_qty[symbol] > held_qty.get(symbol, 0)
+            and target_qty[symbol] == floor_qty[symbol] + 1
+        ),
+        key=lambda s: prices[s],
+    )
+
+    idx = 0
+    while total_buy_notional() > cash and idx < len(bonus_buy_candidates):
+        target_qty[bonus_buy_candidates[idx]] = floor_qty[bonus_buy_candidates[idx]]
+        idx += 1
+
+    if bonus_buy_candidates and total_buy_notional() > cash:
+        log.warning(
+            "target buy notional (%.0f) still exceeds cash (%.0f) after reverting "
+            "every rounding bonus - floor-quantity buys alone exceed budget",
+            total_buy_notional(), cash,
+        )
+
+    return target_qty
+
+
+def calculate_diff(target_weights: dict[str, Decimal],
+                   positions: dict[str, Position],
+                   prices: dict[str, Decimal],
                    cash: Decimal) -> list[Order]:
     """
     Compare current positions with target weights and generate Orders.
     This logic mimics quant/rebalance.py's plan().
     """
     total = cash + sum(p.value for p in positions.values())
-    
+
     sells: list[Order] = []
     buys: list[Order] = []
-    
+
     symbols = set(positions) | set(target_weights)
-    
+
     kospi_df = fdr.StockListing('KOSPI')
     name_dict = dict(zip(kospi_df['Code'], kospi_df['Name']))
-    
+
     # Minimum order value threshold (can be configured)
     MIN_ORDER_KRW = Decimal("50000")
-    
-    for symbol in sorted(symbols):
+
+    resolved_prices: dict[str, Decimal] = {}
+    held_qty: dict[str, int] = {}
+    for symbol in symbols:
         price = prices.get(symbol)
         if price is None and symbol in positions:
             price = positions[symbol].last_price
-            
+
         if price is None or price <= 0:
             log.warning("%s: no price available, skipping", symbol)
             continue
-            
-        weight = target_weights.get(symbol, Decimal("0"))
-        target_qty = int(total * weight / price)
-        held_qty = positions[symbol].quantity if symbol in positions else 0
-        delta = target_qty - held_qty
-        
+
+        resolved_prices[symbol] = price
+        held_qty[symbol] = positions[symbol].quantity if symbol in positions else 0
+
+    target_qty_by_symbol = resolve_target_quantities(
+        target_weights, set(resolved_prices), held_qty, resolved_prices, total, cash
+    )
+
+    for symbol in sorted(resolved_prices):
+        price = resolved_prices[symbol]
+        target_qty = target_qty_by_symbol[symbol]
+        delta = target_qty - held_qty.get(symbol, 0)
+
         if delta == 0:
             continue
-            
+
         name = name_dict.get(symbol, positions[symbol].name if symbol in positions else symbol)
-        
+
         # Determine tick size (assume individual stocks, not ETF)
         limit = round_to_tick(price, is_etf=False)
-        
+
         order = Order(
             symbol=symbol,
             name=name,
@@ -184,15 +260,15 @@ def calculate_diff(target_weights: dict[str, Decimal],
             quantity=abs(delta),
             limit_price=limit,
         )
-        
+
         if order.notional < MIN_ORDER_KRW:
             continue
-            
+
         if delta > 0:
             buys.append(order)
         else:
             sells.append(order)
-            
+
     # Return sells first, then buys (to free up cash)
     return sells + buys
 

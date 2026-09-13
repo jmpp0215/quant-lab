@@ -7,6 +7,7 @@ from quant.stock_factors.portfolio_construction import (
     PBRConfig,
     calculate_diff,
     price_data_is_stale,
+    resolve_target_quantities,
 )
 
 
@@ -67,6 +68,81 @@ def test_calculate_diff():
     assert orders[2].symbol == "B"
     assert orders[2].side == "BUY"
     assert orders[2].quantity == 15
+
+
+class TestResolveTargetQuantities:
+    def test_rounds_to_nearest_not_floor_when_closer(self):
+        # target 200,000 / price 110,000 = 1.818 -> nearest is 2, not floor's 1.
+        qty = resolve_target_quantities(
+            target_weights={"A": Decimal("1")},
+            symbols={"A"},
+            held_qty={},
+            prices={"A": Decimal("110000")},
+            total=Decimal("200000"),
+            cash=Decimal("1000000"),
+        )
+        assert qty["A"] == 2
+
+    def test_nearest_matches_floor_when_floor_is_already_closest(self):
+        # target 200,000 / price 150,000 = 1.333 -> nearest is still 1, same as floor.
+        qty = resolve_target_quantities(
+            target_weights={"A": Decimal("1")},
+            symbols={"A"},
+            held_qty={},
+            prices={"A": Decimal("150000")},
+            total=Decimal("200000"),
+            cash=Decimal("1000000"),
+        )
+        assert qty["A"] == 1
+
+    def test_budget_overflow_trims_cheapest_bonus_first(self):
+        # Both A (price 110,000, ideal 1.818) and B (price 125,000, ideal 1.6)
+        # round up by one bonus share (floor 1 -> nearest 2 for both, target
+        # 200,000 each). Total nearest-rounded buy cost =
+        # 2*110,000 + 2*125,000 = 470,000, but only 400,000 cash is
+        # available. Reverting just the cheaper bonus (A, -110,000 ->
+        # 360,000) is enough to fit - B should keep its full nearest
+        # quantity.
+        qty = resolve_target_quantities(
+            target_weights={"A": Decimal("0.5"), "B": Decimal("0.5")},
+            symbols={"A", "B"},
+            held_qty={},
+            prices={"A": Decimal("110000"), "B": Decimal("125000")},
+            total=Decimal("400000"),
+            cash=Decimal("400000"),
+        )
+        assert qty["A"] == 1  # bonus reverted to floor
+        assert qty["B"] == 2  # bonus kept
+
+    def test_never_trims_below_floor_even_when_still_over_budget(self):
+        # cash is far below even the floor-only total (2 * 110,000 =
+        # 220,000) - trimming both bonuses still leaves the floor sum
+        # (2 * 1 * 110,000 = 220,000) over the 50,000 cash. Quantities must
+        # not go below floor (1 each), not drop to 0.
+        qty = resolve_target_quantities(
+            target_weights={"A": Decimal("0.5"), "B": Decimal("0.5")},
+            symbols={"A", "B"},
+            held_qty={},
+            prices={"A": Decimal("110000"), "B": Decimal("110000")},
+            total=Decimal("400000"),
+            cash=Decimal("50000"),
+        )
+        assert qty["A"] == 1
+        assert qty["B"] == 1
+
+    def test_budget_cap_does_not_touch_sell_side_quantities(self):
+        # C is being sold down toward a smaller target weight - its
+        # nearest-rounded target must be unaffected by a buy-side budget
+        # shortfall elsewhere.
+        qty = resolve_target_quantities(
+            target_weights={"A": Decimal("0.5"), "C": Decimal("0")},
+            symbols={"A", "C"},
+            held_qty={"C": 10},
+            prices={"A": Decimal("110000"), "C": Decimal("10000")},
+            total=Decimal("300000"),
+            cash=Decimal("0"),
+        )
+        assert qty["C"] == 0
 
 
 class TestPriceDataIsStale:
