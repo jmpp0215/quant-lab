@@ -13,10 +13,17 @@ def prepare_pbr_signals(start_date: str) -> pd.DataFrame:
     """
     conn = sqlite3.connect(DB_PATH)
     
+    # basis='CFS'로 고정: DART는 연결(CFS)/별도(OFS) 재무제표를 모두 반환하고
+    # pead_quarterly_normalized에 둘 다 별도 행으로 저장된다 (quant/pead/dart.py).
+    # basis를 필터링하지 않으면 이후 pivot_table의 기본 aggfunc='mean'이 두 값을
+    # 조용히 평균 내버려 자본총계가 오염된다 - quant/pead/signal.py의
+    # _get_point_in_time_series, quant/pead/config.py의 PeadConfig.dart_basis와
+    # 동일한 관례를 따른다. issued_shares는 dart.py에서 항상 basis='CFS'로만
+    # 저장되므로 이 필터는 그쪽 동작을 바꾸지 않는다.
     query = """
         SELECT symbol, rcept_dt as date, report_code, metric, quarterly_value
         FROM pead_quarterly_normalized
-        WHERE metric IN ('total_equity', 'issued_shares')
+        WHERE metric IN ('total_equity', 'issued_shares') AND basis = 'CFS'
         ORDER BY date
     """
     df = pd.read_sql(query, conn)

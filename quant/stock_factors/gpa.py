@@ -14,10 +14,12 @@ def prepare_gpa_signals(start_date: str, config: FactorConfig) -> dict:
     """
     conn = sqlite3.connect(DB_PATH)
     
+    # basis='CFS' 고정 - value.py::prepare_pbr_signals와 동일한 이유
+    # (CFS/OFS 미필터링 시 pivot_table의 mean aggfunc가 total_assets를 오염시킴).
     query = """
         SELECT symbol, rcept_dt as date, report_code, metric, quarterly_value
         FROM pead_quarterly_normalized
-        WHERE metric IN ('gross_profit', 'total_assets')
+        WHERE metric IN ('gross_profit', 'total_assets') AND basis = 'CFS'
         ORDER BY date
     """
     df = pd.read_sql(query, conn)
