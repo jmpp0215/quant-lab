@@ -65,10 +65,39 @@ def filter_admin_stocks(target_weights: dict, df_admin) -> dict:
 
     return target_weights
 
+
+def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
+                           conn) -> dict[str, Decimal]:
+    """Target weights for today's run.
+
+    Normally (retry=False) this freshly recomputes the PBR ranking via
+    construct_target_portfolio. With retry=True, it skips re-ranking
+    entirely and replays the target_portfolio recorded on the most recent
+    non-all_clear rebalance - the still-unresolved symbols from that run
+    are what calculate_diff will end up producing orders for (already-filled
+    symbols now sit at their target, so their diff is zero); everything
+    else naturally gets left alone.
+    """
+    if retry:
+        latest = pbr_storage.get_latest_rebalance(conn)
+        if latest is None or latest["all_clear"] or not latest["target_portfolio"]:
+            raise ValueError(
+                "--retry requires a previous rebalance with all_clear=False and a "
+                "recorded target_portfolio; none found"
+            )
+        return {sym: Decimal(str(w)) for sym, w in latest["target_portfolio"].items()}
+    return construct_target_portfolio(today_str, pbr_config)
+
+
 def main():
     account, remaining_argv = accounts.extract_account(sys.argv, default="toss-bot")
     parser = argparse.ArgumentParser(description="Run PBR live execution")
     parser.add_argument("--auto", action="store_true", help="Skip interactive prompts")
+    parser.add_argument(
+        "--retry", action="store_true",
+        help="Retry the failed/partial symbols from the last non-all_clear "
+             "rebalance instead of recomputing the PBR ranking"
+    )
     args, _ = parser.parse_known_args(remaining_argv)
     
     pbr_storage.init()
@@ -127,9 +156,19 @@ def main():
         return 1
 
     pbr_config = PBRConfig(target_n_stocks=50)
-    log.info(f"Constructing Target Portfolio (Top {pbr_config.target_n_stocks}) as of {today_str}...")
-    target_weights = construct_target_portfolio(today_str, pbr_config)
-    
+    with pbr_storage.connect() as conn:
+        latest_for_retry = pbr_storage.get_latest_rebalance(conn) if args.retry else None
+        if args.retry:
+            log.info("RETRY mode: replaying target_portfolio from the last incomplete rebalance...")
+        else:
+            log.info(f"Constructing Target Portfolio (Top {pbr_config.target_n_stocks}) as of {today_str}...")
+        try:
+            target_weights = resolve_target_weights(today_str, pbr_config, args.retry, conn)
+        except ValueError as e:
+            log.error(str(e))
+            return 1
+    retry_of_date = latest_for_retry["trade_date"] if latest_for_retry else None
+
     if not target_weights:
         log.error("Failed to construct target portfolio (no symbols returned).")
         return 1
@@ -286,7 +325,9 @@ def main():
             "partial": partial,
             "all_clear": not failed and not partial
         }
-        
+        if retry_of_date:
+            summary_data["retry_of"] = retry_of_date
+
         target_dict = {sym: float(w) for sym, w in target_weights.items()}
         
         with pbr_storage.connect() as conn:

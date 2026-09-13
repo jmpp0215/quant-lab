@@ -1,8 +1,14 @@
 from decimal import Decimal
 
 import pandas as pd
+import pytest
 
-from quant.stock_factors.scripts.run_pbr_live import filter_admin_stocks
+from quant.stock_factors.portfolio_construction import PBRConfig
+from quant.stock_factors.scripts import pbr_storage
+from quant.stock_factors.scripts.run_pbr_live import (
+    filter_admin_stocks,
+    resolve_target_weights,
+)
 
 
 def _fake_admin_listing():
@@ -53,3 +59,67 @@ def test_filter_admin_stocks_handles_empty_admin_listing():
     result = filter_admin_stocks(target_weights, pd.DataFrame(columns=["Symbol", "Name"]))
 
     assert result == target_weights
+
+
+@pytest.fixture
+def pbr_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "pbr_live.db"
+    monkeypatch.setattr(pbr_storage, "DB_PATH", db_path)
+    pbr_storage.init()
+    return db_path
+
+
+def test_resolve_target_weights_retry_replays_last_incomplete_target(pbr_db):
+    with pbr_storage.connect() as conn:
+        pbr_storage.save_rebalance(
+            conn, "2026-09-07", 50,
+            Decimal("100"), Decimal("90"), Decimal("10"), Decimal("20"),
+            {"005930": 0.6, "000660": 0.4},
+            {"failed": ["005930"], "partial": [], "all_clear": False},
+        )
+
+    with pbr_storage.connect() as conn:
+        weights = resolve_target_weights("2026-09-08", PBRConfig(), retry=True, conn=conn)
+
+    assert weights == {"005930": Decimal("0.6"), "000660": Decimal("0.4")}
+
+
+def test_resolve_target_weights_retry_raises_when_no_rebalance_recorded(pbr_db):
+    with pbr_storage.connect() as conn:
+        with pytest.raises(ValueError):
+            resolve_target_weights("2026-09-08", PBRConfig(), retry=True, conn=conn)
+
+
+def test_resolve_target_weights_retry_raises_when_last_rebalance_was_clean(pbr_db):
+    with pbr_storage.connect() as conn:
+        pbr_storage.save_rebalance(
+            conn, "2026-09-07", 50,
+            Decimal("100"), Decimal("100"), Decimal("10"), Decimal("10"),
+            {"005930": 1.0},
+            {"failed": [], "partial": [], "all_clear": True},
+        )
+
+    with pbr_storage.connect() as conn:
+        with pytest.raises(ValueError):
+            resolve_target_weights("2026-09-08", PBRConfig(), retry=True, conn=conn)
+
+
+def test_resolve_target_weights_non_retry_builds_fresh_portfolio(pbr_db, monkeypatch):
+    """retry=False must not touch pbr_storage at all - it recomputes the PBR
+    ranking via construct_target_portfolio, same as before this change."""
+    import quant.stock_factors.scripts.run_pbr_live as run_pbr_live
+
+    called_with = {}
+
+    def fake_construct(today_str, config):
+        called_with["today_str"] = today_str
+        called_with["config"] = config
+        return {"005930": Decimal("1")}
+
+    monkeypatch.setattr(run_pbr_live, "construct_target_portfolio", fake_construct)
+
+    with pbr_storage.connect() as conn:
+        weights = resolve_target_weights("2026-09-08", PBRConfig(), retry=False, conn=conn)
+
+    assert weights == {"005930": Decimal("1")}
+    assert called_with["today_str"] == "2026-09-08"
