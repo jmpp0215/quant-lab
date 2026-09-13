@@ -40,10 +40,10 @@ from quant.pead.dart import normalize_to_quarterly
 def test_normalization_chain():
     # 4분기가 순서대로 주어지는 정상 케이스 검증
     raw = [
-        {"symbol": "A", "target_year": "2023", "report_code": "11013", "metric": "OI", "basis": "CFS", "rcept_dt": "20230515", "value": 100}, # 1Q
-        {"symbol": "A", "target_year": "2023", "report_code": "11012", "metric": "OI", "basis": "CFS", "rcept_dt": "20230814", "value": 250}, # Half (Q1+Q2) -> Q2 = 150
-        {"symbol": "A", "target_year": "2023", "report_code": "11014", "metric": "OI", "basis": "CFS", "rcept_dt": "20231114", "value": 450}, # 3Q (Q1+Q2+Q3) -> Q3 = 200
-        {"symbol": "A", "target_year": "2023", "report_code": "11011", "metric": "OI", "basis": "CFS", "rcept_dt": "20240315", "value": 700}, # Annual -> Q4 = 250
+        {"symbol": "A", "target_year": "2023", "report_code": "11013", "metric": "operating_income", "basis": "CFS", "rcept_dt": "20230515", "value": 100}, # 1Q
+        {"symbol": "A", "target_year": "2023", "report_code": "11012", "metric": "operating_income", "basis": "CFS", "rcept_dt": "20230814", "value": 250}, # Half (Q1+Q2) -> Q2 = 150
+        {"symbol": "A", "target_year": "2023", "report_code": "11014", "metric": "operating_income", "basis": "CFS", "rcept_dt": "20231114", "value": 450}, # 3Q (Q1+Q2+Q3) -> Q3 = 200
+        {"symbol": "A", "target_year": "2023", "report_code": "11011", "metric": "operating_income", "basis": "CFS", "rcept_dt": "20240315", "value": 700}, # Annual -> Q4 = 250
     ]
     norm = normalize_to_quarterly(raw)
     assert len(norm) == 4
@@ -65,7 +65,7 @@ def test_normalization_chain():
 def test_normalization_missing_previous_quarter():
     # 1Q 누락된 상태에서 반기 보고서 접수
     raw = [
-        {"symbol": "A", "target_year": "2023", "report_code": "11012", "metric": "OI", "basis": "CFS", "rcept_dt": "20230814", "value": 250}, 
+        {"symbol": "A", "target_year": "2023", "report_code": "11012", "metric": "operating_income", "basis": "CFS", "rcept_dt": "20230814", "value": 250}, 
     ]
     norm = normalize_to_quarterly(raw)
     assert len(norm) == 1
@@ -77,13 +77,13 @@ def test_normalization_point_in_time():
     # 반기(11012) 계산 시점(20230814)에 가용한 1분기(11013) 데이터를 사용해야 함
     raw = [
         # 1Q 원본
-        {"symbol": "A", "target_year": "2023", "report_code": "11013", "metric": "OI", "basis": "CFS", "rcept_dt": "20230515", "value": 100}, 
+        {"symbol": "A", "target_year": "2023", "report_code": "11013", "metric": "operating_income", "basis": "CFS", "rcept_dt": "20230515", "value": 100}, 
         
         # 반기 원본
-        {"symbol": "A", "target_year": "2023", "report_code": "11012", "metric": "OI", "basis": "CFS", "rcept_dt": "20230814", "value": 250}, 
+        {"symbol": "A", "target_year": "2023", "report_code": "11012", "metric": "operating_income", "basis": "CFS", "rcept_dt": "20230814", "value": 250}, 
         
         # 1Q 정정 (반기 보고서 이후인 9월에 발생한 미래 정보)
-        {"symbol": "A", "target_year": "2023", "report_code": "11013", "metric": "OI", "basis": "CFS", "rcept_dt": "20230915", "value": 120}, 
+        {"symbol": "A", "target_year": "2023", "report_code": "11013", "metric": "operating_income", "basis": "CFS", "rcept_dt": "20230915", "value": 120}, 
     ]
     norm = normalize_to_quarterly(raw)
     
