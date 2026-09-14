@@ -3,6 +3,8 @@ import numpy as np
 from typing import Dict, List, Callable
 import logging
 
+from quant.common.price_guard import safe_return, DEFAULT_ANOMALY_THRESHOLD
+
 log = logging.getLogger(__name__)
 
 def simulate_portfolio(
@@ -10,7 +12,8 @@ def simulate_portfolio(
     price_series_by_sym: Dict[str, Dict[str, float]],
     signal_func: Callable[[str], List[str]],
     rebalance_days: int = 20,
-    transaction_cost: float = 0.0000  # Can be added later
+    transaction_cost: float = 0.0000,  # Can be added later
+    anomaly_threshold: float = DEFAULT_ANOMALY_THRESHOLD,
 ) -> pd.DataFrame:
     """
     시계열 포트폴리오 시뮬레이터.
@@ -24,7 +27,11 @@ def simulate_portfolio(
         price_series_by_sym: {symbol: {date: close_price}}
         signal_func: date(YYYYMMDD)를 받아 매수할 종목(symbol) 리스트를 반환하는 함수
         rebalance_days: 리밸런싱 주기 (영업일 기준)
-        
+        anomaly_threshold: 일간수익률 절대값이 이 값을 넘으면 pead_price_raw의 소급
+            미조정(무상감자/액면병합/무상증자 등) 아티팩트로 간주해 신뢰하지 않고
+            0 수익률로 처리 + 로그로 남김 (quant.common.price_guard 참고). 여러 값으로
+            스윕하려면 이 인자를 바꿔가며 호출.
+
     Returns:
         일별 포트폴리오 가치 및 수익률을 담은 DataFrame
     """
@@ -33,7 +40,8 @@ def simulate_portfolio(
 
     daily_returns = []
     current_symbols = []
-    
+    rebalance_counter = 0
+
     for i, date in enumerate(trading_dates):
         # Calculate today's return BEFORE rebalancing (using yesterday's target symbols)
         if i > 0 and current_symbols:
@@ -42,17 +50,20 @@ def simulate_portfolio(
             for sym in current_symbols:
                 p_prev = price_series_by_sym.get(sym, {}).get(prev_date)
                 p_curr = price_series_by_sym.get(sym, {}).get(date)
-                
-                if p_prev and p_curr and p_prev > 0:
-                    day_returns.append((p_curr - p_prev) / p_prev)
-                else:
-                    # Trading halt or missing data -> 0 return
-                    day_returns.append(0.0)
-                    
+
+                ret, flagged = safe_return(p_prev, p_curr, anomaly_threshold)
+                if flagged:
+                    log.warning(
+                        "price anomaly ignored: %s %s->%s implies %.1f%% return, "
+                        "treating as 0 (likely unadjusted corporate action)",
+                        sym, prev_date, date, (p_curr - p_prev) / p_prev * 100,
+                    )
+                day_returns.append(ret if ret is not None else 0.0)
+
             port_ret = np.mean(day_returns) if day_returns else 0.0
         else:
             port_ret = 0.0
-            
+
         # Rebalance at the end of the day (so tomorrow gets the new returns)
         if rebalance_counter == 0 or i == 0:
             new_symbols = signal_func(date)

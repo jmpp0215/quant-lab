@@ -65,6 +65,27 @@ def test_simulate_portfolio_dynamic():
     # Cum ret: (1.1) * (0.9) - 1 = 0.99 - 1 = -0.01
     assert df.iloc[-1]['cum_ret'] == pytest.approx(-0.01)
     
+def test_simulate_portfolio_ignores_price_anomaly():
+    # B has a real +10%/day trend, but a corporate-action artifact (unadjusted
+    # 15:1-style reverse split) fakes a +1000% jump on day 3 that must not
+    # flow into the portfolio return.
+    trading_dates = ["20230101", "20230102", "20230103", "20230104"]
+    price_series = {
+        "A": {"20230101": 100.0, "20230102": 100.0, "20230103": 100.0, "20230104": 100.0},
+        "B": {"20230101": 100.0, "20230102": 110.0, "20230103": 1210.0, "20230104": 1331.0},
+    }
+
+    def mock_signal(date):
+        return ["A", "B"]
+
+    df = simulate_portfolio(trading_dates, price_series, mock_signal, rebalance_days=10)
+
+    # Day 3: A flat (0%), B's move is flagged and treated as 0% -> portfolio return 0%
+    assert df.iloc[2]['daily_ret'] == pytest.approx(0.0)
+    # Day 4: A flat, B genuinely +10% (1210 -> 1331) -> portfolio return +5%
+    assert df.iloc[3]['daily_ret'] == pytest.approx(0.05)
+
+
 def test_calculate_mdd():
     # Wealth: 1, 1.1, 0.99, 1.2
     cum_rets = pd.Series([0.0, 0.1, -0.01, 0.2])

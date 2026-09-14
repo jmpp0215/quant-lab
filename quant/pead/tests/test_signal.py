@@ -1,5 +1,5 @@
 import pytest
-from quant.pead.signal import _compute_sue, calculate_surprise
+from quant.pead.signal import _compute_sue, calculate_surprise, build_event_timeline
 from quant.pead.config import PeadConfig
 
 def test_compute_sue():
@@ -230,3 +230,39 @@ def test_calculate_surprise_quarter_gap_is_not_estimable():
     sue, is_estimable = calculate_surprise("A", current_rcept_dt, config, normalized_records)
     assert is_estimable is False
     assert sue is None
+
+
+def test_build_event_timeline_returns_none_when_window_contains_price_anomaly():
+    # 20260105->20260106 implies a +1400% day - an unadjusted reverse-split-style
+    # artifact, not a real move. It falls inside the return_5d window
+    # (entry 20260102 .. target 20260109), so that horizon must be None, not a
+    # corrupted number.
+    price_series = {
+        "20260101": 100.0,  # rcept_dt (t=0)
+        "20260102": 101.0,  # entry (t+1)
+        "20260105": 102.0,
+        "20260106": 1530.0,  # price anomaly
+        "20260107": 104.0,
+        "20260108": 105.0,
+        "20260109": 106.0,  # return_5d target
+    }
+    config = PeadConfig(entry_timing="t+1")
+    timeline = build_event_timeline("TEST", "20260101", price_series, config)
+    assert timeline is not None
+    assert timeline["return_5d"] is None
+
+
+def test_build_event_timeline_computes_normal_return_when_no_anomaly():
+    price_series = {
+        "20260101": 100.0,
+        "20260102": 101.0,
+        "20260105": 102.0,
+        "20260106": 103.0,
+        "20260107": 104.0,
+        "20260108": 105.0,
+        "20260109": 106.0,
+    }
+    config = PeadConfig(entry_timing="t+1")
+    timeline = build_event_timeline("TEST", "20260101", price_series, config)
+    assert timeline["entry_price"] == pytest.approx(101.0)
+    assert timeline["return_5d"] == pytest.approx((106.0 - 101.0) / 101.0)

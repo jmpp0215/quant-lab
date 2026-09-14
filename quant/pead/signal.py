@@ -1,5 +1,9 @@
+import logging
 from typing import Dict
 from .config import PeadConfig
+from quant.common.price_guard import find_anomalies, DEFAULT_ANOMALY_THRESHOLD
+
+log = logging.getLogger(__name__)
 
 _REPORT_QUARTER_ORDER = {"11013": 1, "11012": 2, "11014": 3, "11011": 4}
 
@@ -181,7 +185,8 @@ def combine_signal(symbol: str, rcept_dt: str, config: PeadConfig) -> float:
     return 0.0
 
 def build_event_timeline(
-    symbol: str, rcept_dt: str, price_series: Dict[str, float], config: PeadConfig
+    symbol: str, rcept_dt: str, price_series: Dict[str, float], config: PeadConfig,
+    anomaly_threshold: float = DEFAULT_ANOMALY_THRESHOLD,
 ) -> dict | None:
     """
     공시 접수일(t=0)을 기준으로 config.entry_timing(t+1/t+2)에 따른 진입 가격을 산출하고,
@@ -192,6 +197,10 @@ def build_event_timeline(
         price_series: {날짜(YYYYMMDD 문자열): 종가} 딕셔너리. rcept_dt 이후 구간의 거래일이
                       포함되어 있어야 합니다 (정렬은 이 함수 내부에서 수행).
         config: config.entry_timing('t+1' 또는 't+2')에 따라 진입 시점이 결정됩니다.
+        anomaly_threshold: entry_date~target_date 구간에 이 값을 넘는 일간수익률(pead_price_raw의
+            소급 미조정 무상감자/액면병합 등 아티팩트, quant.common.price_guard 참고)이 하나라도
+            있으면 해당 horizon의 누적수익률은 계산하지 않고 None으로 남김(기존 "거래일 부족"과
+            동일 취급). 여러 값으로 스윕하려면 이 인자를 바꿔가며 호출.
 
     Returns:
         pead_event_returns에 저장 가능한 형태의 dict, 또는 진입에 필요한 거래일이 부족하면 None.
@@ -212,7 +221,19 @@ def build_event_timeline(
     for field, horizon in horizons.items():
         target_idx = entry_offset + horizon
         if target_idx < len(trading_dates):
-            target_price = price_series[trading_dates[target_idx]]
+            target_date = trading_dates[target_idx]
+            anomalies = find_anomalies(
+                symbol, price_series, anomaly_threshold,
+                start_date=entry_date, end_date=target_date,
+            )
+            if anomalies:
+                log.warning(
+                    "%s: %s window [%s, %s] contains a price anomaly (%s), returning None instead of a corrupted return",
+                    symbol, field, entry_date, target_date, anomalies[0],
+                )
+                returns[field] = None
+                continue
+            target_price = price_series[target_date]
             returns[field] = (target_price - entry_price) / entry_price
         else:
             returns[field] = None
