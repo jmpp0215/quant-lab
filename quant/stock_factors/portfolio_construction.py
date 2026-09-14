@@ -7,7 +7,12 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from quant.stock_factors.value import prepare_pbr_signals, get_pbr_signal_func
+from quant.stock_factors.value import (
+    compute_quarantine_windows,
+    get_pbr_signal_func,
+    load_issued_shares_rcept_dts,
+    prepare_pbr_signals,
+)
 from quant.rebalance import Order, Position
 from quant.market import round_to_tick
 import FinanceDataReader as fdr
@@ -114,7 +119,16 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
     target_date_str = valid_dates[-1]
     
     # 3. Apply Signal Function
-    base_func = get_pbr_signal_func(df_bps, df_price_pivot, top_percentile=0.2)
+    # 발행주식수 급변(무상감자/유상증자 등) 이벤트 이후, 다음 분기보고서로 확정되기 전까지는
+    # BPS가 신구 데이터를 섞어 계산되어 PBR이 왜곡될 수 있다 - 그 구간엔 후보에서 제외한다.
+    # (RESEARCH_LOG.md 섹션 15 참고, 에이프로젠 007460/003060 사례로 발견.)
+    price_series_by_sym = {
+        sym: {d.strftime('%Y%m%d'): v for d, v in df_price_pivot[sym].dropna().items()}
+        for sym in df_price_pivot.columns
+    }
+    quarantine = compute_quarantine_windows(price_series_by_sym, load_issued_shares_rcept_dts())
+
+    base_func = get_pbr_signal_func(df_bps, df_price_pivot, top_percentile=0.2, quarantine=quarantine)
     selected_symbols = base_func(target_date_str)
     
     # Apply Suspension Filter
