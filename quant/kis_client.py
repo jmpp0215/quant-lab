@@ -1,11 +1,14 @@
 """Korea Investment & Securities (KIS) Open API client."""
 
+import fcntl
+import json
 import logging
 import os
 import random
 import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
@@ -20,6 +23,14 @@ load_dotenv()
 BASE_URL = "https://openapi.koreainvestment.com:9443"
 MAX_RETRIES = 3
 BACKOFF_BASE = 1.0
+# Per-account token cache, shared across processes: KIS tokens are valid
+# 24h but cap issuance at once/minute per account, and the in-memory cache
+# on a KisClient instance doesn't survive past one script's process - every
+# separate cron entry point (daily.py, check_due.py, ...) used to re-issue
+# a fresh token every run even when yesterday's was still good, which is
+# harmless when runs are spread through the day but hits the once/minute
+# cap when two scripts happen to run close together.
+TOKEN_DIR = Path(__file__).parent.parent / "data"
 log = logging.getLogger(__name__)
 
 
@@ -50,11 +61,67 @@ class KisClient:
         self._expires_at: float = 0.0
         self._session = requests.Session()
 
+    def _token_path(self) -> Path:
+        return TOKEN_DIR / f"kis_token_{self.account}.json"
+
+    def _read_token_file(self) -> tuple[str, float] | None:
+        """(token, expires_at) from this account's cache file, or None if
+        the file is missing, unreadable, or already expired."""
+        try:
+            data = json.loads(self._token_path().read_text())
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return None
+        expires_at = data.get("expires_at", 0)
+        if time.time() >= expires_at or "token" not in data:
+            return None
+        return data["token"], expires_at
+
+    def _write_token_file(self) -> None:
+        # Write to a temp file and rename into place - the rename is atomic
+        # on POSIX, so a concurrent reader never sees a half-written file.
+        # 0600: this file holds a live bearer token, same sensitivity as
+        # the app secret it was minted from.
+        path = self._token_path()
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps({"token": self._token, "expires_at": self._expires_at}))
+        os.chmod(tmp_path, 0o600)
+        tmp_path.replace(path)
+
     def _get_token(self) -> str:
-        # Reuse the cached token until it is close to expiry.
+        # 1. In-memory cache - cheapest, valid for this process's lifetime.
         if self._token and time.time() < self._expires_at:
             return self._token
 
+        # 2. Cross-process file cache - another script (or an earlier run
+        # of this one) may have issued a still-valid token within the last
+        # 24h.
+        cached = self._read_token_file()
+        if cached:
+            self._token, self._expires_at = cached
+            return self._token
+
+        # 3. Neither is valid - issue a new one under a file lock so two
+        # processes racing to refresh at the same time don't both hit
+        # KIS's once-per-minute issuance cap.
+        return self._issue_token_locked()
+
+    def _issue_token_locked(self) -> str:
+        TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        lock_path = self._token_path().with_suffix(".lock")
+        with open(lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                # Double-checked: another process may have refreshed the
+                # file while we were waiting for the lock.
+                cached = self._read_token_file()
+                if cached:
+                    self._token, self._expires_at = cached
+                    return self._token
+                return self._request_new_token()
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+    def _request_new_token(self) -> str:
         try:
             response = self._session.post(
                 f"{BASE_URL}/oauth2/tokenP",
@@ -80,6 +147,7 @@ class KisClient:
         # Refresh 60s early to avoid using a token that expires mid-request.
         self._expires_at = time.time() + int(body["expires_in"]) - 60
         log.info("access token issued, expires_in=%s", body["expires_in"])
+        self._write_token_file()
         return self._token
 
     def _request(self, method: str, path: str, tr_id: str, *,
