@@ -1,10 +1,10 @@
 # AMZN data collection layer
 
-Pure data collection for AMZN. No signal generation, no order execution -
-those are deliberately out of scope for this stage (see "Not yet built"
-below). Follows the project's layer separation: collection here, signal
-generation and execution live elsewhere and are not touched by this
-package. `quant/rebalance.py`, `quant/executor.py`, and the main
+Data collection for AMZN, plus a small notify-only daily check built on top
+of it. No order execution - that stays deliberately out of scope (see "Not
+yet built" below). Follows the project's layer separation: collection and
+signal calculation here, execution lives elsewhere and is not touched by
+this package. `quant/rebalance.py`, `quant/executor.py`, and the main
 `quant/momentum.py`/`quant/strategy.py`/`quant/allocation.py` strategy are
 unmodified by this work.
 
@@ -12,9 +12,11 @@ unmodified by this work.
 
 | Module | Source | What it collects |
 |---|---|---|
-| `price_collector.py` | KIS 해외주식 현재가상세 (`HHDFS76200200`) | Daily price + valuation ratios (PER/PBR/EPS/BPS/market cap/shares/volume) |
+| `price_collector.py` | KIS 해외주식 현재가상세 (`HHDFS76200200`) | Daily price + valuation ratios (PER/PBR/EPS/BPS/market cap/shares/volume); also `parse_holding()` for `kis-main-overseas` holding status |
 | `segment_collector.py` | SEC EDGAR, raw XBRL instance per filing | AWS revenue/operating income, advertising revenue, capex, OCF, FCF |
 | `news_collector.py` | KIS 해외뉴스종합(제목) `HHPSTH60100C1` + 해외속보(제목) `FHKST01011801` | Headlines, LLM-tagged into event categories |
+| `signal.py` | `amzn_price_daily` history (pure, no I/O) | RSI(14) and PER/PBR percentile-rank vs. AMZN's own accumulated history |
+| `scripts/check_amzn.py` | `price_collector` + `signal` + `kis-main-overseas` holdings | Daily desktop notification: valuation percentile, RSI, holding status - notify-only, no trade execution. Run standalone/separate from `daily.py` because it also checks `kis-main-overseas`, which is outside `daily.py`'s (`kis-isa`-centric) scope. |
 
 ## Auth requirements
 
@@ -110,11 +112,31 @@ Each is safe to re-run: price/news collection is idempotent per day
 `news_key`), and segment collection skips accession numbers already in
 `amzn_segment_fetch_state`.
 
+The daily check runs on its own schedule, separate from `price_collector.py`'s
+manual CLI - it calls `price_collector.collect_and_store()` itself (the same
+idempotent gate), so running both on the same day is harmless:
+
+```bash
+python -m quant.amzn.scripts.check_amzn
+```
+
+## Ramp-up behavior (no backfill)
+
+`amzn_price_daily` accumulates one row per weekday, forward-only - KIS's
+price-detail endpoint only exposes the current snapshot, so there is no
+historical range query to backfill from. Until enough rows exist,
+`check_amzn.py`'s notification shows "데이터부족(N/M일)" instead of a real
+number:
+
+- RSI(14) needs `signal.MIN_RSI_SAMPLES` (15) closes - about 3 trading weeks
+  from a cold start.
+- The PER/PBR percentile needs `signal.MIN_PERCENTILE_SAMPLES` (20) rows for
+  even a rough estimate, and stays low-confidence (informational only) until
+  roughly 60 rows (~3 months) have accumulated - a young history means "today
+  is the cheapest ever seen" mostly reflects a short window, not a real
+  distribution.
+
 ## Not yet built (deliberately out of scope this stage)
 
-- Signal generation (valuation-overlay percentile calculation, conviction
-  score, etc.)
 - Trade execution / tranche sizing
 - `DRY_RUN` gate - N/A, there is no order logic yet
-- `launchd` automation - will be added once a few days/weeks of data have
-  accumulated

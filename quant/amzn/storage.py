@@ -144,6 +144,31 @@ def save_price_daily(conn: sqlite3.Connection, row: dict) -> None:
     )
 
 
+def price_history(conn: sqlite3.Connection, symbol: str) -> list[dict]:
+    """All rows for one symbol, oldest-first - the full accumulated series
+    RSI/percentile calculations need. Not filtered by config_hash: per this
+    table's schema comment, valuation/price columns don't vary with config,
+    so a later AmznConfig field change (which changes get_hash() going
+    forward) must not silently truncate the continuous history a signal
+    calc depends on."""
+    rows = conn.execute(
+        "SELECT date, last_price, per, pbr FROM amzn_price_daily "
+        "WHERE symbol = ? ORDER BY date ASC", (symbol,)
+    ).fetchall()
+    return [{"date": r[0], "last_price": r[1], "per": r[2], "pbr": r[3]} for r in rows]
+
+
+def latest_price_row(conn: sqlite3.Connection, symbol: str) -> dict | None:
+    """Most recent row for `symbol`. Used when collect_and_store() returns
+    None (already collected today) but the caller still needs today's
+    numbers - e.g. a manual re-run of check_amzn.py later the same day."""
+    row = conn.execute(
+        "SELECT date, last_price, per, pbr FROM amzn_price_daily "
+        "WHERE symbol = ? ORDER BY date DESC LIMIT 1", (symbol,)
+    ).fetchone()
+    return {"date": row[0], "last_price": row[1], "per": row[2], "pbr": row[3]} if row else None
+
+
 def is_accession_fetched(conn: sqlite3.Connection, accession_number: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM amzn_segment_fetch_state WHERE accession_number = ?",
