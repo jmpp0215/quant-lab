@@ -1,15 +1,15 @@
-import sys
 import logging
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
-from quant.stock_factors.scripts import pbr_storage
-from quant.toss_client import TossClient
 from quant import market
+from quant.kis_client import KisClient
+from quant.stock_factors.scripts import pbr_storage
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("check_pbr_due")
@@ -70,11 +70,14 @@ def main():
     now = datetime.now().astimezone()
     today_str = now.strftime("%Y-%m-%d")
 
-    # 1. Basic market open checks
-    client = TossClient()
-    calendar = client.market_calendar("KR")
+    # 1. Basic market open checks. Calendar and candles are shared market
+    # data, not account state - KIS is the source here regardless of which
+    # account run_pbr_live.py ends up trading (see check_due.py's tranche
+    # scheduler for the same pattern).
+    client = KisClient("isa")
+    holiday = client.holidays(datetime.now(market.KST).strftime("%Y%m%d"))
 
-    if not market.is_business_day(calendar):
+    if not market.is_business_day(holiday):
         log.info("Market closed today.")
         return 0
 
@@ -85,8 +88,12 @@ def main():
     # 2. Check if 20 trading days have passed since the last FULL rebalance
     # (retry attempts don't count - see get_latest_full_rebalance_date)
     from quant import candles
-    history = candles.get(client, "005930", days=60, include_today=True)
-    trading_dates = [c["timestamp"][:10] for c in history]
+    history = candles.get(client, "005930", days=60, include_today=True,
+                          source="kis")
+    # candles.get() returns newest-first; compute_due_status() does
+    # trading_dates.index() arithmetic that assumes oldest-first (today's
+    # index > an earlier date's index), same as check_pbr_due's own tests.
+    trading_dates = sorted(c["timestamp"][:10] for c in history)
 
     if today_str not in trading_dates:
         log.error(f"Today {today_str} is not in trading dates list.")

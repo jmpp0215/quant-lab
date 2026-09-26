@@ -1,3 +1,7 @@
+from datetime import datetime
+from decimal import Decimal
+
+from quant.stock_factors.scripts import check_pbr_due, pbr_storage
 from quant.stock_factors.scripts.check_pbr_due import compute_due_status
 
 # 25 trading days, 2026-08-17 .. 2026-09-18 (weekdays only, no holidays needed
@@ -72,3 +76,87 @@ def test_retry_of_a_retry_still_paces_off_the_original_full_rebalance():
     due_full, needs_retry = compute_due_status(latest, full_date, TRADING_DATES, today)
     assert due_full is False
     assert needs_retry is True
+
+
+# --- main()-level regression tests -----------------------------------------
+#
+# compute_due_status() itself was never wrong - main() was feeding it bad
+# inputs: a Toss market_calendar() response into an is_business_day() check
+# that (since 4f5ceb3) expects KIS's holidays() shape, and candles.get()'s
+# newest-first rows passed in unsorted where compute_due_status() assumes
+# oldest-first (matching TRADING_DATES above). Both silently forced
+# due_full=False forever. These tests exercise main() itself, with
+# subprocess.run mocked out so a regression here can never place a real
+# order via run_pbr_live.py.
+
+class _FakeKisClient:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def holidays(self, _ymd):
+        return {"output": [{"opnd_yn": "Y"}]}
+
+
+class _FixedDatetime(datetime):
+    """`today` pinned to TRADING_DATES[24] (2026-09-18) so this test's
+    control flow doesn't depend on when it's actually run."""
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 9, 18, 10, 0, tzinfo=tz)
+
+
+def _fake_candles_newest_first(dates):
+    """Mirrors candles.get(source='kis')'s real return order."""
+    return [{"timestamp": f"{d}T00:00:00"} for d in reversed(dates)]
+
+
+def _setup(tmp_path, monkeypatch):
+    monkeypatch.setattr(pbr_storage, "DB_PATH", tmp_path / "pbr_live.db")
+    pbr_storage.init()
+    monkeypatch.setattr(check_pbr_due, "KisClient", _FakeKisClient)
+    monkeypatch.setattr(check_pbr_due, "datetime", _FixedDatetime)
+    from quant import candles
+    monkeypatch.setattr(candles, "get",
+                        lambda *a, **k: _fake_candles_newest_first(TRADING_DATES))
+    calls = []
+    monkeypatch.setattr(check_pbr_due.subprocess, "run",
+                        lambda cmd, **k: calls.append(cmd))
+    return calls
+
+
+def test_main_triggers_full_rebalance_when_actually_due(tmp_path, monkeypatch):
+    calls = _setup(tmp_path, monkeypatch)
+    with pbr_storage.connect() as conn:
+        pbr_storage.save_rebalance(
+            conn, TRADING_DATES[0], 50,
+            Decimal("100"), Decimal("100"), Decimal("10"), Decimal("10"),
+            {"005930": 1.0},
+            {"failed": [], "partial": [], "all_clear": True},
+        )
+
+    assert check_pbr_due.main() == 0
+    assert len(calls) == 1
+    assert "--retry" not in calls[0]
+
+
+def test_main_does_nothing_when_not_yet_due(tmp_path, monkeypatch):
+    calls = _setup(tmp_path, monkeypatch)
+    with pbr_storage.connect() as conn:
+        pbr_storage.save_rebalance(
+            conn, TRADING_DATES[20], 50,  # 4 trading days ago, well under 20
+            Decimal("100"), Decimal("100"), Decimal("10"), Decimal("10"),
+            {"005930": 1.0},
+            {"failed": [], "partial": [], "all_clear": True},
+        )
+
+    assert check_pbr_due.main() == 0
+    assert calls == []
+
+
+def test_main_skips_on_holiday_without_touching_pbr_storage_dates(tmp_path, monkeypatch):
+    calls = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(check_pbr_due.KisClient, "holidays",
+                        lambda self, _ymd: {"output": [{"opnd_yn": "N"}]})
+
+    assert check_pbr_due.main() == 0
+    assert calls == []

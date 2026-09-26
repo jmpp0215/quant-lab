@@ -87,6 +87,23 @@ class KisClient:
         os.chmod(tmp_path, 0o600)
         tmp_path.replace(path)
 
+    def _invalidate_token(self) -> None:
+        """Drop this account's cached token (memory + file) so the next
+        _get_token() call is forced to issue a fresh one.
+
+        KIS can reject a token as expired/invalid (EGW00123) before our
+        locally computed expires_at says it should - observed live
+        2026-09-18, file cache said valid for another ~2h but the server
+        had already invalidated it. Cause unconfirmed (KIS may only honour
+        the most recently issued token per appkey), so this treats it as
+        something that can happen rather than chasing the root cause.
+        """
+        self._token, self._expires_at = None, 0.0
+        try:
+            self._token_path().unlink()
+        except FileNotFoundError:
+            pass
+
     def _get_token(self) -> str:
         # 1. In-memory cache - cheapest, valid for this process's lifetime.
         if self._token and time.time() < self._expires_at:
@@ -207,6 +224,18 @@ class KisClient:
                     log.warning("%s %s rate limited (EGW00201), retry in %.1fs",
                                 method, path, delay)
                     time.sleep(delay)
+                    continue
+                # EGW00123: KIS rejected the token as expired even though
+                # our cache thought it was still good (see
+                # _invalidate_token). Nothing was processed on this
+                # request - it never got past authentication - so a retry
+                # here is safe for POSTs too, unlike the network-error
+                # retry above.
+                if error_body.get("msg_cd") == "EGW00123" and attempt < MAX_RETRIES:
+                    log.warning("%s %s token rejected as expired (EGW00123), "
+                                "refreshing and retrying", method, path)
+                    self._invalidate_token()
+                    headers["Authorization"] = f"Bearer {self._get_token()}"
                     continue
                 self._raise_for_error(method, path, response)
 

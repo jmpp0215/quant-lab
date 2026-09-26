@@ -113,6 +113,77 @@ class TestGetTokenCaching:
         assert client._get_token() == "written-by-other-process"
 
 
+class TestInvalidateToken:
+    def test_clears_memory_and_deletes_file(self, client):
+        client._token = "abc123"
+        client._expires_at = time.time() + 3600
+        client._write_token_file()
+
+        client._invalidate_token()
+
+        assert client._token is None
+        assert client._expires_at == 0.0
+        assert not client._token_path().exists()
+
+    def test_safe_when_no_file_exists(self, client):
+        client._invalidate_token()
+
+        assert client._token is None
+
+
+class FakeHttpResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+
+class TestExpiredTokenRetry:
+    """EGW00123 means KIS rejected the token as expired even though our
+    cache (correctly, from its own point of view) still considered it
+    valid - see _invalidate_token's docstring. _request() must refresh and
+    retry rather than surface the raw error."""
+
+    def test_retries_once_with_a_fresh_token_after_egw00123(self, client, monkeypatch):
+        client._token = "stale-token"
+        client._expires_at = time.time() + 3600
+        client._write_token_file()
+        monkeypatch.setattr(client, "_request_new_token", lambda: "fresh-token")
+
+        responses = [
+            FakeHttpResponse(500, {"rt_cd": "1", "msg_cd": "EGW00123", "msg1": "expired"}),
+            FakeHttpResponse(200, {"rt_cd": "0", "output": {"ok": True}}),
+        ]
+        seen_auth_headers = []
+
+        def fake_request(method, url, headers=None, **kwargs):
+            seen_auth_headers.append(headers["Authorization"])
+            return responses.pop(0)
+
+        monkeypatch.setattr(client._session, "request", fake_request)
+
+        result = client.get("/some/path", tr_id="TEST")
+
+        assert result == {"rt_cd": "0", "output": {"ok": True}}
+        assert seen_auth_headers == ["Bearer stale-token", "Bearer fresh-token"]
+
+    def test_gives_up_after_max_retries_of_persistent_egw00123(self, client, monkeypatch):
+        client._token = "stale-token"
+        client._expires_at = time.time() + 3600
+        client._write_token_file()
+        monkeypatch.setattr(client, "_request_new_token", lambda: "still-stale")
+        monkeypatch.setattr(
+            client._session, "request",
+            lambda *a, **k: FakeHttpResponse(
+                500, {"rt_cd": "1", "msg_cd": "EGW00123", "msg1": "expired"}))
+
+        with pytest.raises(KisApiError):
+            client.get("/some/path", tr_id="TEST")
+
+
 class TestRequestNewToken:
     def test_success_caches_in_memory_and_on_disk(self, client, monkeypatch):
         monkeypatch.setattr(
