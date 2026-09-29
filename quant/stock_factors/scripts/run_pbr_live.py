@@ -155,7 +155,7 @@ def main():
         )
         return 1
 
-    pbr_config = PBRConfig(target_n_stocks=50)
+    pbr_config = PBRConfig(target_n_stocks=50, weighting_scheme="inverse_vol")
     with pbr_storage.connect() as conn:
         latest_for_retry = pbr_storage.get_latest_rebalance(conn) if args.retry else None
         if args.retry:
