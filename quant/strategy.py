@@ -30,7 +30,9 @@ class Score:
 class Signal:
     """The strategy's output: what the portfolio should look like."""
     weights: dict[str, Decimal]      # symbol -> target weight
-    cash_weight: Decimal             # unallocated, held as cash
+    cash_weight: Decimal             # unallocated (rounding tail only - the
+                                     # defensive share is in weights, parked
+                                     # in config.CASH_SYMBOL)
     scores: list[Score]              # full ranking, for the log
 
 def evaluate(candles_by_symbol: dict[str, list[dict]],
@@ -81,6 +83,11 @@ def evaluate(candles_by_symbol: dict[str, list[dict]],
     # Equal weights of 1/3 leave a rounding tail; anything below a basis
     # point is not a real cash allocation.
     if abs(cash_weight) < Decimal("0.0001"):
+        cash_weight = Decimal("0")
+    # Slots nothing beat cash for are parked in the cash proxy itself rather
+    # than left as idle account cash, which earns next to nothing in the ISA.
+    if cash_weight > 0:
+        weights[config.CASH_SYMBOL] = cash_weight
         cash_weight = Decimal("0")
 
     return Signal(weights=weights, cash_weight=cash_weight, scores=scores)
@@ -217,7 +224,10 @@ def variants(candles_by_symbol: dict[str, list[dict]],
     """
     scores = {s.symbol: s.momentum for s in signal.scores
               if s.momentum is not None}
-    selected = list(signal.weights)
+    # The cash proxy in signal.weights is parked residual, not a pick - keep
+    # it out of the variants, which re-size or filter the risky selection.
+    risky = {s: w for s, w in signal.weights.items() if s != config.CASH_SYMBOL}
+    selected = list(risky)
 
     out = [
         Variant("mom_6m", variant_single_lookback(
@@ -227,7 +237,7 @@ def variants(candles_by_symbol: dict[str, list[dict]],
         Variant("blended_rank",
                 variant_blended(candles_by_symbol, dividend_events_by_symbol)),
         Variant("trend_filtered",
-                variant_trend_filtered(candles_by_symbol, signal.weights)),
+                variant_trend_filtered(candles_by_symbol, risky)),
     ]
 
     for scheme in ("inverse_vol", "risk_parity", "signal_weighted", "rank_weighted"):

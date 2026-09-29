@@ -41,10 +41,12 @@ class TestEvaluateHurdle:
 
         signal = strategy.evaluate(data, {})
 
-        assert set(signal.weights) == {"A"}
-        assert signal.cash_weight == Decimal("1") - Decimal("1") / 3
+        # Only A beats cash; the two empty slots are parked in the cash proxy.
+        assert signal.weights == {"A": Decimal("1") / 3,
+                                  "CASH": Decimal("1") - Decimal("1") / 3}
+        assert signal.cash_weight == Decimal("0")
 
-    def test_cash_proxy_itself_is_never_selected(self):
+    def test_nothing_beats_cash_parks_everything_in_cash_proxy(self):
         data = {
             "A": candles("100", "90"),
             "B": candles("100", "90"),
@@ -54,5 +56,34 @@ class TestEvaluateHurdle:
 
         signal = strategy.evaluate(data, {})
 
-        assert signal.weights == {}
-        assert signal.cash_weight == Decimal("1")
+        assert signal.weights == {"CASH": Decimal("1")}
+        assert signal.cash_weight == Decimal("0")
+
+    def test_full_selection_leaves_no_cash_position(self):
+        # 3 x 1/3 leaves only a rounding tail - not a real cash allocation.
+        data = {
+            "A": candles("100", "120"),
+            "B": candles("100", "115"),
+            "C": candles("100", "110"),
+            "CASH": candles("100", "103"),
+        }
+
+        signal = strategy.evaluate(data, {})
+
+        assert set(signal.weights) == {"A", "B", "C"}
+        assert signal.cash_weight == Decimal("0")
+
+    def test_variants_ignore_parked_cash(self):
+        # The parked cash-proxy weight is residual, not a pick: re-weighting
+        # schemes must not treat it as a fourth holding (inverse-vol would
+        # pour most of the book into a near-zero-vol money-market fund).
+        data = {
+            "A": candles("100", "110"),
+            "B": candles("100", "102"),
+            "C": candles("100", "95"),
+            "CASH": candles("100", "103"),
+        }
+        signal = strategy.evaluate(data, {})
+
+        for v in strategy.variants(data, {}, signal):
+            assert "CASH" not in v.weights, v.name

@@ -100,7 +100,11 @@ rather than trade through it.
   candle index — symbols don't share one trading calendar, and index-based lookup once
   silently shifted an entire ranking when the cache added one candle.
 - Absolute momentum compares against a cash-proxy ETF (`config.CASH_SYMBOL`), not against
-  zero — a small positive return isn't worth holding if cash yields more.
+  zero — a small positive return isn't worth holding if cash yields more. The proxy must be
+  in `config.UNIVERSE` (evaluate only scores UNIVERSE; outside it the hurdle silently
+  becomes 0%, which happened 2026-08-18 → 09-29). Slots nothing beats cash for are parked
+  in the proxy itself (in `signal.weights`), not left as idle account cash; `variants()`
+  strips it back out since it isn't a pick.
 - **Toss/KIS candles are adjusted prices (수정주가); distributions are already in the
   price series, so the momentum signal adds no dividend term.** Verified live 2026-09-10:
   Toss `/api/v1/candles` returns adjusted prices by default (`adjusted=true`), matching KIS
