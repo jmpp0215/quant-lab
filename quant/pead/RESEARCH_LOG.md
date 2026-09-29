@@ -463,6 +463,12 @@ Top 50 PBR 위에 추가 필터를 얹어 신호를 정제하려는 시도를 �
 
 스크립트: `scratch/run_pbr_invvol_test.py`, `scratch/run_pbr_invvol_robustness.py`.
 
+**업데이트 (2026-09-27)**: `PBRConfig.weighting_scheme`("equal"/"inverse_vol") 옵션으로
+`portfolio_construction.py`에 반영됨(`inverse_vol_weights()`). 트레이드오프 자체가
+바뀐 게 아니라 단순 채택은 아니므로 **기본값은 `"equal"`로 유지** — 실전 전환은 별도 결정
+필요. 프로덕션 구현치와 이 섹션의 검증 스크립트 결과가 (2026-09-18 기준 실데이터로 교차
+확인) 최대 오차 0.000048 수준으로 일치함을 확인.
+
 ## 20. 포트폴리오 레벨 드로다운 서킷브레이커 검토 및 기각
 
 **가설**: 종목별 손절(섹션 18)이 실패한 건 개별 저PBR 종목의 노이즈에 반응했기 때문일 수
@@ -508,6 +514,54 @@ Top 50 PBR 위에 추가 필터를 얹어 신호를 정제하려는 시도를 �
 합성/스트레스 시나리오로 재검증하기 전까지는 보류.
 
 스크립트: `scratch/run_pbr_circuit_breaker_test.py`.
+
+## 21. `construct_target_portfolio`가 자체 stale 데이터 가드가 없음 — 위험도 점검 (수정은 TODO로 보류)
+
+섹션 19~20 검증(가중치 반영) 작업 중, `construct_target_portfolio(as_of_date, config)`를
+직접 호출해 "오늘 날짜 기준" 목표 포트폴리오를 뽑아보다가 발견: 이 함수 자체는
+`price_data_is_stale()` 체크를 전혀 하지 않는다. 최근 날짜(pead_price_raw 최신 행이
+섹션 17에서 발견한 그 부분동기화일, 2026-09-21, 943개 중 53개만 수집)로 직접 호출하면
+가드 없이 조용히 `valid_dates[-1]`을 그 날짜로 골라버리고, `get_pbr_signal_func`의
+`len(bps)<50` 조건에 걸려 빈 딕셔너리를 반환함.
+
+**호출부 전수조사** (`grep -rn "construct_target_portfolio"` 전체 레포):
+- **실전 호출은 `run_pbr_live.py` 단 한 곳뿐** (`resolve_target_weights` 내부). 이 스크립트는
+  실제로 `main()`에서 `construct_target_portfolio` 호출 **이전에**
+  `latest_price_date()` + `price_data_is_stale(today_str, latest)` 체크를 이미 하고 있고,
+  stale이면 `return 1`로 즉시 중단함 (`run_pbr_live.py:148-156`). **즉 현재 라이브 경로는
+  이미 안전하게 가드되어 있음 — 지금 당장 사고가 나고 있는 상황은 아님.**
+- 그 외 호출은 전부 테스트(`test_portfolio_construction.py`, `test_run_pbr_live.py`)뿐이고,
+  후자는 아예 `construct_target_portfolio`를 monkeypatch로 대체해 실제 DB를 안 건드림.
+  `check_pbr_due.py`/`pbr_cost_sweep.py`/`pbr_slippage.py` 등 다른 stock_factors 스크립트는
+  이 함수를 아예 호출하지 않음(더 하위 레벨 함수를 직접 씀).
+
+**그럼에도 위험하다고 보는 이유 (가드가 호출부에만 있는 구조적 문제)**:
+1. 가드가 `construct_target_portfolio` 자신이 아니라 **호출하는 쪽의 책임**으로 되어 있어서,
+   앞으로 추가될 어떤 새 스크립트/노트북/실험이든 이 두 줄(`latest_price_date` +
+   `price_data_is_stale`)을 매번 정확한 순서로 재현해야만 안전함 — 잊으면 조용히 뚫림.
+   `CLAUDE.md`가 이미 명시한 이 레포의 안전 철학("페이퍼 트레이딩 환경이 없어 모든 안전장치는
+   코드 구조에서 나온다")과 정확히 반대되는 지점.
+2. **오늘 관찰된 53/943 케이스는 사실 "운이 좋았던" 경우다** — 우연히 50 미만이라
+   `get_pbr_signal_func`가 빈 리스트를 반환해 `run_pbr_live.py`의
+   `if not target_weights: return 1` 체크에 걸린다. 만약 부분동기화된 종목 수가 우연히
+   50개를 넘겼다면(예: 60/943), `construct_target_portfolio`는 **비어 있지 않은, 그럴듯해
+   보이는 포트폴리오**를 반환했을 것 — 실제로는 전체 유니버스의 6%도 안 되는 편향된 표본에서
+   뽑힌 랭킹인데, `target_weights`가 비어있지 않으므로 그 어떤 기존 체크도 이를 걸러내지
+   못함. "빈 결과"보다 "그럴듯한 가짜 결과"가 훨씬 위험한 실패 모드.
+
+**TODO (다음 작업으로 남김, 이번엔 수정하지 않음)**: `price_data_is_stale` 체크를
+`construct_target_portfolio` 내부로 옮기는 것을 검토 — 호출부마다 각자 가드를 두는 것보다
+방어적. 설계 시 고려할 점:
+- `price_data_is_stale(as_of_date, latest)`는 `datetime.now()`를 안 쓰고 인자로 받은
+  `as_of_date`만 비교하므로, 과거 날짜로 호출하는 백테스트/분석 용도를 깨뜨리지 않을 가능성이
+  높음 — `latest_price_date()`(테이블 전체의 MAX(date))가 과거 as_of_date보다 미래인 경우
+  `np.busday_count`가 음수가 되어 자연히 stale 판정을 피해가기 때문. 다만 이건 우연한
+  부작용이지 설계된 동작이 아니므로, 내장시킬 때 이 가정이 실제로 맞는지 검증 필요.
+  (참고: 섹션 19~20에서 추가한 신규 단위 테스트 3건은 모두 as_of_date와 정확히 같은 날짜까지만
+  가격을 삽입하므로 gap=0 — 내장 가드를 추가해도 깨지지 않음을 확인함.)
+- stale일 때 빈 dict 반환 vs 예외 발생 중 어느 쪽이 나은지 결정 필요 (현재
+  `run_pbr_live.py`는 `if not target_weights: return 1`로 이미 빈 dict를 에러로 취급하므로,
+  빈 dict 반환 쪽이 기존 호출부 변경을 최소화함).
 
 ## [TODO] PEAD 테스트(test_signal.py) 실패 항목 기록
 - **발생 내역**: `quant/pead/tests/test_signal.py`에서 `test_normalization_chain`, `test_normalization_missing_previous_quarter`, `test_normalization_point_in_time` 3건 실패.

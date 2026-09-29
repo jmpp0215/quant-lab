@@ -2,6 +2,7 @@ import os
 import logging
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
+from typing import Literal
 import sqlite3
 import numpy as np
 import pandas as pd
@@ -15,6 +16,7 @@ from quant.stock_factors.value import (
 )
 from quant.rebalance import Order, Position
 from quant.market import round_to_tick
+from quant.allocation import DEFAULT_WINDOW, to_decimal_weights
 import FinanceDataReader as fdr
 
 log = logging.getLogger(__name__)
@@ -26,11 +28,22 @@ DB_PATH = Path(__file__).parent.parent.parent / "data" / "quant.db"
 # stale price table would otherwise silently rank symbols on old data.
 MAX_STALE_TRADING_DAYS = 2
 
+WEIGHTING_SCHEMES = ("equal", "inverse_vol")
+
+# Matches quant/strategy.py's _weights_by_scheme minimum-history gate for its
+# own inverse_vol scheme - not importable as a constant from there (it's an
+# inline literal in that function), so kept in sync by convention.
+MIN_VOL_OBS = 30
+
 class PBRConfig:
-    def __init__(self, target_n_stocks: int = 50, rebalance_days: int = 20):
+    def __init__(self, target_n_stocks: int = 50, rebalance_days: int = 20,
+                weighting_scheme: Literal["equal", "inverse_vol"] = "equal"):
         self.target_n_stocks = target_n_stocks
         self.rebalance_days = rebalance_days
         self.dry_run = os.getenv("DRY_RUN", "true").lower() != "false"
+        if weighting_scheme not in WEIGHTING_SCHEMES:
+            raise ValueError(f"unknown weighting_scheme: {weighting_scheme!r}")
+        self.weighting_scheme = weighting_scheme
 
 def get_latest_prices(date_str: str) -> dict[str, Decimal]:
     """Fetch prices as of the given date (or the most recent trading day)."""
@@ -76,6 +89,52 @@ def price_data_is_stale(as_of_date: str, latest: str | None,
     as_of_dt = date.fromisoformat(f"{as_of_key[:4]}-{as_of_key[4:6]}-{as_of_key[6:]}")
     gap = int(np.busday_count(latest_dt, as_of_dt))
     return gap > max_trading_days
+
+def inverse_vol_weights(symbols: list[str], df_price_pivot: pd.DataFrame,
+                        target_date_str: str) -> dict[str, Decimal] | None:
+    """Weight inversely to trailing realized volatility, point-in-time as of
+    target_date_str (only price history up to and including that date).
+
+    Same calculation approach as quant/strategy.py's
+    _weights_by_scheme("inverse_vol") for the ETF momentum strategy -
+    DEFAULT_WINDOW (120 trading days) of daily returns, 1/std weighting -
+    but reimplemented here rather than reused directly: that function takes
+    Toss/KIS candle dicts (`[{"closePrice": ...}, ...]`, newest first),
+    while PBR's price history comes from pead_price_raw via pandas. It also
+    goes through allocation.covariance_matrix(), which truncates every
+    symbol's variance window down to the shortest history among ALL
+    selected symbols before computing anything - a fine simplification for
+    the ETF universe's handful of same-vintage funds, but not for a
+    ~50-stock PBR basket where one recently-listed name would otherwise
+    silently shrink everyone else's lookback window too. Only
+    allocation.to_decimal_weights (pure Decimal formatting, no data-shape
+    assumptions) and allocation.DEFAULT_WINDOW are reused directly.
+
+    Returns None - signalling "fall back to equal weight for the whole
+    basket" - if any symbol has fewer than MIN_VOL_OBS days of return
+    history, mirroring _weights_by_scheme's own all-or-nothing fallback.
+    """
+    target_dt = pd.to_datetime(target_date_str)
+    window = df_price_pivot.loc[:target_dt, symbols].tail(DEFAULT_WINDOW + 1)
+    daily_returns = window.pct_change().iloc[1:]
+
+    vols: dict[str, float] = {}
+    for sym in symbols:
+        history = daily_returns[sym].dropna()
+        if len(history) < MIN_VOL_OBS:
+            log.warning(
+                "%s: only %d days of return history (<%d) as of %s - "
+                "falling back to equal weight for the whole basket",
+                sym, len(history), MIN_VOL_OBS, target_date_str)
+            return None
+        vols[sym] = history.std()
+
+    inverse = {sym: (1.0 / v if v > 0 else 0.0) for sym, v in vols.items()}
+    total = sum(inverse.values())
+    if total <= 0:
+        return None
+    return to_decimal_weights(symbols, [inverse[sym] / total for sym in symbols])
+
 
 def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, Decimal]:
     """
@@ -144,7 +203,12 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
         
     if not selected_symbols:
         return {}
-        
+
+    if config.weighting_scheme == "inverse_vol":
+        weights = inverse_vol_weights(selected_symbols, df_price_pivot, target_date_str)
+        if weights is not None:
+            return weights
+
     weight = Decimal("1.0") / Decimal(len(selected_symbols))
     return {sym: weight for sym in selected_symbols}
 
