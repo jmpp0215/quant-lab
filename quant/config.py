@@ -90,8 +90,11 @@ FOREIGN_ETF = {"133690", "379790", "371160", "484790"}
 GAINS_TAX_RATE = Decimal("0.154")
 
 # The risk-free proxy. Absolute momentum compares against this rather than
-# against zero, so a symbol must beat cash to be worth holding.
-CASH_SYMBOL = "459580"
+# against zero, so a symbol must beat cash to be worth holding. Must be in
+# UNIVERSE: strategy.evaluate only scores UNIVERSE symbols, and a proxy
+# outside it silently drops the hurdle to 0% (the case from 2026-08-18,
+# when 459580 moved to WATCH_ONLY, until 2026-09-29).
+CASH_SYMBOL = "497880"
 
 # How many positions to hold, equally weighted.
 TOP_N = 3
