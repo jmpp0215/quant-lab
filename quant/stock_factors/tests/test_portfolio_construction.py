@@ -10,6 +10,7 @@ from quant.stock_factors import portfolio_construction, value
 from quant.stock_factors.portfolio_construction import (
     PBRConfig,
     calculate_diff,
+    halted_symbols,
     inverse_vol_weights,
     price_data_is_stale,
     resolve_target_quantities,
@@ -405,3 +406,104 @@ def test_construct_target_portfolio_falls_back_to_equal_on_thin_history(tmp_path
 
     assert len(weights) == 10
     assert all(w == Decimal("1") / Decimal(10) for w in weights.values())
+
+
+def _pos(symbol, qty, price="10000"):
+    return Position(symbol=symbol, name=symbol, quantity=qty, last_price=Decimal(price))
+
+
+class TestCalculateDiffLocked:
+    """A halted holding (locked) can't be sold - no order for it, and its
+    value must not fund buys, or the plan spends cash the account doesn't have."""
+
+    @pytest.fixture(autouse=True)
+    def _no_network_listing(self, monkeypatch):
+        monkeypatch.setattr(portfolio_construction.fdr, "StockListing",
+                            lambda _market: pd.DataFrame({"Code": [], "Name": []}))
+
+    PRICES = {s: Decimal("10000") for s in ("A", "B", "H")}
+
+    def test_locked_holding_gets_no_sell_and_is_excluded_from_budget(self):
+        # A 100k + H(halted) 100k + cash 100k. Investable total = 200k, so
+        # A stays at 10 and B buys 10 (100k) - exactly the cash on hand.
+        # Unlocked, total would be 300k: A +5, B +15 = 200k of buys vs 100k cash.
+        positions = {"A": _pos("A", 10), "H": _pos("H", 10)}
+        weights = {"A": Decimal("0.5"), "B": Decimal("0.5")}
+        cash = Decimal("100000")
+
+        orders = calculate_diff(weights, positions, self.PRICES, cash, locked={"H"})
+
+        assert [(o.symbol, o.side, o.quantity) for o in orders] == [("B", "BUY", 10)]
+        assert sum(o.notional for o in orders if o.side == "BUY") <= cash
+
+    def test_unlocked_plan_overspends_for_contrast(self):
+        positions = {"A": _pos("A", 10), "H": _pos("H", 10)}
+        weights = {"A": Decimal("0.5"), "B": Decimal("0.5")}
+        cash = Decimal("100000")
+
+        orders = calculate_diff(weights, positions, self.PRICES, cash)
+
+        # Without the lock the H sell is planned (and would fail live), and
+        # the buys assume its proceeds.
+        assert ("H", "SELL", 10) in [(o.symbol, o.side, o.quantity) for o in orders]
+        assert sum(o.notional for o in orders if o.side == "BUY") > cash
+
+    def test_locked_name_in_target_is_dropped_and_rest_renormalized(self):
+        # Retry replays a target that still names H. H is dropped, A's 0.5
+        # renormalizes to 1.0 of the 200k investable total -> A to 20 shares.
+        positions = {"A": _pos("A", 10), "H": _pos("H", 10)}
+        weights = {"A": Decimal("0.5"), "H": Decimal("0.5")}
+
+        orders = calculate_diff(weights, positions, self.PRICES, Decimal("100000"), locked={"H"})
+
+        assert [(o.symbol, o.side, o.quantity) for o in orders] == [("A", "BUY", 10)]
+
+    def test_locked_symbol_not_held_is_ignored(self):
+        # Only holdings can be locked; a locked-but-unheld target is still bought.
+        weights = {"B": Decimal("1")}
+
+        orders = calculate_diff(weights, {}, self.PRICES, Decimal("100000"), locked={"B"})
+
+        assert [(o.symbol, o.side, o.quantity) for o in orders] == [("B", "BUY", 10)]
+
+    def test_empty_lock_matches_default(self):
+        positions = {"A": _pos("A", 10), "C": _pos("C", 10)}
+        weights = {"A": Decimal("0.5"), "B": Decimal("0.5")}
+        prices = {**self.PRICES, "C": Decimal("10000")}
+        cash = Decimal("100000")
+
+        assert (calculate_diff(weights, positions, prices, cash, locked=set())
+                == calculate_diff(weights, positions, prices, cash))
+
+
+class TestHaltedSymbols:
+    @pytest.fixture
+    def db(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "test.db"
+        _create_minimal_pbr_schema(db_path)
+        monkeypatch.setattr(portfolio_construction, "DB_PATH", db_path)
+        conn = sqlite3.connect(db_path)
+        rows = [
+            # 20260903: B had a zero-volume day earlier but traded on the latest date
+            ("20260903", "A", 0), ("20260903", "B", 0), ("20260903", "C", 100),
+            ("20260904", "A", 0), ("20260904", "B", 500), ("20260904", "C", 100),
+            ("20260907", "A", 900), ("20260907", "B", 0), ("20260907", "C", 100),
+        ]
+        conn.executemany(
+            "INSERT INTO pead_price_raw (date, symbol, close, volume) VALUES (?, ?, 1000, ?)", rows)
+        conn.commit()
+        conn.close()
+
+    def test_zero_volume_on_latest_date_at_or_before_as_of(self, db):
+        assert halted_symbols({"A", "B", "C"}, "2026-09-04") == {"A"}
+
+    def test_as_of_between_dates_uses_prior_close(self, db):
+        # Saturday 09-05 -> latest cached date is Friday 09-04.
+        assert halted_symbols({"A", "B", "C"}, "20260905") == {"A"}
+
+    def test_only_requested_symbols_are_returned(self, db):
+        assert halted_symbols({"C"}, "2026-09-04") == set()
+        assert halted_symbols({"B", "C"}, "2026-09-07") == {"B"}
+
+    def test_empty_input(self, db):
+        assert halted_symbols(set(), "2026-09-07") == set()

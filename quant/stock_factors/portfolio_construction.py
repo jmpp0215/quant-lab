@@ -279,14 +279,59 @@ def resolve_target_quantities(
     return target_qty
 
 
+def halted_symbols(symbols: set[str], as_of_date: str) -> set[str]:
+    """Symbols among `symbols` with zero volume on the latest pead_price_raw
+    date at or before as_of_date - i.e. trading-halted (거래정지) as of the
+    last cached close.
+
+    A halted holding can't be sold: KIS returns an empty book for it
+    (iscd_stat_cls_code=58, bid/ask 0/0, verified live 2026-09-29), so
+    executor skips the SELL. calculate_diff's `locked` takes this set so
+    such names are left alone rather than planned as sells whose proceeds
+    never arrive. A halt that starts today isn't visible here yet; that
+    SELL is still attempted and skipped as before.
+    """
+    if not symbols:
+        return set()
+    date_key = as_of_date.replace("-", "")
+    conn = sqlite3.connect(DB_PATH)
+    placeholders = ",".join("?" * len(symbols))
+    rows = conn.execute(
+        f"SELECT symbol FROM pead_price_raw "
+        f"WHERE date = (SELECT MAX(date) FROM pead_price_raw WHERE date <= ?) "
+        f"AND volume = 0 AND symbol IN ({placeholders})",
+        (date_key, *sorted(symbols)),
+    ).fetchall()
+    conn.close()
+    return {r[0] for r in rows}
+
+
 def calculate_diff(target_weights: dict[str, Decimal],
                    positions: dict[str, Position],
                    prices: dict[str, Decimal],
-                   cash: Decimal) -> list[Order]:
+                   cash: Decimal,
+                   locked: set[str] = frozenset()) -> list[Order]:
     """
     Compare current positions with target weights and generate Orders.
     This logic mimics quant/rebalance.py's plan().
+
+    `locked` holdings (e.g. trading-halted, see halted_symbols) can't be
+    traded: no order is generated for them, and their value is left out of
+    the total the target weights are sized against. Counting it would size
+    buys against money that's stuck in the halted name - with it untargeted,
+    the plan buys ~its value more than the cash actually on hand, and the
+    last buys get rejected by the broker. Any target weight on a locked
+    name is dropped and the rest renormalized.
     """
+    locked = set(locked) & set(positions)
+    if locked:
+        positions = {s: p for s, p in positions.items() if s not in locked}
+        kept = {s: w for s, w in target_weights.items() if s not in locked}
+        if len(kept) < len(target_weights) and kept:
+            kept_total = sum(kept.values())
+            kept = {s: w / kept_total for s, w in kept.items()}
+        target_weights = kept
+
     total = cash + sum(p.value for p in positions.values())
 
     sells: list[Order] = []

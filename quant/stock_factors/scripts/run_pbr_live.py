@@ -14,6 +14,7 @@ from quant.stock_factors.portfolio_construction import (
     construct_target_portfolio,
     calculate_diff,
     get_latest_prices,
+    halted_symbols,
     latest_price_date,
     price_data_is_stale,
     MAX_STALE_TRADING_DAYS,
@@ -204,7 +205,12 @@ def main():
     cash_before = cash
     
     # 4. Generate Diff Orders
-    orders = calculate_diff(target_weights, positions, final_prices, cash)
+    # 거래정지 보유 종목은 매도 불가(호가 0/0) - 주문 없이 그대로 두고 매수 예산에서도 제외.
+    halted = halted_symbols(set(positions), today_str)
+    if halted:
+        log.warning("Halted holdings left untouched this run (can't be sold): %s",
+                    ", ".join(sorted(halted)))
+    orders = calculate_diff(target_weights, positions, final_prices, cash, locked=halted)
     
     print("\n" + "="*50)
     print("=== LIVE PBR DRY_RUN DIFF CALCULATION ===")
@@ -298,7 +304,8 @@ def main():
                 
             positions_after_sells = apply_fills(positions, sells, results)
             
-            revised_orders = calculate_diff(target_weights, positions_after_sells, final_prices, cash_after_sells)
+            revised_orders = calculate_diff(target_weights, positions_after_sells, final_prices, cash_after_sells,
+                                            locked=halted)
             revised_buys = [o for o in revised_orders if o.side == "BUY"]
             
             log.info(f"Revised BUYS: {len(revised_buys)} orders")
@@ -323,7 +330,8 @@ def main():
         summary_data = {
             "failed": failed,
             "partial": partial,
-            "all_clear": not failed and not partial
+            "all_clear": not failed and not partial,
+            "halted": sorted(halted),
         }
         if retry_of_date:
             summary_data["retry_of"] = retry_of_date
