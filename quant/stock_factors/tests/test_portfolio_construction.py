@@ -476,6 +476,72 @@ class TestCalculateDiffLocked:
                 == calculate_diff(weights, positions, prices, cash))
 
 
+class TestCalculateDiffMinOrder:
+    """Buys and sells have separate minimum order sizes: 10k for buys, 50k
+    for sells. A single 50k floor (≈23% of a ~220k PBR position) skipped
+    every small top-up after a falling market, leaving ~7% of the account
+    idle in cash on 2026-09-14; sells keep 50k so small trims don't churn."""
+
+    @pytest.fixture(autouse=True)
+    def _no_network_listing(self, monkeypatch):
+        monkeypatch.setattr(portfolio_construction.fdr, "StockListing",
+                            lambda _market: pd.DataFrame({"Code": [], "Name": []}))
+
+    def test_buy_40k_short_is_ordered(self):
+        # A 120k + B 80k + cash 40k = 240k -> 120k each; B short by 40k.
+        positions = {"A": _pos("A", 12), "B": _pos("B", 8)}
+        weights = {"A": Decimal("0.5"), "B": Decimal("0.5")}
+        prices = {"A": Decimal("10000"), "B": Decimal("10000")}
+
+        orders = calculate_diff(weights, positions, prices, Decimal("40000"))
+
+        assert [(o.symbol, o.side, o.quantity) for o in orders] == [("B", "BUY", 4)]
+
+    def test_sell_40k_over_is_not_ordered(self):
+        # A 160k + B 80k = 240k -> 120k each; A over by 40k, under the 50k sell floor.
+        positions = {"A": _pos("A", 16), "B": _pos("B", 8)}
+        weights = {"A": Decimal("0.5"), "B": Decimal("0.5")}
+        prices = {"A": Decimal("10000"), "B": Decimal("10000")}
+
+        orders = calculate_diff(weights, positions, prices, Decimal("0"))
+
+        assert not [o for o in orders if o.side == "SELL"]
+
+    def test_buy_under_10k_is_skipped(self):
+        # A 100k + B 90k + cash 9k = 199k -> 99.5k each; B rounds up by one
+        # 9,000 share, under the 10k buy floor.
+        positions = {"A": _pos("A", 10), "B": _pos("B", 10, "9000")}
+        weights = {"A": Decimal("0.5"), "B": Decimal("0.5")}
+        prices = {"A": Decimal("10000"), "B": Decimal("9000")}
+
+        orders = calculate_diff(weights, positions, prices, Decimal("9000"))
+
+        assert orders == []
+
+    def test_small_shortfalls_everywhere_deploy_idle_cash(self):
+        # 2026-09-14 shape: 45 equal-weight names each held at ~90% of target
+        # after a drawdown, ~10% of the account in cash. Every name is short
+        # by ~22k - below the old single 50k floor, so nothing was bought.
+        price_cycle = ["1500", "3000", "7000", "12000"]
+        prices, positions = {}, {}
+        for i in range(45):
+            sym = f"S{i:02d}"
+            price = Decimal(price_cycle[i % len(price_cycle)])
+            prices[sym] = price
+            positions[sym] = _pos(sym, int(Decimal("200000") / price), str(price))
+        weights = {s: Decimal(1) / Decimal(45) for s in prices}
+        cash = Decimal("1000000")
+        total = cash + sum(p.value for p in positions.values())
+
+        orders = calculate_diff(weights, positions, prices, cash)
+
+        cash_left = (cash
+                     + sum(o.quantity * prices[o.symbol] for o in orders if o.side == "SELL")
+                     - sum(o.quantity * prices[o.symbol] for o in orders if o.side == "BUY"))
+        assert cash_left >= 0
+        assert cash_left / total < Decimal("0.01")
+
+
 class TestHaltedSymbols:
     @pytest.fixture
     def db(self, tmp_path, monkeypatch):

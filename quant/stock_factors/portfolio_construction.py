@@ -342,8 +342,13 @@ def calculate_diff(target_weights: dict[str, Decimal],
     kospi_df = fdr.StockListing('KOSPI')
     name_dict = dict(zip(kospi_df['Code'], kospi_df['Name']))
 
-    # Minimum order value threshold (can be configured)
-    MIN_ORDER_KRW = Decimal("50000")
+    # Minimum order value, separate per side. A PBR position is only ~220k,
+    # so a single 50k floor skipped every small top-up after a drawdown and
+    # left ~7% of the account idle in cash (2026-09-14). Buys go down to 10k
+    # (Toss Prime: no commission under 100M, so no per-order fee floor);
+    # sells keep 50k so small trims don't churn sell tax.
+    MIN_BUY_ORDER_KRW = Decimal("10000")
+    MIN_SELL_ORDER_KRW = Decimal("50000")
 
     resolved_prices: dict[str, Decimal] = {}
     held_qty: dict[str, int] = {}
@@ -384,7 +389,8 @@ def calculate_diff(target_weights: dict[str, Decimal],
             limit_price=limit,
         )
 
-        if order.notional < MIN_ORDER_KRW:
+        min_order = MIN_BUY_ORDER_KRW if delta > 0 else MIN_SELL_ORDER_KRW
+        if order.notional < min_order:
             continue
 
         if delta > 0:
