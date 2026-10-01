@@ -54,6 +54,9 @@ def check_account_health(conn, account_name: str, snap: storage.AccountSnapshot,
         if drift:
             problems.append(f"tranche books disagree with the account: {drift}")
 
+    if not accounts.ACCOUNTS.get(account_name, {}).get("cash_check", True):
+        return problems
+
     unexplained = storage.unexplained_cash_change(conn, account_name, trade_date)
     if abs(unexplained) > CASH_ALERT_THRESHOLD:
         problems.append(

@@ -103,3 +103,19 @@ class TestCheckAccountHealth:
                 conn, "test-acc", snapshot(positions=[], cash="1500000"),
                 "2026-08-24")
         assert problems == []
+
+    def test_overseas_account_skips_the_cash_check(self, tmp_path):
+        # kis-main-overseas snapshots USD cash converted to KRW, so the
+        # exchange rate alone moves it every day (+30,047 / -6,010 KRW on
+        # 2026-09-29/30) - not something a deposit/fill check can explain.
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_portfolio(conn, "2026-08-21", "kis-main-overseas",
+                                   "KRW", Decimal("500000"), Decimal("500000"), [])
+            storage.save_portfolio(conn, "2026-08-24", "kis-main-overseas",
+                                   "KRW", Decimal("530047"), Decimal("530047"), [])
+            problems = check_account_health(
+                conn, "kis-main-overseas",
+                snapshot(positions=[], cash="530047"), "2026-08-24")
+        assert problems == []

@@ -40,7 +40,11 @@ ACCOUNTS = {
                           "snapshot": kis_client.snapshot_overseas,
                           "price": kis_client.batch_price, "broker": None,
                           "buying_power": None,
-                          "strategy": False, "tradable": False},
+                          "strategy": False, "tradable": False,
+                          # Cash is USD valued in KRW: the exchange rate
+                          # moves it daily, so daily.py's unexplained-cash
+                          # check would alert on every rate change.
+                          "cash_check": False},
     "kis-isa": {"client": lambda: KisClient("isa"), "snapshot": kis_client.snapshot,
                 "price": kis_client.batch_price, "broker": kis_client,
                 "buying_power": kis_client.available_cash,
@@ -59,6 +63,10 @@ def resolve(account: str) -> dict:
     orders for. toss-bot is "strategy": False (daily.py doesn't need to
     record the signal twice) but "tradable": True (it's the sandbox
     account for ad hoc live trials) - the two are not interchangeable.
+
+    Optional "cash_check": False turns off daily.py's unexplained-cash
+    alert for an account whose cash moves on its own (kis-main-overseas:
+    FX). Absent means the check runs.
     """
     try:
         return ACCOUNTS[account]
