@@ -160,10 +160,13 @@ def main() -> int:
     log.info("\n%s", strategy.format_signal(signal))
 
     book = books.get(which, {})
-    prices = cfg["price"](client, set(signal.weights) | set(book))
+    # Every sleeve's holdings, not just this one's: the target is 1/N of
+    # the whole account (see tranche.sleeve_budget).
+    prices = cfg["price"](client, set(signal.weights)
+                          | set().union(*books.values()))
 
     if not prices:
-        # Only possible when this sleeve holds nothing and the signal
+        # Only possible when the account holds nothing and the signal
         # itself wants no positions - nothing to price, nothing to trade.
         log.info("tranche %d: no holdings and no signal weights, nothing "
                  "to do", which)
@@ -176,11 +179,9 @@ def main() -> int:
     # it here too keeps the previewed plan and the executed plan the same.
     cash = cfg["buying_power"](client, prices)
 
-    value = tranche.tranche_value(book, prices, cash)
-    targets = tranche.target_quantities(signal.weights, value, prices)
-
-    log.info("tranche %d: %s KRW (holdings + %s cash share)",
-             which, f"{value:,.0f}", f"{tranche.cash_share(cash):,.0f}")
+    budget = tranche.sleeve_budget(books, which, prices, cash)
+    targets = tranche.target_quantities(signal.weights, budget.value, prices)
+    log_budget(which, budget, tranche.sleeve_equity(book, prices))
     # buying_power and the snapshot's settled cash are read from different
     # KIS fields (see buying_power's docstring) and are not cross-checked
     # automatically - a gap here is expected for a day or two after a sell
@@ -213,10 +214,15 @@ def main() -> int:
         # Recompute against the cash the sells actually raised, via each
         # broker's own buying-power/order-possible-cash figure rather than
         # a settled-cash balance that hasn't caught up with today's sells.
-        cash = cfg["buying_power"](client, prices)
+        # The sells moved value from this sleeve into the pool, not out of
+        # the account, so the target stays ~1/N of the same total.
+        buying_power = cfg["buying_power"](client, prices)
         book_after = apply_fills(book, sells, results)
-        value = tranche.tranche_value(book_after, prices, cash)
-        targets = tranche.target_quantities(signal.weights, value, prices)
+        budget = tranche.sleeve_budget(books | {which: book_after}, which,
+                                       prices, buying_power)
+        targets = tranche.target_quantities(signal.weights, budget.value,
+                                            prices)
+        log_budget(which, budget, tranche.sleeve_equity(book_after, prices))
         buys = [o for o in plan_for_tranche(book_after, targets, prices)
                 if o.side == "BUY"]
 
@@ -235,6 +241,20 @@ def main() -> int:
 
     log.info("tranche %d now holds: %s", which, final_book)
     return 0
+
+
+def log_budget(which: int, budget: tranche.Budget, equity: Decimal) -> None:
+    log.info("tranche %d: target %s KRW (1/%d of the account), holds %s KRW",
+             which, f"{budget.target:,.0f}", len(config.TRANCHES),
+             f"{equity:,.0f}")
+    if budget.deposit_needed > 0:
+        # The account should keep growing - say how much would let this
+        # sleeve reach its share instead of quietly underfilling it.
+        log.warning("tranche %d: holdings + all cash reach only %s KRW of "
+                    "the %s KRW target - deposit about %s KRW to reach it; "
+                    "sizing to what is available for now",
+                    which, f"{budget.value:,.0f}", f"{budget.target:,.0f}",
+                    f"{budget.deposit_needed:,.0f}")
 
 
 def apply_fills(book: dict[str, int], orders: list[rebalance.Order],

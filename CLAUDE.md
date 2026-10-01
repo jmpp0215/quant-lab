@@ -82,7 +82,10 @@ Changing strategy behavior almost always means editing constants here, not logic
 on different trading days of the month, tracked in `tranche_holdings`. A sleeve missing its
 scheduled day catches up at the next opportunity rather than skipping the month
 (`tranche.due_today`) — except before `config.TRANCHE_START_MONTH`, when sleeves had no
-schedule yet to miss. `tranche.reconcile` compares the summed sleeve books against actual
+schedule yet to miss. A rebalancing sleeve sizes to 1/N of the whole account (all sleeves' holdings + the
+cash pool, which belongs to no sleeve — `tranche.sleeve_budget`, shared by
+`rebalance_run.py` and `backtest.run_tranched`); if holdings + all cash can't reach it,
+the run logs the deposit needed and buys what it can. `tranche.reconcile` compares the summed sleeve books against actual
 account holdings before every trade; a non-empty drift means something moved outside the
 strategy (manual trade, dividend paid in shares, unrecorded fill) and the run must stop
 rather than trade through it.

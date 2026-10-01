@@ -63,10 +63,92 @@ class TestReconcile:
         assert tranche.reconcile(books, {}) == {"102110": -26}
 
 
-class TestCashShare:
-    def test_divides_the_pool_by_tranche_count(self):
-        share = tranche.cash_share(Decimal("3000000"))
-        assert share * len(config.TRANCHES) == Decimal("3000000")
+class TestSleeveBudget:
+    """A rebalancing sleeve sizes to 1/N of the whole account - every
+    sleeve's holdings plus the cash pool - capped at what it can reach
+    (its own holdings plus all the cash), with the deposit that would
+    close any gap reported. N = 3 throughout (config.TRANCHES)."""
+
+    PRICES = {"102110": Decimal("100000"), "091170": Decimal("10000")}
+
+    def test_equal_sleeves_target_a_third_of_the_account(self):
+        books = {0: {"102110": 10}, 5: {"102110": 10}, 10: {"102110": 10}}
+        b = tranche.sleeve_budget(books, 0, self.PRICES, Decimal("600000"))
+        # 3,000,000 equity + 600,000 cash = 3,600,000; a third each.
+        assert b.target == Decimal("1200000")
+        assert b.value == b.target
+        assert b.deposit_needed == 0
+
+    def test_an_overweight_sleeve_targets_below_its_holdings(self):
+        # 20 x 100,000 = 2,000,000 in sleeve 0 of a 3,000,000 account:
+        # it sells down to 1,000,000 and the proceeds go to the pool.
+        books = {0: {"102110": 20}, 5: {"102110": 5}, 10: {"102110": 5}}
+        b = tranche.sleeve_budget(books, 0, self.PRICES, Decimal("0"))
+        assert b.target == Decimal("1000000")
+        assert b.value == b.target
+
+    def test_an_empty_sleeve_in_a_cash_heavy_account_gets_a_full_third(self):
+        # The old own-holdings + cash/N rule gave this sleeve only
+        # 1,500,000 / 3 = 500,000 (the tranche-5 underfill of 2026-09).
+        books = {0: {"102110": 15}, 5: {}, 10: {}}
+        b = tranche.sleeve_budget(books, 5, self.PRICES, Decimal("1500000"))
+        assert b.target == Decimal("1000000")
+        assert b.value == b.target
+        assert b.deposit_needed == 0
+
+    def test_a_sleeve_missing_from_the_books_counts_as_empty(self):
+        books = {0: {"102110": 15}}
+        b = tranche.sleeve_budget(books, 5, self.PRICES, Decimal("1500000"))
+        assert b.target == Decimal("1000000")
+
+    def test_short_of_cash_sizes_to_what_it_can_reach(self):
+        # Sleeves 5/10 hold 2,000,000 each, sleeve 0 holds 200,000, pool
+        # 100,000: account 4,300,000, target 1,433,333; reachable only
+        # 300,000.
+        books = {0: {"091170": 20}, 5: {"102110": 20}, 10: {"102110": 20}}
+        b = tranche.sleeve_budget(books, 0, self.PRICES, Decimal("100000"))
+        assert b.value == Decimal("300000")
+        assert b.value < b.target
+        # The gap is 1,133,333; a deposit also lifts the target by 1/3 of
+        # itself, so it takes 1.5x the gap.
+        assert b.deposit_needed == (b.target - b.value) * 3 / 2
+
+    def test_depositing_the_reported_amount_reaches_the_target(self):
+        books = {0: {"091170": 20}, 5: {"102110": 20}, 10: {"102110": 20}}
+        before = tranche.sleeve_budget(books, 0, self.PRICES,
+                                       Decimal("100000"))
+        after = tranche.sleeve_budget(books, 0, self.PRICES,
+                                      Decimal("100000") + before.deposit_needed)
+        # Within Decimal rounding of the 1/3 divisions.
+        assert abs(after.target - after.value) < Decimal("0.01")
+        assert after.deposit_needed < Decimal("0.01")
+
+    def test_symbols_without_a_price_are_left_out(self):
+        books = {0: {"102110": 10, "999999": 50}, 5: {}, 10: {}}
+        b = tranche.sleeve_budget(books, 0, self.PRICES, Decimal("0"))
+        assert b.target == Decimal("1000000") / 3
+
+    def test_explicit_n_overrides_the_config_tranche_count(self):
+        books = {0: {"102110": 10}}
+        b = tranche.sleeve_budget(books, 0, self.PRICES, Decimal("0"), n=1)
+        assert b.target == Decimal("1000000")
+        assert b.deposit_needed == 0
+
+    def test_kis_isa_tranche_5_after_the_2026_10_01_run(self):
+        # Books and buying power as of 2026-10-01 12:50 after tranche 0.
+        # Old rule: tranche 5 = 3,709,805 + 4,493,388/3 = 5,207,601. New:
+        # a third of the 16,783,698 account.
+        prices = {"102110": Decimal("110725"), "133690": Decimal("184475"),
+                  "091170": Decimal("15725"), "379790": Decimal("16960")}
+        books = {
+            0: {"091170": 108, "102110": 15, "379790": 100},
+            5: {"091170": 75, "102110": 11, "133690": 5, "379790": 23},
+            10: {"091170": 75, "102110": 11, "133690": 4, "379790": 23},
+        }
+        b = tranche.sleeve_budget(books, 5, prices, Decimal("4493388"))
+        assert b.target == Decimal("16783698") / 3
+        assert b.value == b.target
+        assert b.deposit_needed == 0
 
 
 

@@ -3,29 +3,26 @@
 Capital is split into equally sized sleeves that rebalance on different
 trading days of the month. Holdings are tracked per sleeve; cash is not,
 since attributing every deposit to a sleeve costs more complexity than
-the precision is worth. Each sleeve treats 1/N of the account balance as
-its own.
+the precision is worth. Cash is a pool owned by no sleeve.
 
-**Sharp edge - the "1/N of the account" identity only holds once every
-sleeve already carries its share of the equity.** `tranche_value` sums
-*this* sleeve's own holdings plus 1/N of the cash pool; that equals 1/N of
-the account only when `own_equity == total_equity / N`. Seed all sleeves at
-once - `tranche_init.py`, or `backtest.run_tranched`'s up-front split - so
-that precondition is true from the first rebalance.
+A rebalancing sleeve sizes itself to 1/N of the whole account (every
+sleeve's holdings plus the pool - `sleeve_budget`), buying from or selling
+into the pool, so each rebalance pulls it back to an equal share. That is
+what the staggering is for: spreading timing luck needs equal sleeves, not
+exact ones.
 
-Introducing sleeves one at a time from a cash-heavy account breaks it, with
-a self-reinforcing bias: an empty sleeve sizes to `cash / N`, far below
-`account / N` while the other sleeves hold the equity; as those sleeves
-buy, the cash pool shrinks and every not-yet-seeded sleeve's target shrinks
-with it, so late sleeves never reach 1/N and the account stays
-under-deployed. Seen live on kis-isa in 2026-09 (tranche 0 seeded 09-01,
-tranche 5 run 09-10 from an empty book at `cash/3`, ~33% under target);
-fixed by re-running `tranche_init.py --force` to split the current mixed
-holdings across all sleeves. Re-derive this before starting a new account
-or adding/removing a tranche - see RUNBOOK.md.
+This replaced "own holdings + 1/N of the pool" (until 2026-10-01). That
+rule moved value between sleeves on every trade - a seller handed
+(N-1)/N of its proceeds to the others, a buyer took (N-1)/N of its cost
+from them - so sleeve sizes drifted apart (6.55M / 5.21M / 5.02M on
+kis-isa after tranche 0's 2026-10-01 run), and the pool only drained by
+1/N per rebalance, leaving ~1/3 of kis-isa idle for weeks. It also needed
+every sleeve seeded at once (`tranche_init.py`) to start correctly; the
+1/N-of-account rule does not.
 """
 
 import logging
+from dataclasses import dataclass
 from decimal import Decimal
 
 from quant import config
@@ -85,10 +82,6 @@ def reconcile(holdings: dict[int, dict[str, int]],
     return drift
 
 
-def cash_share(total_cash: Decimal) -> Decimal:
-    """One tranche's claim on the shared cash pool."""
-    return total_cash / len(config.TRANCHES)
-
 def trading_day_index(candles: list[dict], today: str) -> int | None:
     """Zero-based position of `today` among this month's trading days.
 
@@ -134,20 +127,44 @@ def target_quantities(weights: dict[str, Decimal], value: Decimal,
     }
 
 
-def tranche_value(holdings: dict[str, int], prices: dict[str, Decimal],
-                  cash: Decimal) -> Decimal:
-    """Market value of one sleeve: its own holdings plus 1/N of the cash pool.
-
-    This equals 1/N of the whole account only when every sleeve already
-    holds ~1/N of the equity (see the module docstring's sharp edge). An
-    empty or underweight sleeve gets `cash / N`, not `account / N`.
-    """
-    equity = sum(
-        Decimal(quantity) * prices[symbol]
-        for symbol, quantity in holdings.items()
-        if symbol in prices
+def sleeve_equity(holdings: dict[str, int], prices: dict[str, Decimal]) -> Decimal:
+    """Market value of one sleeve's own holdings. Cash belongs to no sleeve."""
+    return sum(
+        (Decimal(quantity) * prices[symbol]
+         for symbol, quantity in holdings.items()
+         if symbol in prices),
+        Decimal("0"),
     )
-    return equity + cash_share(cash)
+
+
+@dataclass(frozen=True)
+class Budget:
+    target: Decimal          # 1/N of the whole account
+    value: Decimal           # what the sleeve sizes to: target, or all it can reach
+    deposit_needed: Decimal  # deposit that would let it reach target; 0 if it can
+
+
+def sleeve_budget(books: dict[int, dict[str, int]], which: int,
+                  prices: dict[str, Decimal], cash: Decimal,
+                  n: int | None = None) -> Budget:
+    """How much sleeve `which` should hold after rebalancing: 1/N of the
+    account (every sleeve's holdings plus the cash pool).
+
+    The most it can reach is its own holdings plus all the cash. When that
+    falls short, it sizes to what it can reach and reports the deposit
+    that would close the gap - which is gap * N / (N - 1), not the gap,
+    because a deposit also raises the account and so the 1/N target.
+    """
+    n = n if n is not None else len(config.TRANCHES)
+    account = sum((sleeve_equity(b, prices) for b in books.values()),
+                  Decimal("0")) + cash
+    target = account / n
+    reachable = sleeve_equity(books.get(which, {}), prices) + cash
+    if target <= reachable:
+        return Budget(target=target, value=target, deposit_needed=Decimal("0"))
+    return Budget(target=target, value=reachable,
+                  deposit_needed=(target - reachable) * n / (n - 1))
+
 
 def next_due(candles: list[dict], today: str,
              done_this_month: set[int]) -> tuple[str, int] | None:

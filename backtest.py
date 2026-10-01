@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from quant import config, strategy
+from quant import config, strategy, tranche
 
 log = logging.getLogger(__name__)
 
@@ -110,8 +110,10 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
     """Replay the strategy with capital split across staggered sleeves.
 
     Each sleeve rebalances on its own trading day of the month and holds
-    its positions untouched in between. Cash is pooled: a sleeve treats
-    1/N of the balance as its own, matching how the live system works.
+    its positions untouched in between. Cash is pooled and owned by no
+    sleeve: a rebalancing sleeve sizes to 1/N of the whole account, capped
+    at its own holdings plus the pool - tranche.sleeve_budget, the same
+    rule the live rebalance_run.py uses.
 
     dividend_events_by_symbol: still required by the signature but unused.
     Candles are adjusted prices, so distributions are already in the price
@@ -189,9 +191,8 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
                 sliced, list(weights), scheme, scores)
 
         book = books[which]
-        equity = sum(units * prices[sym] for sym, units in book.items()
-                     if sym in prices)
-        sleeve_value = equity + cash / n
+        sleeve_value = tranche.sleeve_budget(books, which, prices, cash,
+                                             n=n).value
 
         target = {
             sym: (sleeve_value * weight) / prices[sym]

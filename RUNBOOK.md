@@ -185,27 +185,27 @@ fills before trusting it on `kis-isa`. Invoke every script with
 
 ## Starting a new account, or adding/removing a tranche
 
-`tranche_value` sizes a sleeve as *its own holdings* + 1/N of the cash
-pool. That only equals 1/N of the whole account when every sleeve already
-holds roughly 1/N of the equity. **Seed all sleeves in one shot** so that
-is true from the first rebalance:
+A rebalancing sleeve sizes itself to **1/N of the whole account** (every
+sleeve's holdings plus the cash pool - `tranche.sleeve_budget`), so a new
+account or a new tranche fills in correctly on its own scheduled days, even
+from cash. Seeding all sleeves at once with
 
     python tranche_init.py --account <acct> [--force]
 
-Do **not** let sleeves fill in one at a time on their scheduled days from a
-cash-heavy account. An empty sleeve sizes itself to `cash / N`, which is
-far below `account / N` while the other sleeves hold the equity; as those
-sleeves buy, the remaining cash shrinks and every not-yet-seeded sleeve's
-target shrinks with it. Late sleeves never reach 1/N and the account stays
-under-deployed - a self-reinforcing bias, not a one-off.
+is still the way to split *existing* holdings across sleeves without
+trading, but it is no longer required to avoid underfilling.
 
-Seen live on `kis-isa` (2026-09): tranche 0 was seeded 09-01, then tranche
-5 ran 09-10 from an empty book and sized to `cash/3` - about a third under
-its intended share; tranche 10 would have compounded it. Fixed 2026-09-10
-by re-running `tranche_init.py --account kis-isa --force` to split the
-then-current holdings (188/28/7/105 across 은행/코스피200/나스닥100/유로스탁스)
-evenly across tranches 0/5/10, then confirming `tranche.reconcile` came
-back empty against the live account.
+History: until 2026-10-01 the rule was "own holdings + 1/N of the cash
+pool". From a cash-heavy account that left late sleeves permanently short
+(tranche 5 on `kis-isa`, 2026-09-10, sized to `cash/3` - about a third
+under; fixed then by `tranche_init.py --force`), moved value between sleeves
+on every trade, and left ~1/3 of `kis-isa` idle in cash for weeks. See
+`quant/tranche.py`'s docstring.
+
+If a sleeve's own holdings plus *all* the cash cannot reach its 1/N target,
+`rebalance_run.py` logs a warning with the deposit that would close the gap
+and sizes to what is available. The deposit is 1.5x the gap at N=3, since a
+deposit also raises the target.
 
 After any `tranche_init.py` run, verify the books tie out:
 
@@ -215,9 +215,8 @@ After any `tranche_init.py` run, verify the books tie out:
       books=storage.load_all_tranche_holdings(storage.connect(),'<acct>'); \
       print(tranche.reconcile(books, actual) or 'CLEAN')"
 
-`backtest.run_tranched` already seeds every sleeve up front (its `initial /
-n` split), so a backtest will not show this drift even though live can -
-keep that in mind when comparing the two.
+`backtest.run_tranched` sizes sleeves with the same `tranche.sleeve_budget`
+rule; it also seeds every sleeve up front (its `initial / n` split).
 
 ## Notes
 
