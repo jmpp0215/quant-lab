@@ -8,8 +8,10 @@ move real money, so the arithmetic is covered case by case here.
 
 from decimal import Decimal
 
+import pytest
+
 from quant import tranche
-from rebalance_run import plan_for_tranche
+from rebalance_run import confirm, plan_for_tranche
 
 # Real universe codes so config.is_etf() / config.UNIVERSE name lookups
 # behave as they do in production. All prices are multiples of the 5-won
@@ -142,3 +144,18 @@ class TestPostSellResize:
         cash = self.CASH + 5 * self.PRICES[B]
         buys = self._buys(after_books, cash)
         assert sum(q * self.PRICES[s] for s, q in buys.items()) <= cash
+
+
+class TestConfirm:
+    """The last gate before real orders: [y/n], same as run_pbr_live.py.
+    Only an explicit y proceeds."""
+
+    @pytest.mark.parametrize("answer", ["y", "Y", " y "])
+    def test_y_proceeds(self, monkeypatch, answer):
+        monkeypatch.setattr("builtins.input", lambda _: answer)
+        assert confirm("Rebalance tranche 0?")
+
+    @pytest.mark.parametrize("answer", ["n", "", "yes", "no", "x"])
+    def test_anything_else_aborts(self, monkeypatch, answer):
+        monkeypatch.setattr("builtins.input", lambda _: answer)
+        assert not confirm("Rebalance tranche 0?")

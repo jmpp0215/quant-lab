@@ -38,7 +38,7 @@ log = logging.getLogger("rebalance")
 
 
 def confirm(prompt: str) -> bool:
-    return input(f"\n{prompt} [yes/no]: ").strip().lower() == "yes"
+    return input(f"\n{prompt} [y/n]: ").strip().lower() == "y"
 
 
 def plan_for_tranche(book: dict[str, int], targets: dict[str, int],

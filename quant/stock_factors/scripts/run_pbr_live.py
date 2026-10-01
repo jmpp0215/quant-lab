@@ -270,8 +270,8 @@ def main():
         print("!"*50)
         
         if not args.auto:
-            ans = input("Proceed with live execution? (yes/no): ")
-            if ans.lower() != 'yes':
+            ans = input("Proceed with live execution? [y/n]: ")
+            if ans.strip().lower() != 'y':
                 print("Aborted by user.")
                 return 0
         else:
