@@ -188,6 +188,81 @@ class TestExecuteRetry:
         assert b.cancelled == []
 
 
+class ScriptedExecutionBroker(FakeBroker):
+    """FakeBroker whose execution_for returns a scripted block per order,
+    for orders that fill across several attempts."""
+
+    def __init__(self, executions: dict[str, dict], **kwargs):
+        super().__init__(**kwargs)
+        self.executions = executions
+
+    def execution_for(self, client, handle):
+        return self.executions.get(handle.order_id, {})
+
+
+class TestExecutionAcrossAttempts:
+    """results[symbol]["execution"] is what rebalance_run.record() stores
+    as filled_qty / avg_fill_price / commission / tax, and what
+    storage.unexplained_cash_change nets out of the day's cash move. It
+    must cover every attempt, not just the last one: on 2026-10-01 a
+    379790 buy filled 74 + 2 and was recorded as 2 shares @ 16,957."""
+
+    def _run(self, executions, qty=76, fill_on_attempt=2):
+        b = ScriptedExecutionBroker(executions, fill_on_attempt=fill_on_attempt)
+        results = executor.execute(b, FakeClient(), [order("BUY", qty)],
+                                   {"102110": Decimal("109615")})
+        return results["102110"]
+
+    def test_combines_a_fill_split_across_attempts(self):
+        r = self._run({
+            "order-1": {"filledQuantity": "74", "averageFilledPrice": "16949"},
+            "order-2": {"filledQuantity": "2", "averageFilledPrice": "16957"},
+        })
+        assert r["filled"]
+        assert r["filled_quantity"] == 76
+        ex = r["execution"]
+        assert int(ex["filledQuantity"]) == 76
+        # (74 x 16,949 + 2 x 16,957) / 76
+        expected = (74 * Decimal("16949") + 2 * Decimal("16957")) / 76
+        assert abs(Decimal(ex["averageFilledPrice"]) - expected) < Decimal("0.001")
+
+    def test_combined_notional_matches_what_was_paid(self):
+        r = self._run({
+            "order-1": {"filledQuantity": "74", "averageFilledPrice": "16949"},
+            "order-2": {"filledQuantity": "2", "averageFilledPrice": "16957"},
+        })
+        ex = r["execution"]
+        notional = int(ex["filledQuantity"]) * Decimal(ex["averageFilledPrice"])
+        paid = 74 * Decimal("16949") + 2 * Decimal("16957")
+        assert abs(notional - paid) < Decimal("1")
+
+    def test_sums_fees_across_attempts(self):
+        r = self._run({
+            "order-1": {"filledQuantity": "74", "averageFilledPrice": "16949",
+                        "commission": "188", "tax": "0"},
+            "order-2": {"filledQuantity": "2", "averageFilledPrice": "16957",
+                        "commission": "5", "tax": "0"},
+        })
+        assert Decimal(r["execution"]["commission"]) == 193
+        assert Decimal(r["execution"]["tax"]) == 0
+
+    def test_no_fees_reported_stays_no_fees(self):
+        # KIS returns no per-order fees; a missing figure must not turn
+        # into a recorded 0 that looks like a real number.
+        r = self._run({
+            "order-1": {"filledQuantity": "74", "averageFilledPrice": "16949"},
+            "order-2": {"filledQuantity": "2", "averageFilledPrice": "16957"},
+        })
+        assert r["execution"].get("commission") is None
+        assert r["execution"].get("tax") is None
+
+    def test_a_single_attempt_fill_is_passed_through_unchanged(self):
+        block = {"filledQuantity": "10", "averageFilledPrice": "109620",
+                 "commission": "16"}
+        r = self._run({"order-1": block}, qty=10, fill_on_attempt=1)
+        assert r["execution"] == block
+
+
 class TestCancelOpenOrders:
     def test_cancels_everything_resting(self):
         b, c = FakeBroker(fill_on_attempt=None), FakeClient()

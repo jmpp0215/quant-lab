@@ -166,6 +166,35 @@ def fetch_execution(broker, client, handle: OrderHandle) -> dict:
         return {}
 
 
+def combine_executions(fills: list[tuple[int, dict]]) -> dict:
+    """One execution block for an order that filled across attempts:
+    total shares, share-weighted average price, summed fees.
+
+    rebalance_run.record() stores this block as the order's fill, and
+    storage.unexplained_cash_change nets it out of the day's cash move, so
+    keeping only the last attempt's block under-records the trade (2026-10-01:
+    379790 filled 74 + 2, recorded as 2 @ 16,957). A fee no attempt
+    reported stays absent rather than becoming a recorded 0.
+    """
+    shares = sum(got for got, _ in fills)
+    priced = [(got, Decimal(ex["averageFilledPrice"]))
+              for got, ex in fills if ex.get("averageFilledPrice")]
+    combined = dict(fills[-1][1])
+    combined["filledQuantity"] = str(shares)
+    if priced:
+        weight = sum(got for got, _ in priced)
+        avg = sum(got * price for got, price in priced) / weight
+        combined["averageFilledPrice"] = str(avg.quantize(Decimal("0.0001")))
+    for fee in ("commission", "tax"):
+        amounts = [Decimal(ex[fee]) for _, ex in fills
+                   if ex.get(fee) is not None]
+        if amounts:
+            combined[fee] = str(sum(amounts))
+        else:
+            combined.pop(fee, None)
+    return combined
+
+
 def execute(broker, client, orders: list[Order],
             prices: dict[str, Decimal]) -> dict[str, dict]:
     """Send orders in list order, waiting for each fill before the next.
@@ -182,6 +211,7 @@ def execute(broker, client, orders: list[Order],
         remaining = order.quantity
         total_filled = 0
         last_execution: dict = {}
+        fills: list[tuple[int, dict]] = []   # (shares, execution) per attempt
         handle: OrderHandle | None = None
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -210,6 +240,7 @@ def execute(broker, client, orders: list[Order],
                 total_filled += got
                 remaining -= got
                 last_execution = execution
+                fills.append((got, execution))
                 if remaining > 0:
                     log.info("%s: %d of %d filled, retrying the rest",
                              order.symbol, total_filled, order.quantity)
@@ -224,6 +255,8 @@ def execute(broker, client, orders: list[Order],
             remaining -= got
             if execution:
                 last_execution = execution
+            if got:
+                fills.append((got, execution))
 
             log.info("%s: %d of %d filled after attempt %d, %d remaining",
                      order.symbol, total_filled, order.quantity, attempt,
@@ -232,7 +265,8 @@ def execute(broker, client, orders: list[Order],
         results[order.symbol] = {
             "filled": remaining <= 0,
             "order_id": handle.order_id if handle else None,
-            "execution": last_execution,
+            "execution": combine_executions(fills) if len(fills) > 1
+                         else last_execution,
             "filled_quantity": total_filled,
         }
 
