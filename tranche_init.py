@@ -59,7 +59,7 @@ def main() -> int:
         log.error("split does not account for every share: %s", drift)
         return 1
 
-    if input("\nWrite this split? [yes/no]: ").strip().lower() != "yes":
+    if input("\nWrite this split? [y/n]: ").strip().lower() != "y":
         log.info("aborted")
         return 0
 

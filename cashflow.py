@@ -40,7 +40,7 @@ def main() -> int:
         print("\na matching entry already exists:")
         for row in existing:
             print(f"  id {row['id']}: {row['note'] or ''}")
-        if input("record anyway? [yes/no]: ").strip().lower() != "yes":
+        if input("record anyway? [y/n]: ").strip().lower() != "y":
             print("aborted")
             return 0
 
