@@ -96,6 +96,7 @@ class Env:
                "QL_LAUNCHCTL": str(self.tmp / "launchctl"), "FAKE_LC": str(self.lc),
                "QL_NOTIFY": str(self.tmp / "notify"), "QL_LABELS": " ".join(LABELS),
                "QL_TODAY": today, "QL_NOW": now, **extra}
+        env = {k: v for k, v in env.items() if v is not None}  # None = leave unset
         r = subprocess.run(["/bin/zsh", str(SCRIPT)], env=env, capture_output=True, text=True,
                            timeout=60)
         return r.returncode
@@ -261,3 +262,22 @@ class TestAlerting:
         env.run(today="2026-10-07")
         env.run(today="2026-10-08", now="1200")
         assert env.notes_text().count("last exit code -9") == 2
+
+
+class TestDefaultLabels:
+    def test_pbrcheck_is_checked_by_default(self, env):
+        # Reloaded 2026-10-06 after being held (RESEARCH_LOG section 27); it
+        # auto-runs run_pbr_live.py on a due day, so it must be watched.
+        for label in ["checkdue", "amzncheck"]:
+            env.plist(label, env.python_ok)
+            env.job(label)
+        assert env.run(QL_LABELS=None) == 1
+        notes = env.notes_text()
+        assert "pbrcheck: plist missing" in notes
+        assert "checkdue" not in notes and "amzncheck" not in notes
+
+    def test_all_default_jobs_healthy(self, env):
+        for label in ["checkdue", "amzncheck", "pbrcheck"]:
+            env.plist(label, env.python_ok)
+            env.job(label)
+        assert env.run(QL_LABELS=None) == 0
