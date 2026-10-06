@@ -24,6 +24,9 @@ def init_db():
 
 
 def main():
+    # FinanceDataReader passes no timeout - see quant/common/http_timeout.py.
+    from quant.common import http_timeout
+    http_timeout.install()
     conn = init_db()
     cursor = conn.cursor()
 

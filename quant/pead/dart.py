@@ -64,7 +64,7 @@ def _get_corp_code(symbol: str) -> str | None:
         DART_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         log.info("Downloading and caching DART corpCode.xml...")
         url = f"{OPENDART_BASE_URL}/corpCode.xml"
-        res = requests.get(url, params={"crtfc_key": _get_api_key()})
+        res = requests.get(url, params={"crtfc_key": _get_api_key()}, timeout=30)
         res.raise_for_status()
         
         with zipfile.ZipFile(io.BytesIO(res.content)) as z:

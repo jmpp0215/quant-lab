@@ -15,6 +15,9 @@ from quant.stock_factors.value import prepare_pbr_signals
 DB_PATH = Path(__file__).parent.parent.parent.parent / "data" / "quant.db"
 
 def main():
+    # FinanceDataReader passes no timeout - see quant/common/http_timeout.py.
+    from quant.common import http_timeout
+    http_timeout.install()
     print("Loading data...")
     conn = sqlite3.connect(DB_PATH)
     

@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from quant import accounts, rebalance, executor
+from quant.common import http_timeout
 from quant.stock_factors.portfolio_construction import (
     PBRConfig,
     construct_target_portfolio,
@@ -91,6 +92,8 @@ def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
 
 
 def main():
+    # FinanceDataReader passes no timeout - see quant/common/http_timeout.py.
+    http_timeout.install()
     account, remaining_argv = accounts.extract_account(sys.argv, default="toss-bot")
     parser = argparse.ArgumentParser(description="Run PBR live execution")
     parser.add_argument("--auto", action="store_true", help="Skip interactive prompts")

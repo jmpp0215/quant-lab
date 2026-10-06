@@ -13,6 +13,9 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("backfill_dart")
 
 def main():
+    # FinanceDataReader passes no timeout - see quant/common/http_timeout.py.
+    from quant.common import http_timeout
+    http_timeout.install()
     # KOSPI 전체 종목 가져오기 (가장 최근 영업일 기준)
     
     # KRX 봇 차단 이슈로 인해 pykrx 대신 FinanceDataReader 사용
