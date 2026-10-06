@@ -206,3 +206,30 @@ class TestRequestNewToken:
 
         with pytest.raises(KisApiError):
             client._request_new_token()
+
+
+class StubHoldingsClient:
+    account = "isa"
+
+    def __init__(self, output2):
+        self._output2 = output2
+
+    def holdings(self):
+        return {"output1": [], "output2": [self._output2]}
+
+
+class TestSnapshotCash:
+    def test_cash_is_d2_settled_not_same_day_deposit(self):
+        # The day of a net buy: dnca_tot_amt (D+0) hasn't moved yet, while
+        # prvs_rcdl_excc_amt (D+2) already reflects the fills. Recording
+        # D+0 made daily.py's cash check alert on the trade date and again,
+        # with the opposite sign, on the settlement date.
+        from quant import kis_client
+        snap = kis_client.snapshot(StubHoldingsClient({
+            "dnca_tot_amt": "5750194",
+            "nxdy_excc_amt": "5750194",
+            "prvs_rcdl_excc_amt": "4532999",
+            "tot_evlu_amt": "16857838",
+        }))
+        assert str(snap.cash) == "4532999"
+        assert str(snap.total) == "16857838"

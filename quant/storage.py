@@ -367,6 +367,10 @@ def unexplained_cash_change(conn: sqlite3.Connection, account: str,
 
     today = Decimal(rows[0]["cash"])
     previous = Decimal(rows[1]["cash"])
+    # Everything since the previous snapshot, not just trade_date's: a
+    # snapshot can be missing (2026-10-02's daily.py died on a DNS error),
+    # and fills/deposits on the missed day still moved the cash being diffed.
+    since, until = rows[1]["trade_date"], rows[0]["trade_date"]
 
     # filled_qty > 0 rather than filled = 1: a partial fill (some quantity
     # got shares before MAX_ATTEMPTS ran out) still moved real cash and
@@ -374,8 +378,9 @@ def unexplained_cash_change(conn: sqlite3.Connection, account: str,
     # filled = 0.
     fills = conn.execute(
         "SELECT side, filled_qty, avg_fill_price, commission, tax "
-        "FROM orders WHERE account = ? AND executed_date = ? AND filled_qty > 0",
-        (account, trade_date),
+        "FROM orders WHERE account = ? AND executed_date > ? "
+        "AND executed_date <= ? AND filled_qty > 0",
+        (account, since, until),
     ).fetchall()
 
     traded = Decimal("0")
@@ -390,9 +395,9 @@ def unexplained_cash_change(conn: sqlite3.Connection, account: str,
     # Summed in Python, not SQL SUM(CAST(... AS REAL)): amount is stored as
     # text specifically so Decimal values never round-trip through a float.
     recorded_rows = conn.execute(
-        "SELECT amount FROM cashflows WHERE account = ? AND trade_date = ? "
-        "AND kind = 'deposit'",
-        (account, trade_date),
+        "SELECT amount FROM cashflows WHERE account = ? AND trade_date > ? "
+        "AND trade_date <= ? AND kind = 'deposit'",
+        (account, since, until),
     ).fetchall()
     recorded = sum((Decimal(r["amount"]) for r in recorded_rows), Decimal("0"))
 

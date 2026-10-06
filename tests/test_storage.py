@@ -51,6 +51,53 @@ class TestSaveOrder:
         assert unexplained == Decimal("0")
 
 
+    def test_fill_on_a_missed_snapshot_day_is_netted(self, tmp_path):
+        # 2026-10-02's daily.py failed, so the next run diffed 10-06 cash
+        # against 10-01's. A fill executed on the missed day still moved
+        # that cash and must not read as unexplained.
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_portfolio(conn, "2026-10-01", "test-acc", "KRW",
+                                   Decimal("500000"), Decimal("500000"), [])
+            storage.save_order(
+                conn, "2026-10-02", "2026-10-02T10:00:00", "test-acc",
+                "102110", "BUY", 10, Decimal("10000"), "order-1",
+                filled=True,
+                execution={"filledQuantity": "10",
+                          "averageFilledPrice": "10000",
+                          "commission": "0", "tax": "0"},
+                executed_date="2026-10-02",
+            )
+            storage.save_portfolio(conn, "2026-10-06", "test-acc", "KRW",
+                                   Decimal("400000"), Decimal("400000"), [])
+            unexplained = storage.unexplained_cash_change(
+                conn, "test-acc", "2026-10-06")
+        assert unexplained == Decimal("0")
+
+    def test_fill_on_previous_snapshot_date_is_not_netted_again(self, tmp_path):
+        # A fill on the previous snapshot's own date is already inside that
+        # snapshot's cash - netting it again would invent a mismatch.
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_order(
+                conn, "2026-10-01", "2026-10-01T10:00:00", "test-acc",
+                "102110", "BUY", 10, Decimal("10000"), "order-1",
+                filled=True,
+                execution={"filledQuantity": "10",
+                          "averageFilledPrice": "10000",
+                          "commission": "0", "tax": "0"},
+                executed_date="2026-10-01",
+            )
+            storage.save_portfolio(conn, "2026-10-01", "test-acc", "KRW",
+                                   Decimal("400000"), Decimal("400000"), [])
+            storage.save_portfolio(conn, "2026-10-06", "test-acc", "KRW",
+                                   Decimal("400000"), Decimal("400000"), [])
+            unexplained = storage.unexplained_cash_change(
+                conn, "test-acc", "2026-10-06")
+        assert unexplained == Decimal("0")
+
 class TestTranchesDoneThisMonth:
     def test_filters_on_executed_date_not_trade_date(self, tmp_path):
         # Regression: an order signalled on the last trading day of one

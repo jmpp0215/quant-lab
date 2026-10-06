@@ -678,6 +678,18 @@ def snapshot(client: "KisClient") -> storage.AccountSnapshot:
     different methods; simply summing totals across accounts for a
     combined-asset view should account for that rather than assume both
     numbers mean exactly the same thing.
+
+    cash is prvs_rcdl_excc_amt (D+2 정산 예수금), not dnca_tot_amt. KRX
+    settles T+2, and dnca_tot_amt only moves on the settlement day - so
+    daily.py's unexplained-cash check, which nets fills on their execution
+    date, alerted twice per trade with opposite signs (kis-isa 2026-09-01
+    +5,458,393 / 09-03 -5,458,670; 10-01 +1,217,195, exactly that day's net
+    fills). The three output2 cash fields are a settlement ladder:
+    dnca_tot_amt (D+0) -> nxdy_excc_amt (D+1, adds yesterday's trades -
+    verified live 2026-08-26, see buying_power()) -> prvs_rcdl_excc_amt
+    (D+2, adds today's too), and tot_evlu_amt = scts_evlu_amt +
+    prvs_rcdl_excc_amt (2026-10-06 live, no pending trades: all three cash
+    fields 4,546,598, 12,323,598 + 4,546,598 = 16,870,196).
     """
     resp = client.holdings()
     output2 = (resp.get("output2") or [{}])[0]
@@ -688,7 +700,7 @@ def snapshot(client: "KisClient") -> storage.AccountSnapshot:
         for item in resp.get("output1", [])
         if int(item.get("hldg_qty", 0)) > 0
     ]
-    cash = Decimal(output2.get("dnca_tot_amt", "0"))
+    cash = Decimal(output2.get("prvs_rcdl_excc_amt", "0"))
     total = Decimal(output2.get("tot_evlu_amt", "0"))
     return storage.AccountSnapshot(account=f"kis-{client.account}", currency="KRW",
                                    total=total, cash=cash, positions=positions)
