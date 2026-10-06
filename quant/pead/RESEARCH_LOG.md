@@ -959,8 +959,12 @@ Top 30보다 Sharpe 높음 ③ Top 50 대비 초과 수익 ≥ 4/6년, 무작위
    4ms 만에 종료). 09:37 실행분은 정상. 대화형 셸에서는 같은 venv 파이썬이 정상 동작.
    **복구(16:1x)**: daily·pricerefresh를 `launchctl bootout` → `bootstrap`으로 다시 로드하자 pricerefresh
    kickstart가 정상 실행·종료(exit 0, 새 KIS 코드로 943종목 처리, 최신일 10-02 유지 — 당일 행 미저장·10-05
-   휴장). 원인은 업그레이드 전에 로드된 작업 정의가 교체된 실행 파일로 뜨지 못한 것으로 보이나 정확한
-   메커니즘은 미확인. pbrcheck·checkdue·amzncheck는 다시 로드하지 않음(pbrcheck는 지시에 따라 보류).
+   휴장). **원인 확인**: 다시 로드하지 않은 pbrcheck의 `launchctl print`가 `last exit reason =
+   OS_REASON_CODESIGNING`, `job state = spawn failed` — 업그레이드 전에 로드된 작업 정의가 교체된 파이썬
+   실행 파일을 코드 서명 검증에서 거부당함. 다시 로드(bootstrap)하면 해소. checkdue·amzncheck도 같은 날
+   다시 로드. **재발 감지**: `healthcheck.zsh`(파이썬 비의존 감시 스크립트, `feb2de6`) — 작업별 종료 코드·
+   종료 사유·실행 실패 상태·장시간 실행, 파이썬 기동, 오늘 daily 기록, 가격 최신일·수집률 점검. daily.py가
+   감시 스크립트의 생존 신호를 교차 확인(`43f00c3`). launchd 등록은 별도 승인 대기. pbrcheck·checkdue·amzncheck는 다시 로드하지 않음(pbrcheck는 지시에 따라 보류).
    **10-06 daily는 16:22에 `python daily.py` 수동 실행으로 보충** — `runs`에 실행 경로 표시가 없어
    `updated_at`(16:22, 정규 15:40)과 로그 위치(`bot.log`에만 있고 `cron.log`에 없음)로만 구분됨.
 
