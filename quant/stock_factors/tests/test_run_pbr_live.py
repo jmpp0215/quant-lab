@@ -8,6 +8,7 @@ from quant.stock_factors.scripts import pbr_storage
 from quant.stock_factors.scripts.run_pbr_live import (
     apply_admin_filter,
     build_summary,
+    equal_weight_shadow,
     filter_admin_stocks,
     inverse_vol_fell_back,
     resolve_target_weights,
@@ -186,3 +187,19 @@ class TestBuildSummary:
         s = build_summary([], [], set(), "2026-09-14", "replayed", None, [], None)
         assert s["retry_of"] == "2026-09-14"
         assert s["all_clear"] is True
+
+
+class TestEqualWeightShadow:
+    def test_same_names_equal_weights(self):
+        iv = {"A": Decimal("0.5"), "B": Decimal("0.3"), "C": Decimal("0.2")}
+        assert equal_weight_shadow(iv) == {"A": 0.333333, "B": 0.333333, "C": 0.333333}
+
+    def test_empty_target(self):
+        assert equal_weight_shadow({}) == {}
+
+    def test_recorded_in_summary_only_when_given(self):
+        base = build_summary([], [], set(), None, "inverse_vol", False, [], None)
+        assert "equal_weight_target" not in base
+        s = build_summary([], [], set(), None, "inverse_vol", False, [], None,
+                          equal_weight_target={"A": 0.5, "B": 0.5})
+        assert s["equal_weight_target"] == {"A": 0.5, "B": 0.5}

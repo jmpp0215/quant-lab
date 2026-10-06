@@ -102,9 +102,19 @@ def inverse_vol_fell_back(target_weights: dict, weighting_scheme: str) -> bool |
     return len(target_weights) > 1 and len(set(target_weights.values())) == 1
 
 
+def equal_weight_shadow(target_weights: dict) -> dict[str, float]:
+    """What equal weight would have held on the same names - recorded next
+    to an inverse_vol target so the two can be compared run by run while
+    the weighting decision (RESEARCH_LOG section 27 (b)) is open. Selection
+    doesn't depend on the scheme, only the weights do."""
+    n = len(target_weights)
+    return {sym: round(1 / n, 6) for sym in sorted(target_weights)} if n else {}
+
+
 def build_summary(failed: list, partial: list, halted, retry_of: str | None,
                   weighting_scheme: str, inverse_vol_fallback: bool | None,
-                  admin_removed: list, admin_filter_error: str | None) -> dict:
+                  admin_removed: list, admin_filter_error: str | None,
+                  equal_weight_target: dict | None = None) -> dict:
     """summary_json for pbr_live.db's pbr_rebalance row."""
     summary = {
         "failed": failed,
@@ -116,6 +126,8 @@ def build_summary(failed: list, partial: list, halted, retry_of: str | None,
         "admin_removed": admin_removed,
         "admin_filter_error": admin_filter_error,
     }
+    if equal_weight_target is not None:
+        summary["equal_weight_target"] = equal_weight_target
     if retry_of:
         summary["retry_of"] = retry_of
     return summary
@@ -245,6 +257,14 @@ def main():
     if not target_weights:
         log.error("Target portfolio is empty after Admin filter. Aborting.")
         return 1
+
+    # After the admin filter, so both describe the same names.
+    shadow = equal_weight_shadow(target_weights) if weighting_scheme == "inverse_vol" else None
+    if shadow is not None:
+        w = sorted((float(v) for v in target_weights.values()), reverse=True)
+        log.info(f"inverse_vol vs equal: max {w[0]:.2%} vs {1 / len(w):.2%}, "
+                 f"top-10 {sum(w[:10]):.1%} vs {min(10, len(w)) / len(w):.1%}, "
+                 f"effective N {1 / sum(x * x for x in w):.1f} vs {len(w)}")
     # ---------------------------------------------------
         
     # 3. Get Prices
@@ -390,7 +410,8 @@ def main():
         
         summary_data = build_summary(failed, partial, halted, retry_of_date,
                                      weighting_scheme, fallback,
-                                     admin_removed, admin_filter_error)
+                                     admin_removed, admin_filter_error,
+                                     equal_weight_target=shadow)
 
         target_dict = {sym: float(w) for sym, w in target_weights.items()}
         
