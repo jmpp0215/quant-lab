@@ -6,7 +6,10 @@ import pytest
 from quant.stock_factors.portfolio_construction import PBRConfig
 from quant.stock_factors.scripts import pbr_storage
 from quant.stock_factors.scripts.run_pbr_live import (
+    apply_admin_filter,
+    build_summary,
     filter_admin_stocks,
+    inverse_vol_fell_back,
     resolve_target_weights,
 )
 
@@ -123,3 +126,63 @@ def test_resolve_target_weights_non_retry_builds_fresh_portfolio(pbr_db, monkeyp
 
     assert weights == {"005930": Decimal("1")}
     assert called_with["today_str"] == "2026-09-08"
+
+
+class TestApplyAdminFilter:
+    def test_reports_which_symbols_were_removed(self):
+        target = {"036420": Decimal("0.25"), "005930": Decimal("0.25"),
+                  "093240": Decimal("0.25"), "000660": Decimal("0.25")}
+        weights, removed, error = apply_admin_filter(target, _fake_admin_listing)
+        assert removed == ["036420", "093240"]
+        assert set(weights) == {"005930", "000660"}
+        assert error is None
+
+    def test_nothing_removed_is_an_empty_list(self):
+        target = {"005930": Decimal("1")}
+        weights, removed, error = apply_admin_filter(target, _fake_admin_listing)
+        assert (weights, removed, error) == (target, [], None)
+
+    def test_listing_failure_passes_weights_through_and_records_the_error(self):
+        # 2026-10-02: fdr.StockListing returned an HTTP 404. The guardrail
+        # then didn't run at all - that must reach the summary.
+        def broken():
+            raise RuntimeError("HTTP Error 404: Not Found")
+        target = {"036420": Decimal("0.5"), "005930": Decimal("0.5")}
+        weights, removed, error = apply_admin_filter(target, broken)
+        assert weights == target
+        assert removed == []
+        assert "404" in error
+
+
+class TestInverseVolFellBack:
+    def test_identical_weights_mean_fallback(self):
+        w = {s: Decimal("0.0222") for s in ("A", "B", "C")}
+        assert inverse_vol_fell_back(w, "inverse_vol") is True
+
+    def test_distinct_weights_mean_inverse_vol_applied(self):
+        w = {"A": Decimal("0.5"), "B": Decimal("0.3"), "C": Decimal("0.2")}
+        assert inverse_vol_fell_back(w, "inverse_vol") is False
+
+    def test_not_applicable_for_equal_scheme(self):
+        w = {s: Decimal("0.5") for s in ("A", "B")}
+        assert inverse_vol_fell_back(w, "equal") is None
+
+    def test_single_name_is_not_called_a_fallback(self):
+        assert inverse_vol_fell_back({"A": Decimal("1")}, "inverse_vol") is False
+
+
+class TestBuildSummary:
+    def test_records_admin_weighting_and_fallback(self):
+        s = build_summary(["000670"], [], {"009440"}, None, "inverse_vol", False,
+                          ["002820", "004270"], None)
+        assert s == {
+            "failed": ["000670"], "partial": [], "all_clear": False, "halted": ["009440"],
+            "weighting_scheme": "inverse_vol", "inverse_vol_fallback": False,
+            "admin_removed": ["002820", "004270"], "admin_filter_error": None,
+        }
+
+    def test_retry_of_only_when_retrying(self):
+        assert "retry_of" not in build_summary([], [], set(), None, "equal", None, [], None)
+        s = build_summary([], [], set(), "2026-09-14", "replayed", None, [], None)
+        assert s["retry_of"] == "2026-09-14"
+        assert s["all_clear"] is True

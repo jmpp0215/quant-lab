@@ -69,6 +69,58 @@ def filter_admin_stocks(target_weights: dict, df_admin) -> dict:
     return target_weights
 
 
+def apply_admin_filter(target_weights: dict, fetch_listing) -> tuple[dict, list[str], str | None]:
+    """filter_admin_stocks plus what it did: (weights, removed symbols, error).
+
+    fetch_listing is called for the KRX-ADMIN listing (fdr.StockListing in
+    production). If it fails the weights pass through unfiltered, as before -
+    but the error is returned so the run's summary records that the
+    guardrail never ran, instead of that only reaching the console.
+    """
+    try:
+        df_admin = fetch_listing()
+    except Exception as e:
+        log.error(f"Failed to fetch KRX-ADMIN list: {e}")
+        return target_weights, [], f"{type(e).__name__}: {e}"
+    filtered = filter_admin_stocks(target_weights, df_admin)
+    removed = sorted(set(target_weights) - set(filtered))
+    log.info(f"Admin filter removed {len(removed)} of {len(target_weights)}: {removed}")
+    return filtered, removed, None
+
+
+def inverse_vol_fell_back(target_weights: dict, weighting_scheme: str) -> bool | None:
+    """Whether an inverse_vol run silently got equal weights instead.
+
+    construct_target_portfolio falls back to equal weight for the whole
+    basket when inverse_vol_weights returns None (a name with < 30 days of
+    returns) and only logs it. All-identical weights across 2+ names is that
+    fallback - inverse-vol weights from distinct return histories don't come
+    out identical. None when the scheme isn't inverse_vol.
+    """
+    if weighting_scheme != "inverse_vol":
+        return None
+    return len(target_weights) > 1 and len(set(target_weights.values())) == 1
+
+
+def build_summary(failed: list, partial: list, halted, retry_of: str | None,
+                  weighting_scheme: str, inverse_vol_fallback: bool | None,
+                  admin_removed: list, admin_filter_error: str | None) -> dict:
+    """summary_json for pbr_live.db's pbr_rebalance row."""
+    summary = {
+        "failed": failed,
+        "partial": partial,
+        "all_clear": not failed and not partial,
+        "halted": sorted(halted),
+        "weighting_scheme": weighting_scheme,
+        "inverse_vol_fallback": inverse_vol_fallback,
+        "admin_removed": admin_removed,
+        "admin_filter_error": admin_filter_error,
+    }
+    if retry_of:
+        summary["retry_of"] = retry_of
+    return summary
+
+
 def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
                            conn) -> dict[str, Decimal]:
     """Target weights for today's run.
@@ -178,14 +230,18 @@ def main():
     if not target_weights:
         log.error("Failed to construct target portfolio (no symbols returned).")
         return 1
-        
+
+    # A retry replays a recorded target, so whether it was inverse-vol or a
+    # fallback is a property of that earlier run, not this one.
+    weighting_scheme = "replayed" if args.retry else pbr_config.weighting_scheme
+    fallback = None if args.retry else inverse_vol_fell_back(target_weights, weighting_scheme)
+    if fallback:
+        log.warning("inverse_vol fell back to equal weight for the whole basket")
+
     # --- LIVE GUARDRAIL: Remove Admin/Warning Stocks ---
-    try:
-        df_admin = fdr.StockListing('KRX-ADMIN')
-        target_weights = filter_admin_stocks(target_weights, df_admin)
-    except Exception as e:
-        log.error(f"Failed to fetch KRX-ADMIN list: {e}")
-        
+    target_weights, admin_removed, admin_filter_error = apply_admin_filter(
+        target_weights, lambda: fdr.StockListing('KRX-ADMIN'))
+
     if not target_weights:
         log.error("Target portfolio is empty after Admin filter. Aborting.")
         return 1
@@ -332,14 +388,9 @@ def main():
         failed = [sym for sym, r in results.items() if not r.get("filled", False) and r.get("filled_quantity", 0) == 0]
         partial = [sym for sym, r in results.items() if not r.get("filled", False) and r.get("filled_quantity", 0) > 0]
         
-        summary_data = {
-            "failed": failed,
-            "partial": partial,
-            "all_clear": not failed and not partial,
-            "halted": sorted(halted),
-        }
-        if retry_of_date:
-            summary_data["retry_of"] = retry_of_date
+        summary_data = build_summary(failed, partial, halted, retry_of_date,
+                                     weighting_scheme, fallback,
+                                     admin_removed, admin_filter_error)
 
         target_dict = {sym: float(w) for sym, w in target_weights.items()}
         
