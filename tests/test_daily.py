@@ -119,3 +119,31 @@ class TestCheckAccountHealth:
                 conn, "kis-main-overseas",
                 snapshot(positions=[], cash="530047"), "2026-08-24")
         assert problems == []
+
+
+class TestHealthcheckProblem:
+    def test_fresh_heartbeat_is_fine(self, tmp_path):
+        from daily import healthcheck_problem
+        hb = tmp_path / "hb"
+        hb.write_text("1000\n")
+        assert healthcheck_problem(hb, now=1000 + 3600) is None
+
+    def test_stale_heartbeat_is_reported(self, tmp_path):
+        # 15:40 daily vs a heartbeat last stamped 16:30 the day before:
+        # today's 13:15 check never ran.
+        from daily import healthcheck_problem
+        hb = tmp_path / "hb"
+        hb.write_text("1000\n")
+        msg = healthcheck_problem(hb, now=1000 + 23 * 3600)
+        assert msg is not None and "23.0h" in msg
+
+    def test_missing_heartbeat_is_not_an_alert(self, tmp_path):
+        # Before the watchdog is installed there is no file at all.
+        from daily import healthcheck_problem
+        assert healthcheck_problem(tmp_path / "absent", now=0) is None
+
+    def test_garbage_heartbeat_is_reported(self, tmp_path):
+        from daily import healthcheck_problem
+        hb = tmp_path / "hb"
+        hb.write_text("not a number")
+        assert "unreadable" in healthcheck_problem(hb, now=0)

@@ -10,8 +10,10 @@ period runs until the first scheduled rebalance.
 
 import logging
 import sys
+import time
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 
 from quant import (
     accounts,
@@ -34,6 +36,33 @@ log = logging.getLogger("daily")
 # Below this, a cash mismatch is more likely rounding/timing noise than
 # something worth waking up for.
 CASH_ALERT_THRESHOLD = Decimal("1000")
+
+# healthcheck.zsh (the launchd watchdog) stamps this file every run, weekdays
+# 13:15 and 16:30. daily.py runs at 15:40, so a stamp older than 4 hours
+# means today's 13:15 check never ran - the watchdog itself is down, and
+# nothing else would say so.
+HEALTHCHECK_HEARTBEAT = Path(__file__).parent / "logs" / "healthcheck.heartbeat"
+HEALTHCHECK_MAX_AGE_SECS = 4 * 3600
+
+
+def healthcheck_problem(path: Path, now: float,
+                        max_age: float = HEALTHCHECK_MAX_AGE_SECS) -> str | None:
+    """Why the watchdog looks dead, or None.
+
+    No file at all is None, not a problem: that is the state before the
+    watchdog is installed, and alerting on it daily would only train the
+    user to ignore the alert.
+    """
+    try:
+        stamp = float(path.read_text().strip())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return f"healthcheck heartbeat unreadable ({path})"
+    age = now - stamp
+    if age > max_age:
+        return f"healthcheck heartbeat is {age / 3600:.1f}h old - the watchdog is not running"
+    return None
 
 
 def check_account_health(conn, account_name: str, snap: storage.AccountSnapshot,
@@ -110,6 +139,13 @@ def record_strategy(signal: strategy.Signal, trade_date: str,
 def main() -> int:
     logging_config.setup()
     log.info("daily run start")
+
+    # Before any early return (market closed, backfill): the watchdog can
+    # die on a holiday too.
+    watchdog = healthcheck_problem(HEALTHCHECK_HEARTBEAT, time.time())
+    if watchdog:
+        log.error(watchdog)
+        notify("quant-lab", f"daily.py: {watchdog}")
 
     storage.init()
     # Recompute a past date from cached candles. The signal is a pure
