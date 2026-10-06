@@ -8,7 +8,7 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
-from quant import accounts, rebalance, executor
+from quant import accounts, executor, logging_config, rebalance
 from quant.common import http_timeout
 from quant.stock_factors.portfolio_construction import (
     PBRConfig,
@@ -23,8 +23,9 @@ from quant.stock_factors.portfolio_construction import (
 from quant.stock_factors.scripts import pbr_storage
 import FinanceDataReader as fdr
 
-# Setup basic logging
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+# Configured in main() via logging_config.setup() (logs/bot.log + console),
+# not basicConfig at import: a manual run used to log to the terminal only,
+# so 2026-09-14's rebalance left no record of what the admin filter removed.
 log = logging.getLogger("run_pbr_live")
 
 def parse_args():
@@ -92,6 +93,7 @@ def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
 
 
 def main():
+    logging_config.setup()
     # FinanceDataReader passes no timeout - see quant/common/http_timeout.py.
     http_timeout.install()
     account, remaining_argv = accounts.extract_account(sys.argv, default="toss-bot")
