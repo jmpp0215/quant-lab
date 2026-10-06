@@ -20,6 +20,11 @@ Today's bar is never stored: launchd runs this at 12:30, mid-session, and a
 mid-session bar is a partial one (2026-10-01's rows kept their 12:30 close
 and volume because the next two runs failed). The next run's overlap
 window picks it up once it is final.
+
+The symbol list is the symbols already tracked in pead_price_fetch_state,
+not a live KRX listing - fdr.StockListing("KOSPI") failed with a 404 on
+2026-10-02 and took the whole run down with it. A newly listed stock is not
+added automatically; backfill_prices.py is how the universe grows.
 """
 
 import logging
@@ -30,8 +35,6 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
-
-import FinanceDataReader as fdr  # noqa: E402
 
 from quant.kis_client import KisClient  # noqa: E402
 from quant.pead.storage import (  # noqa: E402
@@ -113,14 +116,18 @@ def sync_symbol(conn: sqlite3.Connection, client: KisClient, symbol: str,
     save_price_fetch_state(conn, symbol, today_key, updated_at)
 
 
+def tracked_symbols(conn: sqlite3.Connection) -> list[str]:
+    return [r[0] for r in conn.execute(
+        "SELECT symbol FROM pead_price_fetch_state ORDER BY symbol")]
+
+
 def main():
     init_db()
     conn = sqlite3.connect(DB_PATH)
     today = datetime.now().astimezone().date()
     client = KisClient("isa")
 
-    kospi_df = fdr.StockListing("KOSPI")
-    tickers = kospi_df["Code"].tolist()
+    tickers = tracked_symbols(conn)
     log.info("refreshing prices for %d tickers up to %s (exclusive)",
              len(tickers), today)
 

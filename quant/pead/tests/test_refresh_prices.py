@@ -90,3 +90,10 @@ class TestFetchDaily:
         end = date.fromordinal(start.toordinal() + rp.WINDOW_DAYS)
         assert len(weekdays(start, end)) < 100
 
+
+class TestTrackedSymbols:
+    def test_universe_comes_from_fetch_state_not_a_listing(self):
+        conn = db()
+        conn.executemany("INSERT INTO pead_price_fetch_state VALUES (?, '20261001', 'x')",
+                         [("005930",), ("000020",)])
+        assert rp.tracked_symbols(conn) == ["000020", "005930"]
