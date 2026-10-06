@@ -964,6 +964,21 @@ Top 30보다 Sharpe 높음 ③ Top 50 대비 초과 수익 ≥ 4/6년, 무작위
    **10-06 daily는 16:22에 `python daily.py` 수동 실행으로 보충** — `runs`에 실행 경로 표시가 없어
    `updated_at`(16:22, 정규 15:40)과 로그 위치(`bot.log`에만 있고 `cron.log`에 없음)로만 구분됨.
 
+## 27. pbrcheck(PBR 자동 리밸런싱) 보류와 해제 조건 (2026-10-06 결정)
+
+**결정**: launchd `com.jongminpark.quantlab.pbrcheck`는 다시 로드하지 않음. 이 작업은 리밸런싱 해당일에
+`run_pbr_live.py --auto`를 자동 실행하므로(섹션 24 정정 참고), 보류 중에는 **PBR 자동 리밸런싱이 일어나지
+않음** — 다음 예정일 2026-10-16(마지막 전체 리밸런싱 09-14 + 20거래일)도 자동으로 실행되지 않는다.
+2026-10-06 파이썬 업그레이드 장애(섹션 26) 이후 이 작업만 마지막 종료 코드 -9 상태로 남아 있음.
+
+**해제 조건** (셋 모두 충족 후 다시 로드):
+- **(a) 변동성 계산 이상치 제외 정정** — ✅ 2026-10-06 완료(`a3b0402`, 섹션 26 항목 2).
+- **(b) 역가중 재검증 및 가중 방식 결정** — 미완. 섹션 19 결론(동일가중 대비 Sharpe 동일, 변동성·MDD
+  개선)은 오염된 신호 위에서 나왔고(섹션 23), 실전 전환(`303c6ad`)은 결정 근거 기록이 없음. 정정 신호와
+  (a) 반영 후의 역가중 vs 동일가중을 재검증한 뒤 실전 가중 방식을 명시적으로 결정·기록할 것.
+- **(c) 로깅 / summary_json 개선** — 미완. `run_pbr_live.py`가 `logging_config.setup()`으로 파일 로그를
+  남기고, `pbr_live.db` 요약에 관리종목 제외 종목·가중 방식·역가중 폴백 여부를 기록할 것(섹션 26 항목 3).
+
 ## [TODO] PEAD 테스트(test_signal.py) 실패 항목 기록
 - **발생 내역**: `quant/pead/tests/test_signal.py`에서 `test_normalization_chain`, `test_normalization_missing_previous_quarter`, `test_normalization_point_in_time` 3건 실패.
 - **원인**: `normalize_to_quarterly` 함수 내에서 반기(11012)/3분기(11014) 누적 실적을 단일 분기로 발라내는 계산 로직에 결함이 있어, 원본 누적치(예: 250)가 그대로 반환(기대값 150)되는 버그.
