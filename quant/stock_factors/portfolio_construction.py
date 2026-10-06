@@ -14,6 +14,7 @@ from quant.stock_factors.value import (
     load_issued_shares_rcept_dts,
     prepare_pbr_signals,
 )
+from quant.common.price_guard import DEFAULT_ANOMALY_THRESHOLD
 from quant.rebalance import Order, Position
 from quant.market import round_to_tick
 from quant.allocation import DEFAULT_WINDOW, to_decimal_weights
@@ -113,10 +114,24 @@ def inverse_vol_weights(symbols: list[str], df_price_pivot: pd.DataFrame,
     Returns None - signalling "fall back to equal weight for the whole
     basket" - if any symbol has fewer than MIN_VOL_OBS days of return
     history, mirroring _weights_by_scheme's own all-or-nothing fallback.
+
+    Day-over-day moves beyond price_guard's threshold (50%; KRX's daily
+    limit is ±30%) are dropped before taking the standard deviation: they
+    are re-basing artifacts in pead_price_raw (consolidations/splits on
+    unadjusted history), not volatility. On 2026-10-02 data, 007460/003060's
+    +1,446%/+1,286% steps would otherwise have cut their weight to ~0.04%.
+    Dropped days count against MIN_VOL_OBS like any other missing return.
     """
     target_dt = pd.to_datetime(target_date_str)
     window = df_price_pivot.loc[:target_dt, symbols].tail(DEFAULT_WINDOW + 1)
     daily_returns = window.pct_change().iloc[1:]
+    artifacts = daily_returns.abs() > DEFAULT_ANOMALY_THRESHOLD
+    for sym in symbols:
+        for d in daily_returns.index[artifacts[sym]]:
+            log.warning("%s: %+.0f%% move on %s treated as a price artifact, "
+                        "excluded from its volatility", sym,
+                        daily_returns.at[d, sym] * 100, d.strftime("%Y%m%d"))
+    daily_returns = daily_returns.mask(artifacts)
 
     vols: dict[str, float] = {}
     for sym in symbols:

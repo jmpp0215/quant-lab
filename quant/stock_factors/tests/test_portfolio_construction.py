@@ -234,6 +234,53 @@ class TestInverseVolWeights:
 
         assert weights_before_spike == weights_with_future_spike
 
+    def test_corporate_action_jump_does_not_inflate_volatility(self):
+        # 2026-10-06: 007460/003060 carried a +1,446%/+1,286% one-day
+        # "return" in pead_price_raw (a 15:1 consolidation landing on
+        # unadjusted history). Counted as volatility, it cut their weight to
+        # ~0.04%. Two otherwise identical symbols must get equal weight
+        # when one of them has such a re-basing step in its window.
+        dates = pd.bdate_range("2025-01-01", periods=150)
+        path = _synthetic_price_series(150, 0.01, 100, seed=1)
+        jumped = path.copy()
+        jumped[100:] *= 15  # consolidation: price re-based x15 overnight
+        df = pd.DataFrame({"PLAIN": path, "JUMP": jumped}, index=dates)
+
+        weights = inverse_vol_weights(["PLAIN", "JUMP"], df, dates[-1].strftime("%Y%m%d"))
+
+        assert weights is not None
+        assert abs(weights["PLAIN"] - weights["JUMP"]) < Decimal("0.01")
+
+    def test_real_limit_moves_still_count_as_volatility(self):
+        # KRX daily limit is ±30%: a symbol that genuinely moves that much
+        # is volatile and must still be weighted down. Only moves beyond
+        # price_guard's threshold (50%) are treated as artifacts.
+        dates = pd.bdate_range("2025-01-01", periods=150)
+        calm = _synthetic_price_series(150, 0.01, 100, seed=1)
+        wild = calm.copy()
+        for i in range(10, 150, 10):
+            wild[i:] *= 1.3 if (i // 10) % 2 else 1 / 1.3
+        df = pd.DataFrame({"CALM": calm, "WILD": wild}, index=dates)
+
+        weights = inverse_vol_weights(["CALM", "WILD"], df, dates[-1].strftime("%Y%m%d"))
+
+        assert weights["CALM"] > weights["WILD"] * 2
+
+    def test_artifact_exclusion_can_trigger_the_short_history_fallback(self):
+        # Dropping artifact days must not let a symbol slip under
+        # MIN_VOL_OBS without the whole-basket equal-weight fallback.
+        dates = pd.bdate_range("2025-01-01", periods=150)
+        df = pd.DataFrame({
+            "OLD": _synthetic_price_series(150, 0.01, 100, seed=1),
+            "NEW": _synthetic_price_series(150, 0.01, 100, seed=2),
+        }, index=dates)
+        df.loc[df.index[:-31], "NEW"] = np.nan   # exactly MIN_VOL_OBS returns...
+        df.loc[df.index[-15]:, "NEW"] *= 10        # ...one of them an artifact
+
+        weights = inverse_vol_weights(["OLD", "NEW"], df, dates[-1].strftime("%Y%m%d"))
+
+        assert weights is None
+
 
 class TestPriceDataIsStale:
     def test_none_latest_is_stale(self):
