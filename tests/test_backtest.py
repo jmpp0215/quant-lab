@@ -145,3 +145,45 @@ class TestRunTranchedTranchesParam:
         with_explicit = backtest.run_tranched(candles_by_symbol, divs, tranches=(0,))
 
         assert [r.date for r in with_default] == [r.date for r in with_explicit]
+
+
+class TestRunTranchedOverlay:
+    """overlay= applies strategy.apply_overlay after weighting, parking the
+    cut in config.CASH_SYMBOL (B here)."""
+
+    @pytest.fixture(autouse=True)
+    def _cash_is_b(self, monkeypatch):
+        monkeypatch.setattr(config, "CASH_SYMBOL", "B")
+
+    @staticmethod
+    def falling(dates: list[date]) -> list[dict]:
+        """A loses one won a trading day, so every last month is negative."""
+        n = len(dates)
+        return [
+            {"timestamp": f"{d.isoformat()}T00:00:00.000+09:00",
+             "closePrice": str(1000 - n + i)}
+            for i, d in enumerate(sorted(dates, reverse=True))
+        ]
+
+    def test_no_overlay_holds_the_signal_unchanged(self):
+        data = {"A": self.falling(ALL_DATES), "B": candles(ALL_DATES)}
+
+        history = backtest.run_tranched(data, {"A": [], "B": []})
+
+        assert all(r.weights == {"A": Decimal("1")} for r in history[:-1])
+
+    def test_correction_half_parks_half_in_the_cash_symbol(self):
+        data = {"A": self.falling(ALL_DATES), "B": candles(ALL_DATES)}
+
+        history = backtest.run_tranched(data, {"A": [], "B": []},
+                                        overlay="correction_half")
+
+        half = Decimal("0.5")
+        assert all(r.weights == {"A": half, "B": half} for r in history[:-1])
+
+    def test_overlay_on_flat_prices_moves_no_value(self, candles_by_symbol):
+        # Flat A is not a Correction, so nothing is cut and value holds.
+        history = backtest.run_tranched(candles_by_symbol, {"A": [], "B": []},
+                                        overlay="correction_half")
+
+        assert all(r.value == Decimal("10000000") for r in history)

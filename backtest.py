@@ -106,7 +106,8 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
                  initial: Decimal = Decimal("10000000"),
                  scheme: str = "equal",
                  costs: bool = False,
-                 tranches: tuple[int, ...] | None = None) -> list[Rebalance]:
+                 tranches: tuple[int, ...] | None = None,
+                 overlay: str | None = None) -> list[Rebalance]:
     """Replay the strategy with capital split across staggered sleeves.
 
     Each sleeve rebalances on its own trading day of the month and holds
@@ -124,6 +125,11 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
     monthly rebalance (first trading day of each month) with correct cash
     accounting, without having to mutate config.TRANCHES globally to get a
     one-off single-sleeve check.
+
+    overlay: a strategy.apply_overlay name ("correction_half",
+    "trend_200d") applied after weighting, so a turning-point rule can be
+    compared against the plain signal. Each sleeve judges it only on its
+    own rebalance day.
     """
     tranches = list(tranches) if tranches is not None else list(config.TRANCHES)
     n = len(tranches)
@@ -151,12 +157,15 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
         for sym, evs in dividend_events_by_symbol.items()
     }
     seed_signal = strategy.evaluate(seed_sliced, seed_sliced_dividends)
+    seed_weights = seed_signal.weights
+    if overlay:
+        seed_weights = strategy.apply_overlay(seed_sliced, seed_weights, overlay)
 
     per_sleeve = initial / n
     for t in tranches:
         books[t] = {
             sym: (per_sleeve * weight) / seed_prices[sym]
-            for sym, weight in seed_signal.weights.items()
+            for sym, weight in seed_weights.items()
             if sym in seed_prices
         }
         cash -= sum(units * seed_prices[sym]
@@ -189,6 +198,8 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
                       if s.momentum is not None}
             weights = strategy._weights_by_scheme(
                 sliced, list(weights), scheme, scores)
+        if overlay:
+            weights = strategy.apply_overlay(sliced, weights, overlay)
 
         book = books[which]
         sleeve_value = tranche.sleeve_budget(books, which, prices, cash,

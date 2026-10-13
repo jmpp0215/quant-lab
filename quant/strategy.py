@@ -213,6 +213,45 @@ def variant_trend_filtered(candles_by_symbol: dict[str, list[dict]],
     return {sym: weight for sym in kept}
 
 
+def apply_overlay(candles_by_symbol: dict[str, list[dict]],
+                  weights: dict[str, Decimal],
+                  overlay: str) -> dict[str, Decimal]:
+    """Cut risky weights on a turning-point check; park the cut in cash.
+
+    "correction_half": halve a pick whose last month is negative. A pick
+    already beat cash on the slow 12-1 ranking, so this is the slow-long /
+    fast-short disagreement - the Correction state of
+    Garg, Goulding, Harvey & Mazzoleni, "Momentum Turning Points".
+    "trend_200d": drop a pick at or below its 200-day average (Faber's
+    10-month rule; the same test as variant_trend_filtered).
+
+    Freed weight goes to config.CASH_SYMBOL, as the live signal parks
+    unfilled slots, so the comparison carries no idle-cash drag.
+    """
+    out: dict[str, Decimal] = {}
+    freed = Decimal("0")
+    for sym, weight in weights.items():
+        if sym == config.CASH_SYMBOL:
+            continue
+        candles = candles_by_symbol.get(sym, [])
+        if overlay == "correction_half":
+            last_month = momentum.price_return(candles, 1)
+            keep = weight / 2 if last_month is not None and last_month < 0 else weight
+        elif overlay == "trend_200d":
+            above = indicators.above_moving_average(candles)
+            keep = weight if (above or Decimal("0")) > 0 else Decimal("0")
+        else:
+            raise ValueError(f"unknown overlay: {overlay}")
+        if keep > 0:
+            out[sym] = keep
+        freed += weight - keep
+
+    parked = weights.get(config.CASH_SYMBOL, Decimal("0")) + freed
+    if parked > 0:
+        out[config.CASH_SYMBOL] = parked
+    return out
+
+
 def variants(candles_by_symbol: dict[str, list[dict]],
              dividend_events_by_symbol: dict[str, list[dict]],
              signal: Signal) -> list[Variant]:
@@ -238,6 +277,13 @@ def variants(candles_by_symbol: dict[str, list[dict]],
                 variant_blended(candles_by_symbol, dividend_events_by_symbol)),
         Variant("trend_filtered",
                 variant_trend_filtered(candles_by_symbol, risky)),
+        # Recorded without its parked cash, like every other variant: the
+        # shortfall from 1 is what apply_overlay puts in CASH_SYMBOL.
+        Variant("correction_half", {
+            s: w for s, w in apply_overlay(
+                candles_by_symbol, risky, "correction_half").items()
+            if s != config.CASH_SYMBOL
+        }),
     ]
 
     for scheme in ("inverse_vol", "risk_parity", "signal_weighted", "rank_weighted"):
