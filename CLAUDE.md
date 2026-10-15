@@ -67,6 +67,7 @@ Changing strategy behavior almost always means editing constants here, not logic
 | `strategy.py` | Dual momentum signal generation (pure) + recorded-but-unused allocation variants |
 | `rebalance.py` | Target weights → orders: share rounding, tick-size snapping, min order size |
 | `tranche.py` | Splits capital into staggered sleeves; per-sleeve books, schedule, drift reconciliation |
+| `returns.py` | Principal-based and time-weighted account returns from snapshots + cashflows (pure; `show.py returns`) |
 | `executor.py` | Places limit orders at the touch, polls fills, retries remainder, enforces deviation/auction guards |
 | `market.py` | Session detection (KIS 국내휴장일 `opnd_yn` + the KST clock — no Toss calendar), KRX tick sizes |
 | `storage.py` | SQLite persistence (`data/quant.db`) — signals, orders, portfolio snapshots, tranche books, cashflows, all `account`-scoped except the shared signal tables |

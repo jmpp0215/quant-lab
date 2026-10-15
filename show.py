@@ -7,10 +7,11 @@
     python show.py orders          trade history
     python show.py tranches        current sleeve books
     python show.py summary         every account's total/cash, latest date
+    python show.py returns         every account's return on money put in
     python show.py health          latest run status, tranche drift, unexplained cash
 
     --account NAME   which account to show (default: kis-isa)
-                     ignored by summary, which always shows every account
+                     ignored by summary and returns, which show every account
 """
 
 import json
@@ -21,7 +22,7 @@ from decimal import Decimal
 # Shared with daily.py's own health check, so "no drift" here and "no
 # notification arrived" mean the same threshold was applied.
 from daily import CASH_ALERT_THRESHOLD
-from quant import accounts, config, storage, tranche
+from quant import accounts, config, returns, storage, tranche
 
 
 def _name(symbol: str) -> str:
@@ -281,6 +282,39 @@ def summary() -> None:
         print(f"{_pad('total', 20)}{total:>14,.0f}  {currency}")
 
 
+def returns_view() -> None:
+    """Principal-based and time-weighted return per account (quant/returns.py)."""
+    with storage.connect() as conn:
+        snaps = conn.execute(
+            "SELECT account, trade_date, total, currency FROM portfolio"
+        ).fetchall()
+        flows = conn.execute(
+            "SELECT account, trade_date, amount, kind FROM cashflows"
+        ).fetchall()
+
+    print(f"{_pad('account', 20)}{'since':>12}{'money in':>14}{'value':>14}"
+          f"{'gain':>13}{'on principal':>14}{'time-wtd':>10}")
+    for account in accounts.ACCOUNTS:
+        r = returns.compute(
+            [(s["trade_date"], Decimal(s["total"])) for s in snaps
+             if s["account"] == account],
+            [(f["trade_date"], Decimal(f["amount"]), f["kind"]) for f in flows
+             if f["account"] == account])
+        if r is None:
+            print(f"{_pad(account, 20)}{'no snapshots':>12}")
+            continue
+        if r.money_in is None:
+            money, gain, on_principal = f"{'-':>14}", f"{'-':>13}", f"{'not set':>14}"
+        else:
+            money = f"{r.money_in:>14,.0f}"
+            gain = f"{r.value - r.money_in:>+13,.0f}"
+            on_principal = f"{r.principal_return:>14.2%}"
+        print(f"{_pad(account, 20)}{r.start:>12}{money}{r.value:>14,.0f}"
+              f"{gain}{on_principal}{r.time_weighted:>10.2%}  (to {r.end})")
+    print("\nmoney in = recorded principal + deposits since; set it with "
+          "cashflow.py --principal")
+
+
 def health() -> None:
     """Latest run status, tranche drift, and unexplained cash.
 
@@ -339,6 +373,7 @@ COMMANDS = {
     "orders": lambda account: orders(account),
     "tranches": lambda account: tranches(account),
     "summary": lambda account: summary(),
+    "returns": lambda account: returns_view(),
     "health": lambda account: health(),
 }
 

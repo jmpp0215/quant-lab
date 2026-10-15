@@ -3,6 +3,11 @@
     python cashflow.py 2026-08-14 3000000 "initial funding"      kis-isa (default)
     python cashflow.py 2026-09-01 -500000 "withdrawal"
     python cashflow.py --account toss-bot 2026-08-14 3000000 "initial funding"
+    python cashflow.py 2026-08-28 16778610 "momentum start" --principal
+
+--principal records the account value taken as the money put in on that
+date, the starting point for `show.py returns` - not a transfer, so cash
+reconciliation ignores it (as it does --opening).
 
 Neither Toss nor KIS expose transaction history through the API, so these
 have to be entered by hand. Without them a deposit looks exactly like a
@@ -17,6 +22,8 @@ from quant import accounts, storage
 
 def main() -> int:
     account, rest = accounts.extract_account(sys.argv[1:])
+    flags = [a for a in rest if a.startswith("--")]
+    rest = [a for a in rest if not a.startswith("--")]
     if len(rest) < 2:
         print(__doc__)
         return 1
@@ -24,7 +31,8 @@ def main() -> int:
     date = rest[0]
     amount = Decimal(rest[1])
     note = rest[2] if len(rest) > 2 else None
-    kind = "opening_balance" if "--opening" in rest else "deposit"
+    kind = ("opening_balance" if "--opening" in flags
+            else "principal" if "--principal" in flags else "deposit")
 
     storage.init()
     with storage.connect() as conn:
@@ -47,17 +55,19 @@ def main() -> int:
     with storage.connect() as conn:
         storage.save_cashflow(conn, date, account, amount, note, kind)
         rows = conn.execute(
-            "SELECT trade_date, amount, note FROM cashflows "
+            "SELECT trade_date, amount, kind, note FROM cashflows "
             "WHERE account = ? ORDER BY trade_date", (account,),
         ).fetchall()
 
     print("\nall cashflows:")
     total = Decimal("0")
     for r in rows:
-        total += Decimal(r["amount"])
+        # Only transfers net: principal/opening_balance are reference points.
+        if r["kind"] == "deposit":
+            total += Decimal(r["amount"])
         print(f"  {r['trade_date']}  {Decimal(r['amount']):>12,}  "
-              f"{r['note'] or ''}")
-    print(f"  {'net':>10}  {total:>12,}")
+              f"{r['kind']:<15}  {r['note'] or ''}")
+    print(f"  {'net transfers':>10}  {total:>12,}")
 
     return 0
 
