@@ -35,7 +35,7 @@ STATE_DIR=${QL_STATE_DIR:-$LOG_DIR}
 PLIST_DIR=${QL_PLIST_DIR:-$HOME/Library/LaunchAgents}
 LAUNCHCTL=${QL_LAUNCHCTL:-/bin/launchctl}
 SQLITE=${QL_SQLITE:-/usr/bin/sqlite3}
-LABELS=(${=QL_LABELS:-daily pricerefresh checkdue amzncheck pbrcheck tossmorning})
+LABELS=(${=QL_LABELS:-daily pricerefresh checkdue amzncheck pbrcheck tossmorning disclosureflag})
 TODAY=${QL_TODAY:-$(date +%F)}
 NOW=${QL_NOW:-$(date +%H%M)}
 MAX_RUN_SECS=${QL_MAX_RUN_SECS:-1800}

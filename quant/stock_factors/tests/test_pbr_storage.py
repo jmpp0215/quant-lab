@@ -97,3 +97,48 @@ def test_save_rebalance_same_day_rerun_does_not_crash_and_overwrites(tmp_path, m
 
         orders = conn.execute("SELECT broker_order_id FROM pbr_orders WHERE trade_date='2026-09-07'").fetchall()
         assert {o["broker_order_id"] for o in orders} == {"order-1", "order-2"}
+
+
+def _flag_row(symbol, rcept_no, title_class="neutral", llm_severe=None):
+    return {"symbol": symbol, "rcept_no": rcept_no, "rcept_dt": "20261001",
+            "report_nm": "x", "title_class": title_class, "llm_severe": llm_severe,
+            "llm_category": None, "llm_reason": None, "llm_model": None}
+
+
+STATS = {"n_symbols": 2, "n_llm_calls": 1, "input_tokens": 100,
+         "output_tokens": 10, "cost_usd": Decimal("0.001"), "errors": 0}
+
+
+def test_disclosure_run_round_trip(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    with pbr_storage.connect() as conn:
+        assert not pbr_storage.disclosure_run_exists(conn, "2026-10-16")
+        pbr_storage.save_disclosure_run(conn, "2026-10-16", [
+            _flag_row("000001", "a"), _flag_row("000002", "b", "review", False)], STATS)
+
+    with pbr_storage.connect() as conn:
+        assert pbr_storage.disclosure_run_exists(conn, "2026-10-16")
+        rows = conn.execute("SELECT symbol, llm_severe FROM disclosure_flags "
+                            "ORDER BY symbol").fetchall()
+        run = conn.execute("SELECT n_filings, cost_usd FROM disclosure_runs").fetchone()
+    # NULL stays NULL ("not judged"), False is stored as 0.
+    assert [tuple(r) for r in rows] == [("000001", None), ("000002", 0)]
+    assert tuple(run) == (2, "0.001")
+
+
+def test_disclosure_rerun_replaces_the_earlier_rows(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    with pbr_storage.connect() as conn:
+        pbr_storage.save_disclosure_run(conn, "2026-10-16", [_flag_row("000001", "a")], STATS)
+        pbr_storage.save_disclosure_run(conn, "2026-10-16", [_flag_row("000002", "b")], STATS)
+        symbols = [r[0] for r in conn.execute("SELECT symbol FROM disclosure_flags")]
+    assert symbols == ["000002"]
+
+
+def test_get_rebalance_target(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    with pbr_storage.connect() as conn:
+        pbr_storage.save_rebalance(conn, "2026-09-14", 50, Decimal("1"), Decimal("1"),
+                                   Decimal("1"), Decimal("1"), {"005930": 1.0}, {})
+        assert pbr_storage.get_rebalance_target(conn, "2026-09-14") == {"005930": 1.0}
+        assert pbr_storage.get_rebalance_target(conn, "2026-09-15") is None

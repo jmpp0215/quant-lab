@@ -42,6 +42,37 @@ def init():
                 broker_order_id TEXT
             )
         """)
+        # Record-only disclosure flags (quant/stock_factors/disclosures.py):
+        # one row per filing seen for a rebalance's target symbol, never
+        # read by the trading path.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS disclosure_flags (
+                trade_date TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                rcept_no TEXT NOT NULL,
+                rcept_dt TEXT NOT NULL,
+                report_nm TEXT NOT NULL,
+                title_class TEXT NOT NULL,
+                llm_severe INTEGER,
+                llm_category TEXT,
+                llm_reason TEXT,
+                llm_model TEXT,
+                PRIMARY KEY (trade_date, symbol, rcept_no)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS disclosure_runs (
+                trade_date TEXT PRIMARY KEY,
+                ran_at TEXT NOT NULL,
+                n_symbols INTEGER,
+                n_filings INTEGER,
+                n_llm_calls INTEGER,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cost_usd TEXT,
+                errors INTEGER
+            )
+        """)
 
 def get_latest_rebalance_date(conn: sqlite3.Connection) -> str | None:
     row = conn.execute("SELECT trade_date FROM pbr_rebalance ORDER BY trade_date DESC LIMIT 1").fetchone()
@@ -128,6 +159,48 @@ def save_order(conn: sqlite3.Connection, trade_date: str, symbol: str, side: str
         """,
         (trade_date, symbol, side, qty, str(limit_price), filled_qty, str(avg_fill_price) if avg_fill_price else None, broker_order_id)
     )
+
+def get_rebalance_target(conn: sqlite3.Connection, trade_date: str) -> dict | None:
+    """target_portfolio of the rebalance on trade_date, or None."""
+    row = conn.execute(
+        "SELECT target_portfolio_json FROM pbr_rebalance WHERE trade_date = ?",
+        (trade_date,)).fetchone()
+    if row is None or not row["target_portfolio_json"]:
+        return None
+    return json.loads(row["target_portfolio_json"])
+
+def disclosure_run_exists(conn: sqlite3.Connection, trade_date: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM disclosure_runs WHERE trade_date = ?", (trade_date,)
+    ).fetchone() is not None
+
+def save_disclosure_run(conn: sqlite3.Connection, trade_date: str,
+                        rows: list[dict], stats: dict) -> None:
+    """rows: {symbol, rcept_no, rcept_dt, report_nm, title_class,
+    llm_severe, llm_category, llm_reason, llm_model}. Replaces any earlier
+    run for the date, so a re-run never leaves a mix of two runs' rows."""
+    conn.execute("DELETE FROM disclosure_flags WHERE trade_date = ?", (trade_date,))
+    conn.executemany(
+        """
+        INSERT INTO disclosure_flags
+        (trade_date, symbol, rcept_no, rcept_dt, report_nm, title_class,
+         llm_severe, llm_category, llm_reason, llm_model)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [(trade_date, r["symbol"], r["rcept_no"], r["rcept_dt"], r["report_nm"],
+          r["title_class"],
+          None if r["llm_severe"] is None else int(r["llm_severe"]),
+          r["llm_category"], r["llm_reason"], r["llm_model"]) for r in rows])
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO disclosure_runs
+        (trade_date, ran_at, n_symbols, n_filings, n_llm_calls, input_tokens,
+         output_tokens, cost_usd, errors)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (trade_date, datetime.now().astimezone().isoformat(), stats["n_symbols"],
+         len(rows), stats["n_llm_calls"], stats["input_tokens"],
+         stats["output_tokens"], str(stats["cost_usd"]), stats["errors"]))
 
 if __name__ == "__main__":
     init()
