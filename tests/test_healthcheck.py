@@ -268,7 +268,7 @@ class TestDefaultLabels:
     def test_pbrcheck_is_checked_by_default(self, env):
         # Reloaded 2026-10-06 after being held (RESEARCH_LOG section 27); it
         # auto-runs run_pbr_live.py on a due day, so it must be watched.
-        for label in ["checkdue", "amzncheck"]:
+        for label in ["checkdue", "amzncheck", "tossmorning"]:
             env.plist(label, env.python_ok)
             env.job(label)
         assert env.run(QL_LABELS=None) == 1
@@ -277,7 +277,15 @@ class TestDefaultLabels:
         assert "checkdue" not in notes and "amzncheck" not in notes
 
     def test_all_default_jobs_healthy(self, env):
-        for label in ["checkdue", "amzncheck", "pbrcheck"]:
+        for label in ["checkdue", "amzncheck", "pbrcheck", "tossmorning"]:
             env.plist(label, env.python_ok)
             env.job(label)
         assert env.run(QL_LABELS=None) == 0
+
+    def test_tossmorning_is_checked_by_default(self, env):
+        # daily.py --morning, 08:30 - the only run that snapshots toss-bot.
+        for label in ["checkdue", "amzncheck", "pbrcheck"]:
+            env.plist(label, env.python_ok)
+            env.job(label)
+        assert env.run(QL_LABELS=None) == 1
+        assert "tossmorning: plist missing" in env.notes_text()

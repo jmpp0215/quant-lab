@@ -20,10 +20,14 @@ _kis_main_client = lambda: KisClient("main")
 # broker's response shape itself. None means orders cannot be placed for
 # this account at all.
 ACCOUNTS = {
+    # Snapshotted by the 08:30 run, not 15:40: Toss rejects this machine's
+    # IP in the afternoon (403 "IP address not allowed" since 2026-10-12)
+    # but allows it in the morning - also why pbrcheck trades at 10:00.
     "toss-bot": {"client": TossClient, "snapshot": toss_client.snapshot,
                  "price": toss_client.batch_price, "broker": toss_client,
                  "buying_power": toss_client.available_cash,
-                 "strategy": False, "tradable": True},
+                 "strategy": False, "tradable": True,
+                 "snapshot_slot": "morning"},
     # Observed (snapshotted daily) but never traded by this strategy -
     # predates it and isn't tranche_init'd, so rebalance_run.py must
     # refuse it rather than relying on that as an accident of empty books.
@@ -67,6 +71,10 @@ def resolve(account: str) -> dict:
     Optional "cash_check": False turns off daily.py's unexplained-cash
     alert for an account whose cash moves on its own (kis-main-overseas:
     FX). Absent means the check runs.
+
+    Optional "snapshot_slot": "morning" moves an account's daily snapshot
+    from the after-close run to `daily.py --morning` (before the open,
+    recorded against the previous trading day). Absent means "close".
     """
     try:
         return ACCOUNTS[account]

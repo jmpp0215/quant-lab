@@ -94,6 +94,13 @@ def check_account_health(conn, account_name: str, snap: storage.AccountSnapshot,
     return problems
 
 
+def accounts_in_slot(registry: dict, slot: str) -> list[str]:
+    """Accounts whose daily snapshot belongs to this run - "close" (the
+    15:40 run) or "morning" (`--morning`, before the open)."""
+    return [name for name, cfg in registry.items()
+            if cfg.get("snapshot_slot", "close") == slot]
+
+
 def record_strategy(signal: strategy.Signal, trade_date: str,
                     session: str | None,
                     candles_by_symbol: dict[str, list[dict]],
@@ -138,11 +145,18 @@ def record_strategy(signal: strategy.Signal, trade_date: str,
 
 def main() -> int:
     logging_config.setup()
-    log.info("daily run start")
+    # --morning snapshots only the "morning"-slot accounts (see
+    # accounts.resolve): before the open, the newest completed candle is
+    # the previous trading day's, so that is the date they are recorded
+    # under - the same date the 15:40 run used for the other accounts.
+    slot = "morning" if "--morning" in sys.argv else "close"
+    log.info("daily run start (%s)", slot)
 
     # Before any early return (market closed, backfill): the watchdog can
-    # die on a holiday too.
-    watchdog = healthcheck_problem(HEALTHCHECK_HEARTBEAT, time.time())
+    # die on a holiday too. Close run only: at 08:30 the last heartbeat is
+    # yesterday's 16:30, which would always look stale.
+    watchdog = (healthcheck_problem(HEALTHCHECK_HEARTBEAT, time.time())
+                if slot == "close" else None)
     if watchdog:
         log.error(watchdog)
         notify("quant-lab", f"daily.py: {watchdog}")
@@ -205,7 +219,8 @@ def main() -> int:
     # Reuse the market-data client for the kis-isa account so it does not
     # authenticate a second KIS session for the same credentials.
     client_cache: dict = {accounts.ACCOUNTS["kis-isa"]["client"]: market_data}
-    for account_name, cfg in accounts.ACCOUNTS.items():
+    for account_name in accounts_in_slot(accounts.ACCOUNTS, slot):
+        cfg = accounts.ACCOUNTS[account_name]
         try:
             factory = cfg["client"]
             if factory not in client_cache:
@@ -265,7 +280,9 @@ def main() -> int:
     if problem_accounts:
         notify("quant-lab", "daily.py: " + " / ".join(problem_accounts))
 
-    log.info("daily run done")
+    # healthcheck.zsh greps today's log for "daily run done" to confirm the
+    # 15:40 run happened; the morning run must not satisfy that check.
+    log.info("daily run done" if slot == "close" else "morning snapshot done")
     return 0 if overall_ok else 1
 
 

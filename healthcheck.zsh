@@ -35,7 +35,7 @@ STATE_DIR=${QL_STATE_DIR:-$LOG_DIR}
 PLIST_DIR=${QL_PLIST_DIR:-$HOME/Library/LaunchAgents}
 LAUNCHCTL=${QL_LAUNCHCTL:-/bin/launchctl}
 SQLITE=${QL_SQLITE:-/usr/bin/sqlite3}
-LABELS=(${=QL_LABELS:-daily pricerefresh checkdue amzncheck pbrcheck})
+LABELS=(${=QL_LABELS:-daily pricerefresh checkdue amzncheck pbrcheck tossmorning})
 TODAY=${QL_TODAY:-$(date +%F)}
 NOW=${QL_NOW:-$(date +%H%M)}
 MAX_RUN_SECS=${QL_MAX_RUN_SECS:-1800}
@@ -139,7 +139,7 @@ if [[ -n $weekday ]] && (( weekday <= 5 )); then
         fi
     fi
 
-    # 4. prices - after the 12:30 refresh.
+    # 4. prices - after the 09:30 refresh (moved from 12:30 on 2026-10-15).
     if (( 10#$NOW >= 1245 )); then
         expected=$(sql "SELECT REPLACE(MAX(trade_date), '-', '') FROM runs WHERE trade_date < '$TODAY'")
         latest=$(sql "SELECT MAX(date) FROM pead_price_raw")

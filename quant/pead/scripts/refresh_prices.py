@@ -16,7 +16,8 @@ the KRX close by ~1% on average, sometimes outside the KRX day's range,
 while volume stayed KRX's (RESEARCH_LOG section 24). Naver also had no
 request timeout, which hung a run for 22 hours on 2026-10-05.
 
-Today's bar is never stored: launchd runs this at 12:30, mid-session, and a
+Today's bar is never stored: launchd runs this at 09:30 (12:30 until
+2026-10-15, moved so pbrcheck can trade at 10:00), mid-session, and a
 mid-session bar is a partial one (2026-10-01's rows kept their 12:30 close
 and volume because the next two runs failed). The next run's overlap
 window picks it up once it is final.

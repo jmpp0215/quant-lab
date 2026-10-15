@@ -2,8 +2,9 @@
 
 from decimal import Decimal
 
+import daily
 from daily import check_account_health
-from quant import storage
+from quant import accounts, storage
 
 
 def snapshot(positions, cash="100000", currency="KRW"):
@@ -147,3 +148,26 @@ class TestHealthcheckProblem:
         hb = tmp_path / "hb"
         hb.write_text("not a number")
         assert "unreadable" in healthcheck_problem(hb, now=0)
+
+
+class TestAccountsInSlot:
+    def test_toss_bot_is_snapshotted_in_the_morning_only(self):
+        assert daily.accounts_in_slot(accounts.ACCOUNTS, "morning") == ["toss-bot"]
+        assert "toss-bot" not in daily.accounts_in_slot(accounts.ACCOUNTS, "close")
+
+    def test_every_account_belongs_to_exactly_one_slot(self):
+        morning = daily.accounts_in_slot(accounts.ACCOUNTS, "morning")
+        close = daily.accounts_in_slot(accounts.ACCOUNTS, "close")
+        assert sorted(morning + close) == sorted(accounts.ACCOUNTS)
+
+    def test_strategy_account_stays_in_the_close_run(self):
+        # The signal is recorded only alongside the strategy account's
+        # snapshot; moving it to the morning would record it pre-open.
+        close = daily.accounts_in_slot(accounts.ACCOUNTS, "close")
+        assert all(name in close for name, cfg in accounts.ACCOUNTS.items()
+                   if cfg["strategy"])
+
+    def test_missing_slot_means_close(self):
+        registry = {"a": {}, "b": {"snapshot_slot": "morning"}}
+        assert daily.accounts_in_slot(registry, "close") == ["a"]
+        assert daily.accounts_in_slot(registry, "morning") == ["b"]
