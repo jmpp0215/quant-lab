@@ -56,7 +56,9 @@ def list_filings(corp_code: str, bgn_de: str, end_de: str) -> list[dict]:
         r = dart._rate_limit_and_retry(f"{dart.OPENDART_BASE_URL}/list.json", {
             "crtfc_key": dart._get_api_key(), "corp_code": corp_code,
             "bgn_de": bgn_de, "end_de": end_de, "page_no": page, "page_count": 100})
-        if r.get("status") == "013":   # no filings in range
+        # no filings in range: the helper maps 013 to {"list": []} with no
+        # status key, which aborted the first scheduled run (2026-10-16)
+        if r.get("status") == "013" or ("status" not in r and r.get("list") == []):
             return out
         if r.get("status") != "000":
             raise RuntimeError(f"DART list.json status {r.get('status')}: {r.get('message')}")
