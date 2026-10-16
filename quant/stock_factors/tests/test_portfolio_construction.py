@@ -589,6 +589,67 @@ class TestCalculateDiffMinOrder:
         assert cash_left / total < Decimal("0.01")
 
 
+class TestCalculateDiffBuyBudget:
+    """Buys may spend only cash + the sells actually placed. A trim under the
+    50k sell floor is skipped, so its proceeds never arrive; on 2026-10-16
+    the unscaled buys ran ~242k past the cash and Toss rejected the last
+    ones with 422 insufficient-buying-power, aborting the run."""
+
+    @pytest.fixture(autouse=True)
+    def _no_network_listing(self, monkeypatch):
+        monkeypatch.setattr(portfolio_construction.fdr, "StockListing",
+                            lambda _market: pd.DataFrame({"Code": [], "Name": []}))
+
+    def test_buys_scaled_proportionally_when_skipped_sell_leaves_shortfall(self):
+        # A 140k (over by 40k, sell skipped), B 60k, C 0, cash 100k = 300k
+        # -> 100k each. Buys planned: B +4 (40k), C +10 (100k) = 140k vs
+        # 100k cash -> factor 0.714: B +2, C +7 = 90k.
+        positions = {"A": _pos("A", 14), "B": _pos("B", 6)}
+        weights = {"A": Decimal("1") / 3, "B": Decimal("1") / 3, "C": Decimal("1") / 3}
+        prices = {"A": Decimal("10000"), "B": Decimal("10000"), "C": Decimal("10000")}
+
+        orders = calculate_diff(weights, positions, prices, Decimal("100000"))
+
+        assert [(o.symbol, o.side, o.quantity) for o in orders] == [
+            ("B", "BUY", 2), ("C", "BUY", 7)]
+
+    def test_planned_sell_proceeds_count_toward_budget(self):
+        # C sold for 100k funds the buys alongside 100k cash - no scaling.
+        positions = {"A": _pos("A", 10), "C": _pos("C", 10)}
+        weights = {"A": Decimal("0.5"), "B": Decimal("0.5")}
+        prices = {"A": Decimal("10000"), "B": Decimal("10000"), "C": Decimal("10000")}
+
+        orders = calculate_diff(weights, positions, prices, Decimal("100000"))
+
+        assert [(o.symbol, o.quantity) for o in orders if o.side == "BUY"] == [
+            ("A", 5), ("B", 15)]
+
+    def test_scaled_buys_never_exceed_budget(self):
+        prices = {"A": Decimal("3535"), "B": Decimal("47950"), "C": Decimal("1906"),
+                  "D": Decimal("10000")}
+        positions = {"D": _pos("D", 30)}  # over target by < 50k, sell skipped
+        weights = {s: Decimal("0.25") for s in prices}
+        cash = Decimal("870000")
+
+        orders = calculate_diff(weights, positions, prices, cash)
+
+        buys = [o for o in orders if o.side == "BUY"]
+        assert buys
+        assert sum(o.notional for o in buys) <= cash
+
+    def test_scaled_buy_under_10k_is_dropped(self):
+        # A 160k, B 80k, cash 60k = 300k -> A 120k (over 40k, sell skipped),
+        # B 90k (+1), C 90k (+9). Buys 100k vs 60k -> factor 0.6:
+        # B 1 -> 0 shares (dropped), C 9 -> 5 shares (50k).
+        positions = {"A": _pos("A", 16), "B": _pos("B", 8)}
+        weights = {"A": Decimal("0.4"), "B": Decimal("0.3"), "C": Decimal("0.3")}
+        prices = {"A": Decimal("10000"), "B": Decimal("10000"), "C": Decimal("10000")}
+
+        orders = calculate_diff(weights, positions, prices, Decimal("60000"))
+
+        assert [(o.symbol, o.side, o.quantity) for o in orders] == [("C", "BUY", 5)]
+
+
 class TestHaltedSymbols:
     @pytest.fixture
     def db(self, tmp_path, monkeypatch):

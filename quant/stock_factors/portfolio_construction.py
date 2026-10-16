@@ -1,5 +1,6 @@
 import os
 import logging
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
@@ -412,6 +413,20 @@ def calculate_diff(target_weights: dict[str, Decimal],
             buys.append(order)
         else:
             sells.append(order)
+
+    # Buys can only spend cash plus the sells actually placed - a trim under
+    # MIN_SELL_ORDER_KRW is skipped, but the buys were sized assuming its
+    # proceeds. Over budget, scale every buy down by the same factor;
+    # placing them unscaled let the last buys hit Toss's 422
+    # insufficient-buying-power and abort the run (2026-10-16).
+    budget = cash + sum((o.notional for o in sells), Decimal("0"))
+    planned = sum((o.notional for o in buys), Decimal("0"))
+    if planned > budget:
+        factor = max(budget, Decimal("0")) / planned
+        log.warning("buy notional (%.0f) exceeds cash + sells (%.0f) - "
+                    "scaling every buy by %.3f", planned, budget, factor)
+        scaled = (replace(o, quantity=int(o.quantity * factor)) for o in buys)
+        buys = [o for o in scaled if o.notional >= MIN_BUY_ORDER_KRW]
 
     # Return sells first, then buys (to free up cash)
     return sells + buys
