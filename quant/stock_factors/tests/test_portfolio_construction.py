@@ -5,11 +5,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from quant.rebalance import Position
+from quant.rebalance import Order, Position
 from quant.stock_factors import portfolio_construction, value
 from quant.stock_factors.portfolio_construction import (
     PBRConfig,
     calculate_diff,
+    fit_buys_to_budget,
     halted_symbols,
     inverse_vol_weights,
     price_data_is_stale,
@@ -603,7 +604,8 @@ class TestCalculateDiffBuyBudget:
     def test_buys_scaled_proportionally_when_skipped_sell_leaves_shortfall(self):
         # A 140k (over by 40k, sell skipped), B 60k, C 0, cash 100k = 300k
         # -> 100k each. Buys planned: B +4 (40k), C +10 (100k) = 140k vs
-        # 100k cash -> factor 0.714: B +2, C +7 = 90k.
+        # 100k cash -> factor 0.714: B +2, C +7 = 90k. The 10k left goes to
+        # C, furthest short (30k vs B's 20k): C +8, total 100k.
         positions = {"A": _pos("A", 14), "B": _pos("B", 6)}
         weights = {"A": Decimal("1") / 3, "B": Decimal("1") / 3, "C": Decimal("1") / 3}
         prices = {"A": Decimal("10000"), "B": Decimal("10000"), "C": Decimal("10000")}
@@ -611,7 +613,7 @@ class TestCalculateDiffBuyBudget:
         orders = calculate_diff(weights, positions, prices, Decimal("100000"))
 
         assert [(o.symbol, o.side, o.quantity) for o in orders] == [
-            ("B", "BUY", 2), ("C", "BUY", 7)]
+            ("B", "BUY", 2), ("C", "BUY", 8)]
 
     def test_planned_sell_proceeds_count_toward_budget(self):
         # C sold for 100k funds the buys alongside 100k cash - no scaling.
@@ -639,15 +641,63 @@ class TestCalculateDiffBuyBudget:
 
     def test_scaled_buy_under_10k_is_dropped(self):
         # A 160k, B 80k, cash 60k = 300k -> A 120k (over 40k, sell skipped),
-        # B 90k (+1), C 90k (+9). Buys 100k vs 60k -> factor 0.6:
-        # B 1 -> 0 shares (dropped), C 9 -> 5 shares (50k).
+        # B 90k (+1), C 90k (+9). Buys 100k vs 60k -> factor 0.6: B 0, C 5,
+        # 10k left goes to C (furthest short) -> C 6. B stays at 0, dropped.
         positions = {"A": _pos("A", 16), "B": _pos("B", 8)}
         weights = {"A": Decimal("0.4"), "B": Decimal("0.3"), "C": Decimal("0.3")}
         prices = {"A": Decimal("10000"), "B": Decimal("10000"), "C": Decimal("10000")}
 
         orders = calculate_diff(weights, positions, prices, Decimal("60000"))
 
-        assert [(o.symbol, o.side, o.quantity) for o in orders] == [("C", "BUY", 5)]
+        assert [(o.symbol, o.side, o.quantity) for o in orders] == [("C", "BUY", 6)]
+
+
+def _buy(symbol, qty, price):
+    return Order(symbol=symbol, name=symbol, side="BUY", quantity=qty,
+                 limit_price=Decimal(price))
+
+
+class TestFitBuysToBudget:
+    MIN = Decimal("10000")
+
+    def test_within_budget_is_unchanged(self):
+        buys = [_buy("A", 5, "10000")]
+        assert fit_buys_to_budget(buys, Decimal("50000"), self.MIN) == buys
+
+    def test_leftover_buys_back_a_floored_expensive_share(self):
+        # 2026-10-16 shape: four 3 x 9,000 buys plus one 47,950 share,
+        # 155,950 planned vs 150,000. Factor 0.962 floors each Y to 2
+        # (72k) and X to 0; the 78k left goes to X first (furthest short,
+        # 47,950), then one share each to three Ys (27k): 146,950.
+        buys = [_buy("X", 1, "47950")] + [_buy(f"Y{i}", 3, "9000") for i in range(4)]
+
+        fitted = {o.symbol: o.quantity for o in fit_buys_to_budget(buys, Decimal("150000"), self.MIN)}
+
+        assert fitted["X"] == 1
+        assert sorted(fitted[f"Y{i}"] for i in range(4)) == [2, 3, 3, 3]
+
+    def test_never_exceeds_budget_or_planned_quantity(self):
+        buys = [_buy("A", 7, "3535"), _buy("B", 2, "47950"), _buy("C", 40, "1906"),
+                _buy("D", 3, "33950")]
+        budget = Decimal("200000")
+
+        fitted = fit_buys_to_budget(buys, budget, self.MIN)
+
+        planned = {o.symbol: o.quantity for o in buys}
+        assert sum(o.notional for o in fitted) <= budget
+        assert all(o.quantity <= planned[o.symbol] for o in fitted)
+
+    def test_buy_left_under_min_order_is_dropped(self):
+        # A planned 1 x 5,000 floors to 0; leftover goes to B first (larger
+        # shortfall) and nothing is left for A, so A drops out entirely.
+        buys = [_buy("A", 1, "5000"), _buy("B", 10, "10000")]
+
+        fitted = fit_buys_to_budget(buys, Decimal("60000"), self.MIN)
+
+        assert [(o.symbol, o.quantity) for o in fitted] == [("B", 6)]
+
+    def test_zero_budget_buys_nothing(self):
+        assert fit_buys_to_budget([_buy("A", 5, "10000")], Decimal("0"), self.MIN) == []
 
 
 class TestHaltedSymbols:

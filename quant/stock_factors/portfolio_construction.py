@@ -322,6 +322,35 @@ def halted_symbols(symbols: set[str], as_of_date: str) -> set[str]:
     return {r[0] for r in rows}
 
 
+def fit_buys_to_budget(buys: list[Order], budget: Decimal,
+                       min_order: Decimal) -> list[Order]:
+    """Scale `buys` down so their total notional fits `budget`.
+
+    Every buy shrinks by the same factor (budget / planned) and is floored.
+    Flooring leaves cash unspent (2026-10-16: a 1-share 47,950 buy floored
+    to 0 and ~142k sat idle), so the leftover goes back one share at a time
+    to the buy furthest short of its planned notional, never past its
+    planned quantity. Buys left under `min_order` are dropped.
+    """
+    planned = sum((o.notional for o in buys), Decimal("0"))
+    if planned <= budget:
+        return buys
+    factor = max(budget, Decimal("0")) / planned
+    log.warning("buy notional (%.0f) exceeds cash + sells (%.0f) - "
+                "scaling every buy by %.3f", planned, budget, factor)
+    qty = {o.symbol: int(o.quantity * factor) for o in buys}
+    left = budget - sum((qty[o.symbol] * o.limit_price for o in buys), Decimal("0"))
+    while True:
+        fits = [o for o in buys if qty[o.symbol] < o.quantity and o.limit_price <= left]
+        if not fits:
+            break
+        top = max(fits, key=lambda o: (o.quantity - qty[o.symbol]) * o.limit_price)
+        qty[top.symbol] += 1
+        left -= top.limit_price
+    scaled = (replace(o, quantity=qty[o.symbol]) for o in buys)
+    return [o for o in scaled if o.notional >= min_order]
+
+
 def calculate_diff(target_weights: dict[str, Decimal],
                    positions: dict[str, Position],
                    prices: dict[str, Decimal],
@@ -420,13 +449,7 @@ def calculate_diff(target_weights: dict[str, Decimal],
     # placing them unscaled let the last buys hit Toss's 422
     # insufficient-buying-power and abort the run (2026-10-16).
     budget = cash + sum((o.notional for o in sells), Decimal("0"))
-    planned = sum((o.notional for o in buys), Decimal("0"))
-    if planned > budget:
-        factor = max(budget, Decimal("0")) / planned
-        log.warning("buy notional (%.0f) exceeds cash + sells (%.0f) - "
-                    "scaling every buy by %.3f", planned, budget, factor)
-        scaled = (replace(o, quantity=int(o.quantity * factor)) for o in buys)
-        buys = [o for o in scaled if o.notional >= MIN_BUY_ORDER_KRW]
+    buys = fit_buys_to_budget(buys, budget, MIN_BUY_ORDER_KRW)
 
     # Return sells first, then buys (to free up cash)
     return sells + buys
