@@ -68,11 +68,14 @@ def parse_brknews_title_rows(output: list[dict], symbol: str, fetched_at: str) -
     return rows
 
 
-def collect_headlines(client, symbol: str, rate_limiter: RateLimiter) -> list[dict]:
+def collect_headlines(client, symbol: str, exchange: str, rate_limiter: RateLimiter) -> list[dict]:
     now = datetime.now(KST).isoformat()
 
     rate_limiter.wait()
-    news_resp = client.news_title_overseas(symbol=symbol)
+    # SYMB alone matches nothing - KIS only filters by symbol when EXCHANGE_CD
+    # is also set (verified live 2026-10-20: SYMB=AMZN alone -> 0 rows,
+    # with EXCHANGE_CD=NAS -> AMZN-tagged headlines).
+    news_resp = client.news_title_overseas(symbol=symbol, exchange_cd=exchange)
     news_rows = parse_news_title_rows(news_resp.get("outblock1", []), symbol, now)
 
     rate_limiter.wait()
@@ -115,7 +118,7 @@ def main() -> int:
     client = accounts.get_client(args.account)
     rate_limiter = RateLimiter()
 
-    rows = collect_headlines(client, args.symbol, rate_limiter)
+    rows = collect_headlines(client, args.symbol, config.exchange, rate_limiter)
 
     with sqlite3.connect(storage.DB_PATH) as conn:
         storage.save_news_events(conn, rows)

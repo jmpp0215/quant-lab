@@ -34,9 +34,12 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import requests
+from dotenv import load_dotenv
 
 from quant.amzn import storage
 from quant.amzn.config import AmznConfig
+
+load_dotenv()  # SEC_EDGAR_USER_AGENT - nothing else on this path loads .env
 
 KST = ZoneInfo("Asia/Seoul")
 log = logging.getLogger("amzn.segment_collector")

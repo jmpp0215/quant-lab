@@ -5,6 +5,7 @@ koreainvestment/open-trading-api).
 """
 from quant.amzn.news_collector import (
     _published_at,
+    collect_headlines,
     parse_brknews_title_rows,
     parse_news_title_rows,
 )
@@ -74,3 +75,28 @@ def test_parse_brknews_title_rows_maps_fields():
     assert row["news_key"] == "998877"
     assert row["headline"] == "Amazon announces new AWS data center in Seoul"
     assert row["source"] == "Bloomberg"
+
+
+class _NoWait:
+    def wait(self):
+        pass
+
+
+class _RecordingClient:
+    def __init__(self):
+        self.news_kwargs = None
+
+    def news_title_overseas(self, **kwargs):
+        self.news_kwargs = kwargs
+        return {"outblock1": MOCK_NEWS_TITLE_OUTBLOCK1}
+
+    def brknews_title_overseas(self, **kwargs):
+        return {"output": []}
+
+
+def test_collect_headlines_passes_exchange_code():
+    # KIS ignores SYMB unless EXCHANGE_CD is also set - returns zero rows.
+    client = _RecordingClient()
+    rows = collect_headlines(client, "AMZN", "NAS", _NoWait())
+    assert client.news_kwargs == {"symbol": "AMZN", "exchange_cd": "NAS"}
+    assert [r["news_key"] for r in rows] == ["20260907090512AMZN01"]
