@@ -53,3 +53,30 @@ def test_only_pbr_available():
         holding=None,
     )
     assert "밸류 40%ile(중립, PBR40)" in msg
+
+
+class TestCollectExtras:
+    def test_news_failure_does_not_stop_sec_or_raise(self, monkeypatch, tmp_path):
+        from quant.amzn.scripts import check_amzn
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("kis down")
+
+        sec_calls = []
+        monkeypatch.setattr(check_amzn.storage, "DB_PATH", tmp_path / "t.db")
+        monkeypatch.setattr(check_amzn.news_collector, "collect_headlines", boom)
+        monkeypatch.setattr(check_amzn.segment_collector, "collect_new_filings",
+                            lambda *a, **k: sec_calls.append(a) or 0)
+        check_amzn.collect_extras(object(), check_amzn.AmznConfig(), object())
+        assert len(sec_calls) == 1
+
+    def test_sec_failure_does_not_raise(self, monkeypatch, tmp_path):
+        from quant.amzn.scripts import check_amzn
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("edgar 403")
+
+        monkeypatch.setattr(check_amzn.storage, "DB_PATH", tmp_path / "t.db")
+        monkeypatch.setattr(check_amzn.news_collector, "collect_headlines", lambda *a, **k: [])
+        monkeypatch.setattr(check_amzn.segment_collector, "collect_new_filings", boom)
+        check_amzn.collect_extras(object(), check_amzn.AmznConfig(), object())

@@ -12,6 +12,10 @@ quant/amzn/README.md), so RSI shows "데이터부족" for the first
 quant.amzn.signal.MIN_RSI_SAMPLES trading days from a cold start, and the
 valuation percentile for the first MIN_PERCENTILE_SAMPLES.
 
+After the notification it also collects AMZN news headlines (untagged) and
+any new SEC 10-Q/10-K segment facts, so they accumulate without a separate
+schedule. Best-effort: a failure there is logged, never fails the check.
+
     python -m quant.amzn.scripts.check_amzn
 """
 import logging
@@ -19,7 +23,7 @@ import sqlite3
 import sys
 
 from quant import accounts
-from quant.amzn import signal, storage
+from quant.amzn import news_collector, segment_collector, signal, storage
 from quant.amzn.config import AmznConfig
 from quant.amzn.price_collector import collect_and_store, parse_holding
 from quant.amzn.rate_limit import RateLimiter
@@ -27,7 +31,25 @@ from quant.kis_client import KisApiError
 from quant.notify import notify
 
 SYMBOL = "AMZN"
+CIK = "0001018724"
 log = logging.getLogger("amzn.check_amzn")
+
+
+def collect_extras(client, config: AmznConfig, rate_limiter: RateLimiter) -> None:
+    """News headlines + new SEC filings - each independently best-effort."""
+    try:
+        rows = news_collector.collect_headlines(client, SYMBOL, config.exchange, rate_limiter)
+        with sqlite3.connect(storage.DB_PATH) as conn:
+            storage.save_news_events(conn, rows)
+        log.info("news: %d headline(s) fetched", len(rows))
+    except Exception as e:
+        log.warning("news collection failed: %s", e)
+    try:
+        with sqlite3.connect(storage.DB_PATH) as conn:
+            n_new = segment_collector.collect_new_filings(conn, CIK, SYMBOL, config)
+        log.info("sec: %d new filing(s)", n_new)
+    except Exception as e:
+        log.warning("sec collection failed: %s", e)
 
 
 def format_summary(rsi: float | None, per_pctl: float | None, pbr_pctl: float | None,
@@ -108,6 +130,8 @@ def main() -> int:
                                   len(per_hist), len(closes), holding)
         log.info(message)
         notify("quant-lab", message)
+
+        collect_extras(client, config, rate_limiter)
 
     except KisApiError as e:
         log.error("api error: %s", e)
