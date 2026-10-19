@@ -16,6 +16,8 @@ unmodified by this work.
 | `segment_collector.py` | SEC EDGAR, raw XBRL instance per filing | AWS revenue/operating income, advertising revenue, capex, OCF, FCF |
 | `news_collector.py` | KIS 해외뉴스종합(제목) `HHPSTH60100C1` + 해외속보(제목) `FHKST01011801` | Headlines, LLM-tagged into event categories |
 | `signal.py` | `amzn_price_daily` history (pure, no I/O) | RSI(14) and PER/PBR percentile-rank vs. AMZN's own accumulated history |
+| `timing.py` | daily bars (pure, no I/O) | Monthly-accumulation timing backtest: which day in the month to buy - see "Timing backtest" below |
+| `scripts/timing_backtest.py` | KIS 해외주식 기간별시세 (`HHDFS76240000`, split-adjusted) + `timing.py` | Fetches ~10y of daily bars and prints each timing rule vs. the first-trading-day baseline. Read-only |
 | `scripts/check_amzn.py` | `price_collector` + `signal` + `kis-main-overseas` holdings | Daily desktop notification: valuation percentile, RSI, holding status - notify-only, no trade execution. Run standalone/separate from `daily.py` because it also checks `kis-main-overseas`, which is outside `daily.py`'s (`kis-isa`-centric) scope. |
 
 ## Auth requirements
@@ -135,6 +137,44 @@ number:
   roughly 60 rows (~3 months) have accumulated - a young history means "today
   is the cheapest ever seen" mostly reflects a short window, not a real
   distribution.
+
+## Timing backtest (2026-10-20)
+
+The question this package was really built for: AMZN is being accumulated
+every month regardless - does choosing *which day* in the month to buy lower
+the average cost?
+
+**Setup** (`timing.py`): the same amount every month, one buy per month. A
+rule's signal is read at day *i*'s close and the buy happens at day *i+1*'s
+open (what's doable from Korea). A rule that doesn't fire in a month buys at
+the month's last trading day's open, so cash never sits idle past the month.
+Baseline: the month's first trading day's open. Fractional shares, no
+commission/FX/interest on cash waiting within the month. Score: shares
+accumulated vs. baseline (same cash, so more shares == lower average cost).
+
+**Result**, AMZN 2016-09 ~ 2026-09, 121 months:
+
+| Rule | Shares vs. baseline | Months won | Years won |
+|---|---|---|---|
+| Month's last day (pure cost of waiting) | -1.77% | 40% | 3/11 |
+| RSI(14) < 30, next day | -1.54% | 41% | 3/11 |
+| RSI(14) < 40, next day | -1.18% | 53% | 5/11 |
+| Close 5% below 20-day high, next day | -1.36% | 50% | 3/11 |
+| Close 8% below 20-day high, next day | -1.54% | 45% | 3/11 |
+| *Hindsight: month's lowest open (ceiling)* | *+5.19%* | *86%* | *11/11* |
+
+**Conclusion: no rule beat buying on the first trading day.** AMZN drifted
+up within the month often enough that waiting cost more than dips saved;
+the rules only won in down years (mostly 2022), which can't be known ahead.
+Even perfect hindsight is worth just +5%, so the prize was small to begin
+with. Practical default: buy on a fixed early-month day (or as soon as cash
+arrives), mechanically.
+
+**Caveats**: one stock with a strong uptrend over the window (a sideways
+stock might reward waiting more); earnings-date rules untested (no
+historical earnings-date source wired up); FX timing is a separate question.
+
+Rerun: `python -m quant.amzn.scripts.timing_backtest [--years 10]`
 
 ## Not yet built (deliberately out of scope this stage)
 

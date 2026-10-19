@@ -509,6 +509,28 @@ class KisClient:
             },
         )
 
+    def daily_price_overseas(self, symbol: str, exchange: str = "NAS",
+                             end_ymd: str = "") -> dict:
+        """Overseas daily bars, 100 per call, newest first, ending at
+        `end_ymd` (YYYYMMDD; "" = today) (해외주식 기간별시세, tr_id:
+        HHDFS76240000). Response body's "output2" is a list of {xymd, clos,
+        open, high, low, tvol, ...}. MODP=1 returns split-adjusted prices -
+        verified live 2026-10-20 across AMZN's 2022-06-06 20:1 split (volume
+        is not adjusted). Today's row is the in-progress session.
+        """
+        return self.get(
+            "/uapi/overseas-price/v1/quotations/dailyprice",
+            tr_id="HHDFS76240000",
+            params={
+                "AUTH": "",
+                "EXCD": exchange,
+                "SYMB": symbol,
+                "GUBN": "0",
+                "BYMD": end_ymd,
+                "MODP": "1",
+            },
+        )
+
     def news_title_overseas(self, symbol: str = "", nation_cd: str = "US",
                              exchange_cd: str = "", data_dt: str = "",
                              data_tm: str = "", cts: str = "") -> dict:

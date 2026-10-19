@@ -15,7 +15,7 @@ survivors live on a personal brokerage account.
 | Dual momentum — eight Korea-listed ETFs, monthly staggered rebalance | repo root + `quant/` | **Live** on `kis-isa` (see `RUNBOOK.md`) |
 | Value / quality stock factors — PBR, GPA | `quant/stock_factors/` | Live execution path exists (`scripts/run_pbr_live.py`), `DRY_RUN`-gated |
 | Post-earnings announcement drift (PEAD) | `quant/pead/` | Research concluded, not traded — see `quant/pead/RESEARCH_LOG.md` |
-| AMZN data-collection layer | `quant/amzn/` | Data collection only, no signal or execution yet — see `quant/amzn/README.md` |
+| AMZN data collection + accumulation timing | `quant/amzn/` | Notify-only daily check, no execution; timing backtest found no rule beats buying on the month's first day — see `quant/amzn/README.md` |
 
 The rest of this document covers dual momentum — the most developed track, and the only one
 currently trading real money. The other tracks each carry their own README / research log.
