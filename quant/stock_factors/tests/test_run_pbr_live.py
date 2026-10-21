@@ -242,3 +242,40 @@ class TestOverRankBoundary:
                           rank_boundary={"A": 1100.0}, over_boundary={})
         assert s["rank_boundary"] == {"A": 1100.0}
         assert s["over_boundary"] == {}
+
+
+class TestRetryWindow:
+    """A manual --retry is held to check_pbr_due's window too: the last full
+    rebalance must be at most RETRY_WINDOW_TRADING_DAYS (3) weekdays old."""
+
+    @staticmethod
+    def _save(conn, trade_date, summary):
+        pbr_storage.save_rebalance(
+            conn, trade_date, 50,
+            Decimal("100"), Decimal("90"), Decimal("10"), Decimal("20"),
+            {"005930": 1.0}, summary)
+
+    def test_within_window_replays(self, pbr_db):
+        with pbr_storage.connect() as conn:   # Mon 09-07 -> Thu 09-10 = 3
+            self._save(conn, "2026-09-07", {"failed": ["005930"], "partial": [], "all_clear": False})
+            weights, _ = resolve_target_weights("2026-09-10", PBRConfig(), retry=True, conn=conn)
+        assert weights == {"005930": Decimal("1.0")}
+
+    def test_past_window_refuses(self, pbr_db):
+        with pbr_storage.connect() as conn:   # Mon 09-07 -> Fri 09-11 = 4
+            self._save(conn, "2026-09-07", {"failed": ["005930"], "partial": [], "all_clear": False})
+            with pytest.raises(ValueError, match="retry window"):
+                resolve_target_weights("2026-09-11", PBRConfig(), retry=True, conn=conn)
+
+    def test_weekend_does_not_count(self, pbr_db):
+        with pbr_storage.connect() as conn:   # Thu 09-10 -> Tue 09-15 = 3
+            self._save(conn, "2026-09-10", {"failed": ["005930"], "partial": [], "all_clear": False})
+            resolve_target_weights("2026-09-15", PBRConfig(), retry=True, conn=conn)
+
+    def test_window_counts_from_the_full_rebalance_not_the_last_retry(self, pbr_db):
+        with pbr_storage.connect() as conn:
+            self._save(conn, "2026-09-07", {"failed": ["005930"], "partial": [], "all_clear": False})
+            self._save(conn, "2026-09-09", {"failed": ["005930"], "partial": [], "all_clear": False,
+                                            "retry_of": "2026-09-07"})
+            with pytest.raises(ValueError, match="retry window"):
+                resolve_target_weights("2026-09-11", PBRConfig(), retry=True, conn=conn)

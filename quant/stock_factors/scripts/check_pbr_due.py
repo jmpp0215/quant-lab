@@ -16,11 +16,8 @@ log = logging.getLogger("check_pbr_due")
 
 FULL_REBALANCE_TRADING_DAYS = 20
 
-# 부분/실패 리밸런싱 이후, 실패한 종목만 소규모로 재시도할 수 있는 기간(거래일). 이
-# 기간을 넘기면 재시도를 포기하고 다음 20거래일 전체 사이클을 기다린다 - 몇 종목만
-# 매번 체결이 안 되는 패턴이 반복돼도 전체 포트폴리오가 매일 재구성되는 걸 막기 위한
-# 상한이다.
-RETRY_WINDOW_TRADING_DAYS = 3
+# See pbr_storage.RETRY_WINDOW_TRADING_DAYS (shared with run_pbr_live --retry).
+RETRY_WINDOW_TRADING_DAYS = pbr_storage.RETRY_WINDOW_TRADING_DAYS
 
 
 def compute_due_status(latest: dict | None, full_date: str | None,

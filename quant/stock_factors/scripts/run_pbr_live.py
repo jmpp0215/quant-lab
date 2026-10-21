@@ -5,6 +5,8 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
+import numpy as np
+
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
@@ -159,10 +161,11 @@ def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
     Normally (retry=False) this freshly recomputes the PBR ranking via
     construct_target_portfolio_with_boundary. With retry=True, it skips re-ranking
     entirely and replays the target_portfolio recorded on the most recent
-    non-all_clear rebalance - the still-unresolved symbols from that run
-    are what calculate_diff will end up producing orders for (already-filled
-    symbols now sit at their target, so their diff is zero); everything
-    else naturally gets left alone.
+    non-all_clear rebalance. main() then passes that run's unresolved
+    symbols as calculate_diff's `only`. Without that, already-filled names
+    don't sit exactly at target once prices move, and they would get
+    top-ups too. Refused once the last full rebalance is more than
+    pbr_storage.RETRY_WINDOW_TRADING_DAYS weekdays old.
     """
     if retry:
         latest = pbr_storage.get_latest_rebalance(conn)
@@ -170,6 +173,18 @@ def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
             raise ValueError(
                 "--retry requires a previous rebalance with all_clear=False and a "
                 "recorded target_portfolio; none found"
+            )
+        # check_pbr_due enforces the same window for the scheduled path; a
+        # manual --retry used to replay a target of any age. Weekdays only
+        # (no KRX holidays, as in price_data_is_stale), so a holiday can
+        # only make the window shorter, never longer.
+        full_date = pbr_storage.get_latest_full_rebalance_date(conn)
+        elapsed = int(np.busday_count(full_date, today_str))
+        if elapsed > pbr_storage.RETRY_WINDOW_TRADING_DAYS:
+            raise ValueError(
+                f"--retry: last full rebalance {full_date} is {elapsed} trading "
+                f"days ago, past the {pbr_storage.RETRY_WINDOW_TRADING_DAYS}-day "
+                "retry window; wait for the next full rebalance"
             )
         return {sym: Decimal(str(w)) for sym, w in latest["target_portfolio"].items()}, {}
     return construct_target_portfolio_with_boundary(today_str, pbr_config)
@@ -257,6 +272,11 @@ def main():
             log.error(str(e))
             return 1
     retry_of_date = latest_for_retry["trade_date"] if latest_for_retry else None
+    # A retry orders only what the last run left unresolved - see calculate_diff's `only`.
+    retry_only = (set(latest_for_retry["failed"]) | set(latest_for_retry["partial"])
+                  if latest_for_retry else None)
+    if retry_only is not None:
+        log.info(f"RETRY mode: ordering only {sorted(retry_only)}")
 
     if not target_weights:
         log.error("Failed to construct target portfolio (no symbols returned).")
@@ -316,7 +336,8 @@ def main():
     if halted:
         log.warning("Halted holdings left untouched this run (can't be sold): %s",
                     ", ".join(sorted(halted)))
-    orders = calculate_diff(target_weights, positions, final_prices, cash, locked=halted)
+    orders = calculate_diff(target_weights, positions, final_prices, cash, locked=halted,
+                            only=retry_only)
     
     print("\n" + "="*50)
     print("=== LIVE PBR DRY_RUN DIFF CALCULATION ===")
@@ -411,7 +432,7 @@ def main():
             positions_after_sells = apply_fills(positions, sells, results)
             
             revised_orders = calculate_diff(target_weights, positions_after_sells, final_prices, cash_after_sells,
-                                            locked=halted)
+                                            locked=halted, only=retry_only)
             revised_buys = [o for o in revised_orders if o.side == "BUY"]
             
             log.info(f"Revised BUYS: {len(revised_buys)} orders")

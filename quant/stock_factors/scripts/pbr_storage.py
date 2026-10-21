@@ -9,6 +9,14 @@ log = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).parent.parent.parent.parent / "data" / "pbr_live.db"
 
+# 부분/실패 리밸런싱 이후, 실패한 종목만 소규모로 재시도할 수 있는 기간(거래일). 이
+# 기간을 넘기면 재시도를 포기하고 다음 20거래일 전체 사이클을 기다린다 - 몇 종목만
+# 매번 체결이 안 되는 패턴이 반복돼도 전체 포트폴리오가 매일 재구성되는 걸 막기 위한
+# 상한이다. check_pbr_due(자동 스케줄)와 run_pbr_live --retry(수동 실행 포함) 둘 다
+# 이 값을 쓴다 - 여기 두는 건 check_pbr_due가 import 시 logging.basicConfig를 호출해
+# run_pbr_live에서 직접 import하기 곤란하기 때문.
+RETRY_WINDOW_TRADING_DAYS = 3
+
 def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row

@@ -378,10 +378,19 @@ def calculate_diff(target_weights: dict[str, Decimal],
                    positions: dict[str, Position],
                    prices: dict[str, Decimal],
                    cash: Decimal,
-                   locked: set[str] = frozenset()) -> list[Order]:
+                   locked: set[str] = frozenset(),
+                   only: set[str] | None = None) -> list[Order]:
     """
     Compare current positions with target weights and generate Orders.
     This logic mimics quant/rebalance.py's plan().
+
+    `only` (a --retry's unresolved symbols) limits orders to those symbols.
+    Sizing is still against the whole account total, so each one comes out
+    at the same quantity a full plan would give it. But the rounding-bonus
+    trim and the buy budget only see these orders. Without it, a retry
+    replaying the full target also tops up every already-filled name the
+    price has moved since: replaying 2026-09-14's one unfilled symbol
+    against the next day's closes produced 28 other buys (~760k).
 
     `locked` holdings (e.g. trading-halted, see halted_symbols) can't be
     traded: no order is generated for them, and their value is left out of
@@ -432,11 +441,12 @@ def calculate_diff(target_weights: dict[str, Decimal],
         resolved_prices[symbol] = price
         held_qty[symbol] = positions[symbol].quantity if symbol in positions else 0
 
+    order_symbols = set(resolved_prices) if only is None else set(resolved_prices) & set(only)
     target_qty_by_symbol = resolve_target_quantities(
-        target_weights, set(resolved_prices), held_qty, resolved_prices, total, cash
+        target_weights, order_symbols, held_qty, resolved_prices, total, cash
     )
 
-    for symbol in sorted(resolved_prices):
+    for symbol in sorted(order_symbols):
         price = resolved_prices[symbol]
         target_qty = target_qty_by_symbol[symbol]
         delta = target_qty - held_qty.get(symbol, 0)

@@ -786,3 +786,46 @@ class TestHaltedSymbols:
 
     def test_empty_input(self, db):
         assert halted_symbols(set(), "2026-09-07") == set()
+
+
+class TestCalculateDiffOnly:
+    """A --retry orders only the last run's unresolved symbols - not top-ups
+    of names that filled but have since moved off target."""
+
+    @pytest.fixture(autouse=True)
+    def _no_network_listing(self, monkeypatch):
+        monkeypatch.setattr(portfolio_construction.fdr, "StockListing",
+                            lambda _market: pd.DataFrame({"Code": [], "Name": []}))
+
+    # A filled last run but fell 10000 -> 8000; B filled; C never filled.
+    POSITIONS = {"A": Position("A", "A", 10, Decimal("8000")),
+                 "B": Position("B", "B", 10, Decimal("10000"))}
+    PRICES = {"A": Decimal("8000"), "B": Decimal("10000"), "C": Decimal("10000")}
+    WEIGHTS = {s: Decimal(1) / Decimal(3) for s in ("A", "B", "C")}
+    CASH = Decimal("200000")
+
+    def test_full_plan_also_tops_up_filled_names(self):
+        # total 380k -> 126,667 each: A 15.8 -> 16 (bonus reverted to 15 to
+        # fit cash), B 12.7 -> 13, C 12.7 -> 13
+        orders = calculate_diff(self.WEIGHTS, self.POSITIONS, self.PRICES, self.CASH)
+        assert [(o.symbol, o.side, o.quantity) for o in orders] == [
+            ("A", "BUY", 5), ("B", "BUY", 3), ("C", "BUY", 13)]
+
+    def test_only_orders_the_unresolved_symbol_at_its_full_plan_size(self):
+        orders = calculate_diff(self.WEIGHTS, self.POSITIONS, self.PRICES, self.CASH,
+                                only={"C"})
+        assert [(o.symbol, o.side, o.quantity) for o in orders] == [("C", "BUY", 13)]
+
+    def test_unresolved_sell_of_a_dropped_name(self):
+        # D failed to sell last run (no longer in target); A would otherwise
+        # be topped up with D's proceeds.
+        positions = {"A": _pos("A", 10), "D": _pos("D", 10)}
+        prices = {"A": Decimal("10000"), "D": Decimal("10000")}
+        orders = calculate_diff({"A": Decimal("1")}, positions, prices, Decimal("0"),
+                                only={"D"})
+        assert [(o.symbol, o.side, o.quantity) for o in orders] == [("D", "SELL", 10)]
+
+    def test_unresolved_symbol_without_a_price_is_skipped(self):
+        orders = calculate_diff(self.WEIGHTS, self.POSITIONS, self.PRICES, self.CASH,
+                                only={"Z"})
+        assert orders == []
