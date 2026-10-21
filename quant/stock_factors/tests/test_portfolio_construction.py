@@ -368,6 +368,61 @@ def test_construct_target_portfolio_sees_current_year_prices(tmp_path, monkeypat
     assert all(w == Decimal("1") / Decimal(10) for w in weights.values())
 
 
+def _insert_linear_universe(db_path, as_of, n_symbols, equity_of=lambda i: 1_000_000_000):
+    """n_symbols names priced 1000 + 10i, 1M shares each (BPS = equity / 1M)."""
+    conn = sqlite3.connect(db_path)
+    for i in range(n_symbols):
+        symbol = f"{i:06d}"
+        conn.execute(
+            "INSERT INTO pead_price_raw (date, symbol, close) VALUES (?, ?, ?)",
+            (as_of, symbol, 1000 + i * 10),
+        )
+        for metric, val in (("total_equity", equity_of(i)), ("issued_shares", 1_000_000)):
+            conn.execute(
+                """INSERT INTO pead_quarterly_normalized
+                   (symbol, target_year, rcept_dt, report_code, metric, basis, quarterly_value)
+                   VALUES (?, '2025', '20260101', '11013', ?, 'CFS', ?)""",
+                (symbol, metric, val),
+            )
+    conn.commit()
+    conn.close()
+
+
+class TestRankBoundary:
+    def test_boundary_is_bps_times_rank_n_plus_1_pbr(self, tmp_path, monkeypatch):
+        """BPS 1000 everywhere except symbol 0 (2000); rank 11 is symbol 10
+        at 1100, PBR 1.1 - so the boundary is 1100 for symbols 1-9 and
+        2200 for symbol 0 (twice the book value, still PBR 0.5 at 1000)."""
+        db_path = tmp_path / "test.db"
+        _create_minimal_pbr_schema(db_path)
+        monkeypatch.setattr(portfolio_construction, "DB_PATH", db_path)
+        monkeypatch.setattr(value, "DB_PATH", db_path)
+        _insert_linear_universe(db_path, "20260904", 60,
+                                equity_of=lambda i: 2_000_000_000 if i == 0 else 1_000_000_000)
+
+        config = PBRConfig(target_n_stocks=10)
+        weights, boundary = portfolio_construction.construct_target_portfolio_with_boundary(
+            "2026-09-04", config)
+
+        assert set(boundary) == set(weights)
+        assert boundary["000000"] == Decimal("2200")
+        assert all(boundary[f"{i:06d}"] == Decimal("1100") for i in range(1, 10))
+        assert weights == portfolio_construction.construct_target_portfolio("2026-09-04", config)
+
+    def test_empty_without_a_rank_n_plus_1(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "test.db"
+        _create_minimal_pbr_schema(db_path)
+        monkeypatch.setattr(portfolio_construction, "DB_PATH", db_path)
+        monkeypatch.setattr(value, "DB_PATH", db_path)
+        _insert_linear_universe(db_path, "20260904", 60)  # bottom 20% = 12 names
+
+        weights, boundary = portfolio_construction.construct_target_portfolio_with_boundary(
+            "2026-09-04", PBRConfig(target_n_stocks=50))
+
+        assert len(weights) == 12
+        assert boundary == {}
+
+
 def test_construct_target_portfolio_wires_up_inverse_vol_weighting(tmp_path, monkeypatch):
     """End-to-end: PBRConfig(weighting_scheme="inverse_vol") should select the
     same symbols as equal weight (selection and sizing are independent) but

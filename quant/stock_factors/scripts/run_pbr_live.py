@@ -12,7 +12,7 @@ from quant import accounts, executor, logging_config, rebalance
 from quant.common import http_timeout
 from quant.stock_factors.portfolio_construction import (
     PBRConfig,
-    construct_target_portfolio,
+    construct_target_portfolio_with_boundary,
     calculate_diff,
     get_latest_prices,
     halted_symbols,
@@ -114,7 +114,9 @@ def equal_weight_shadow(target_weights: dict) -> dict[str, float]:
 def build_summary(failed: list, partial: list, halted, retry_of: str | None,
                   weighting_scheme: str, inverse_vol_fallback: bool | None,
                   admin_removed: list, admin_filter_error: str | None,
-                  equal_weight_target: dict | None = None) -> dict:
+                  equal_weight_target: dict | None = None,
+                  rank_boundary: dict | None = None,
+                  over_boundary: dict | None = None) -> dict:
     """summary_json for pbr_live.db's pbr_rebalance row."""
     summary = {
         "failed": failed,
@@ -128,17 +130,34 @@ def build_summary(failed: list, partial: list, halted, retry_of: str | None,
     }
     if equal_weight_target is not None:
         summary["equal_weight_target"] = equal_weight_target
+    if rank_boundary:
+        summary["rank_boundary"] = rank_boundary
+        summary["over_boundary"] = over_boundary or {}
     if retry_of:
         summary["retry_of"] = retry_of
     return summary
 
 
+def over_rank_boundary(target_weights: dict, boundary: dict[str, Decimal],
+                       prices: dict[str, Decimal]) -> dict[str, dict[str, float]]:
+    """Target symbols whose live price is already above their rank-boundary
+    price - ranked in on the prior close, but out of the top N at the price
+    we're about to trade at. Logged/recorded only; orders are unchanged."""
+    over = {}
+    for sym in sorted(target_weights):
+        b, p = boundary.get(sym), prices.get(sym)
+        if b and p and p > b:
+            over[sym] = {"live": float(p), "boundary": float(b)}
+    return over
+
+
 def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
-                           conn) -> dict[str, Decimal]:
-    """Target weights for today's run.
+                           conn) -> tuple[dict[str, Decimal], dict[str, Decimal]]:
+    """Target weights for today's run, plus each symbol's rank-boundary
+    price (construct_target_portfolio_with_boundary; empty on a retry).
 
     Normally (retry=False) this freshly recomputes the PBR ranking via
-    construct_target_portfolio. With retry=True, it skips re-ranking
+    construct_target_portfolio_with_boundary. With retry=True, it skips re-ranking
     entirely and replays the target_portfolio recorded on the most recent
     non-all_clear rebalance - the still-unresolved symbols from that run
     are what calculate_diff will end up producing orders for (already-filled
@@ -152,8 +171,8 @@ def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
                 "--retry requires a previous rebalance with all_clear=False and a "
                 "recorded target_portfolio; none found"
             )
-        return {sym: Decimal(str(w)) for sym, w in latest["target_portfolio"].items()}
-    return construct_target_portfolio(today_str, pbr_config)
+        return {sym: Decimal(str(w)) for sym, w in latest["target_portfolio"].items()}, {}
+    return construct_target_portfolio_with_boundary(today_str, pbr_config)
 
 
 def main():
@@ -233,7 +252,7 @@ def main():
         else:
             log.info(f"Constructing Target Portfolio (Top {pbr_config.target_n_stocks}) as of {today_str}...")
         try:
-            target_weights = resolve_target_weights(today_str, pbr_config, args.retry, conn)
+            target_weights, boundary = resolve_target_weights(today_str, pbr_config, args.retry, conn)
         except ValueError as e:
             log.error(str(e))
             return 1
@@ -284,7 +303,13 @@ def main():
         
     cash = cfg["buying_power"](client, final_prices)
     cash_before = cash
-    
+
+    over_boundary = over_rank_boundary(target_weights, boundary, final_prices)
+    for sym, v in over_boundary.items():
+        log.warning("%s: live %s is above its rank-boundary price %s - out of the "
+                    "top %d at today's price (recorded only, order unchanged)",
+                    sym, v["live"], v["boundary"], pbr_config.target_n_stocks)
+
     # 4. Generate Diff Orders
     # 거래정지 보유 종목은 매도 불가(호가 0/0) - 주문 없이 그대로 두고 매수 예산에서도 제외.
     halted = halted_symbols(set(positions), today_str)
@@ -411,7 +436,10 @@ def main():
         summary_data = build_summary(failed, partial, halted, retry_of_date,
                                      weighting_scheme, fallback,
                                      admin_removed, admin_filter_error,
-                                     equal_weight_target=shadow)
+                                     equal_weight_target=shadow,
+                                     rank_boundary={s: float(b) for s, b in boundary.items()
+                                                    if s in target_weights},
+                                     over_boundary=over_boundary)
 
         target_dict = {sym: float(w) for sym, w in target_weights.items()}
         

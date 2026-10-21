@@ -11,6 +11,7 @@ from quant.stock_factors.scripts.run_pbr_live import (
     equal_weight_shadow,
     filter_admin_stocks,
     inverse_vol_fell_back,
+    over_rank_boundary,
     resolve_target_weights,
 )
 
@@ -83,9 +84,10 @@ def test_resolve_target_weights_retry_replays_last_incomplete_target(pbr_db):
         )
 
     with pbr_storage.connect() as conn:
-        weights = resolve_target_weights("2026-09-08", PBRConfig(), retry=True, conn=conn)
+        weights, boundary = resolve_target_weights("2026-09-08", PBRConfig(), retry=True, conn=conn)
 
     assert weights == {"005930": Decimal("0.6"), "000660": Decimal("0.4")}
+    assert boundary == {}
 
 
 def test_resolve_target_weights_retry_raises_when_no_rebalance_recorded(pbr_db):
@@ -110,7 +112,7 @@ def test_resolve_target_weights_retry_raises_when_last_rebalance_was_clean(pbr_d
 
 def test_resolve_target_weights_non_retry_builds_fresh_portfolio(pbr_db, monkeypatch):
     """retry=False must not touch pbr_storage at all - it recomputes the PBR
-    ranking via construct_target_portfolio, same as before this change."""
+    ranking via construct_target_portfolio_with_boundary, same as before this change."""
     import quant.stock_factors.scripts.run_pbr_live as run_pbr_live
 
     called_with = {}
@@ -118,14 +120,15 @@ def test_resolve_target_weights_non_retry_builds_fresh_portfolio(pbr_db, monkeyp
     def fake_construct(today_str, config):
         called_with["today_str"] = today_str
         called_with["config"] = config
-        return {"005930": Decimal("1")}
+        return {"005930": Decimal("1")}, {"005930": Decimal("1100")}
 
-    monkeypatch.setattr(run_pbr_live, "construct_target_portfolio", fake_construct)
+    monkeypatch.setattr(run_pbr_live, "construct_target_portfolio_with_boundary", fake_construct)
 
     with pbr_storage.connect() as conn:
-        weights = resolve_target_weights("2026-09-08", PBRConfig(), retry=False, conn=conn)
+        weights, boundary = resolve_target_weights("2026-09-08", PBRConfig(), retry=False, conn=conn)
 
     assert weights == {"005930": Decimal("1")}
+    assert boundary == {"005930": Decimal("1100")}
     assert called_with["today_str"] == "2026-09-08"
 
 
@@ -203,3 +206,39 @@ class TestEqualWeightShadow:
         s = build_summary([], [], set(), None, "inverse_vol", False, [], None,
                           equal_weight_target={"A": 0.5, "B": 0.5})
         assert s["equal_weight_target"] == {"A": 0.5, "B": 0.5}
+
+
+class TestOverRankBoundary:
+    def test_only_names_priced_above_their_boundary(self):
+        # 2026-09-14's 023530: ranked in on a 112,000 close, bought at 120,200
+        target = {"A": Decimal("0.5"), "B": Decimal("0.5")}
+        boundary = {"A": Decimal("113260"), "B": Decimal("58560")}
+        prices = {"A": Decimal("120200"), "B": Decimal("56600")}
+        assert over_rank_boundary(target, boundary, prices) == {
+            "A": {"live": 120200.0, "boundary": 113260.0}}
+
+    def test_at_the_boundary_is_not_over(self):
+        target = {"A": Decimal("1")}
+        assert over_rank_boundary(target, {"A": Decimal("1000")},
+                                  {"A": Decimal("1000")}) == {}
+
+    def test_missing_boundary_or_price_is_skipped(self):
+        # retry runs have no boundary; a 0 price means no quote was found
+        target = {"A": Decimal("0.5"), "B": Decimal("0.5")}
+        assert over_rank_boundary(target, {}, {"A": Decimal("1")}) == {}
+        assert over_rank_boundary(target, {"B": Decimal("10")},
+                                  {"B": Decimal("0")}) == {}
+
+    def test_admin_removed_names_are_not_reported(self):
+        # boundary covers the pre-admin-filter top N; only the traded target counts
+        assert over_rank_boundary({"A": Decimal("1")},
+                                  {"A": Decimal("10"), "X": Decimal("10")},
+                                  {"A": Decimal("9"), "X": Decimal("20")}) == {}
+
+    def test_recorded_in_summary_only_with_a_boundary(self):
+        base = build_summary([], [], set(), None, "inverse_vol", False, [], None)
+        assert "rank_boundary" not in base and "over_boundary" not in base
+        s = build_summary([], [], set(), None, "inverse_vol", False, [], None,
+                          rank_boundary={"A": 1100.0}, over_boundary={})
+        assert s["rank_boundary"] == {"A": 1100.0}
+        assert s["over_boundary"] == {}

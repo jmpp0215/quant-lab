@@ -157,6 +157,23 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
     Calculate the target portfolio weights for the given date.
     Returns: dict mapping symbol to target weight (Decimal).
     """
+    return construct_target_portfolio_with_boundary(as_of_date, config)[0]
+
+
+def construct_target_portfolio_with_boundary(
+    as_of_date: str, config: PBRConfig,
+) -> tuple[dict[str, Decimal], dict[str, Decimal]]:
+    """construct_target_portfolio plus each selected symbol's rank-boundary
+    price: BPS_i * PBR of the first name past the cut (rank N+1, after the
+    suspension filter) - the price above which symbol i would no longer
+    rank in the top N. Empty when there is no rank N+1 to compare against.
+
+    Recorded only, never used to size or price orders: a cross-check on
+    2026-10-21 (35 live top-50 buys) found no fill pushed past it by
+    slippage, and buying near-boundary names at a premium showed no
+    measurable difference from not buying them. It is kept to see how often
+    the gap between the ranking close and the live price crosses it.
+    """
     as_of_date_stripped = as_of_date.replace("-", "")
     
     # We load BPS data starting from the year of as_of_date for performance, 
@@ -190,7 +207,7 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
     # Find the most recent available trading date <= as_of_date_stripped
     valid_dates = [d for d in trading_dates if d <= as_of_date_stripped]
     if not valid_dates:
-        return {}
+        return {}, {}
     target_date_str = valid_dates[-1]
     
     # 3. Apply Signal Function
@@ -214,19 +231,25 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
         selected_symbols = [sym for sym in selected_symbols if sym in valid_symbols]
     
     # Slice to target concentration
+    boundary: dict[str, Decimal] = {}
     if config.target_n_stocks and len(selected_symbols) > config.target_n_stocks:
+        bps_row = df_bps.loc[target_dt]
+        nxt = selected_symbols[config.target_n_stocks]
+        cut_pbr = df_price_pivot.at[target_dt, nxt] / bps_row[nxt]
         selected_symbols = selected_symbols[:config.target_n_stocks]
-        
+        boundary = {sym: Decimal(str(round(float(bps_row[sym] * cut_pbr), 2)))
+                    for sym in selected_symbols}
+
     if not selected_symbols:
-        return {}
+        return {}, {}
 
     if config.weighting_scheme == "inverse_vol":
         weights = inverse_vol_weights(selected_symbols, df_price_pivot, target_date_str)
         if weights is not None:
-            return weights
+            return weights, boundary
 
     weight = Decimal("1.0") / Decimal(len(selected_symbols))
-    return {sym: weight for sym in selected_symbols}
+    return {sym: weight for sym in selected_symbols}, boundary
 
 def resolve_target_quantities(
     target_weights: dict[str, Decimal],
