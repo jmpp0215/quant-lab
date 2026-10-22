@@ -18,7 +18,7 @@ import json
 import logging
 import sqlite3
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -48,6 +48,22 @@ ISA_ANNUAL_LIMIT = None      # KRW per calendar year
 ISA_TOTAL_LIMIT = None       # KRW over the account's life
 ISA_PAID_THIS_YEAR = Decimal("0")
 ISA_PAID_TOTAL = Decimal("0")
+
+# The upcoming list only looks this far ahead.
+UPCOMING_DAYS = 30
+
+# Rate decisions, by the KST date the decision lands. Hand-maintained:
+# extend when each year's calendar is published.
+# FOMC: federalreserve.gov/monetarypolicy/fomccalendars.htm (read
+#   2026-10-23); the statement comes at 2pm ET on the meeting's second day,
+#   i.e. 03:00 KST next day (EDT) or 04:00 (EST).
+# BOK: bok.or.kr 통화정책방향 결정회의 일정, matching tossbank.com/articles/
+#   baserate2601 (read 2026-10-23).
+MACRO_EVENTS = [
+    ("2026-10-29", "FOMC 금리 결정 (03:00)"),
+    ("2026-11-26", "한국은행 기준금리 결정"),
+    ("2026-12-10", "FOMC 금리 결정 (04:00, 경제전망 포함)"),
+]
 
 CASHFLOW_ACCOUNTS = ("kis-isa", "kis-main", "kis-main-overseas", "toss-bot")
 LABELS = {"kis-isa": "ISA (KIS)", "kis-main": "KIS 국내",
@@ -134,12 +150,17 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                                "label": "PBR 재시도" if retry else "PBR 리밸런싱"})
     finally:
         pbr.close()
+    until = (today + timedelta(days=UPCOMING_DAYS)).isoformat()
     upcoming = [{"kind": r["kind"], "date": r["date"], "account": r["account"],
                  "label": r["label"],
                  "amount": _num(Decimal(r["amount"])) if r["amount"] else None}
                 for r in conn.execute(
-                    "SELECT * FROM upcoming WHERE date >= ? ORDER BY date",
-                    (today.isoformat(),))]
+                    "SELECT * FROM upcoming WHERE date >= ? AND date <= ?",
+                    (today.isoformat(), until))]
+    upcoming += [{"kind": "macro", "date": d, "account": None, "label": label,
+                  "amount": None}
+                 for d, label in MACRO_EVENTS if today.isoformat() <= d <= until]
+    upcoming.sort(key=lambda u: u["date"])
     recent_flows = [{"date": f["trade_date"], "account": f["account"],
                      "label": LABELS.get(f["account"], f["account"]),
                      "amount": _num(Decimal(f["amount"])), "note": f["note"]}

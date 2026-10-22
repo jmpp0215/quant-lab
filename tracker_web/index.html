@@ -194,7 +194,7 @@ section[hidden] { display: none; }
       <div class="tile"><div class="label">원금 대비 수익률</div>
         <div class="value" id="principal">—</div><div class="note" id="principalNote"></div></div>
     </div>
-    <div class="card"><h2>다가오는 일정</h2><div id="upcoming"></div></div>
+    <div class="card"><h2>다가오는 일정</h2><div class="sub">30일 이내</div><div id="upcoming"></div></div>
     <div class="card"><h2>누적 수익률 (시간가중)</h2>
       <div class="sub">입출금·계좌 추가 효과를 뺀 운용 성과</div>
       <div class="chart" id="chartIndex"></div>
@@ -461,14 +461,15 @@ function dday(dateStr) {
 
 function renderUpcoming(d) {
   const host = $("upcoming"); host.textContent = "";
-  const items = d.upcoming.slice(0, 6);
-  if (!items.length) { emptyState(host, "예정된 리밸런싱이나 공시된 배당이 없어요."); return; }
+  const items = d.upcoming;
+  if (!items.length) { emptyState(host, "30일 안에 예정된 일정이 없어요."); return; }
   for (const u of items) {
     const row = document.createElement("div"); row.className = "ev-row";
     const dd = document.createElement("span"); dd.className = "dday"; dd.textContent = dday(u.date);
     const what = document.createElement("div"); what.className = "what";
     what.append(u.label);
-    const sm = document.createElement("small"); sm.textContent = `${u.date} · ${ACCOUNT_LABEL(u.account)}`;
+    const sm = document.createElement("small");
+    sm.textContent = `${u.date} · ${u.account ? ACCOUNT_LABEL(u.account) : "경제 일정"}`;
     what.append(sm);
     const amt = document.createElement("span"); amt.className = "amt";
     amt.textContent = u.amount != null ? `약 ${won(u.amount)}원` : "";
