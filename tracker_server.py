@@ -96,6 +96,11 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
             if f["account"] == a])
         series = by_account[a]
         prev = series[-2][1] if len(series) > 1 else None
+        own = tracker.growth_index({a: series}, {a: deposits[a]})
+        row = latest[a]
+        total_a = Decimal(row["total"])
+        held_a = tracker.holdings([{"total": total_a, "cash": Decimal(row["cash"]),
+                                    "positions": json.loads(row["positions"])}])
         account_rows.append({
             "account": a, "label": LABELS.get(a, a),
             "value": _num(series[-1][1]), "as_of": series[-1][0],
@@ -103,6 +108,10 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
             "since": r.start, "money_in": _num(r.money_in),
             "principal_return": _num(r.principal_return),
             "time_weighted": _num(r.time_weighted),
+            "history": [{"date": d, "total": _num(v), "index": _num(i)}
+                        for (d, v), (_, i) in zip(series, own, strict=True)],
+            "holdings": [{"name": n, "weight": _num(v / total_a)}
+                         for n, v in held_a] if total_a else [],
         })
 
     index = tracker.growth_index(by_account, deposits)

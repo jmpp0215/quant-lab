@@ -101,6 +101,13 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .acct { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px;
         padding: 12px 0; border-top: 1px solid var(--grid); }
 .acct:first-of-type { border-top: 0; padding-top: 0; }
+.acct { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.acct .name::after { content: "›"; display: inline-block; margin-left: 6px; color: var(--text-3);
+                     transition: transform .15s; }
+.acct[aria-expanded="true"] .name::after { transform: rotate(90deg); }
+.acct-detail { grid-column: 1 / -1; padding-top: 10px; cursor: default; }
+.acct-detail h3 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 12px 0 6px; }
+.acct-detail .chart { height: 150px; }
 .acct .name { font-weight: 600; }
 .acct .val { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 .acct .meta { grid-column: 1 / -1; font-size: 12px; color: var(--text-2);
@@ -363,7 +370,52 @@ function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, mar
   svg.addEventListener("pointerleave", hide);
 }
 
+// Top 10 weights as bars, the rest folded into one "기타" row.
+function renderBars(host, holdings, TOP = 10) {
+  host.textContent = "";
+  const rows = holdings.slice(0, TOP);
+  const rest = holdings.slice(TOP).reduce((s, h) => s + h.weight, 0);
+  if (rest > 0) rows.push({ name: `기타 ${holdings.length - TOP}종목`, weight: rest });
+  const maxW = Math.max(...rows.map(h => h.weight));
+  for (const h of rows) {
+    const b = document.createElement("div"); b.className = "bar";
+    const n = document.createElement("div"); n.className = "n"; n.textContent = h.name; n.title = h.name;
+    const t = document.createElement("div"); t.className = "track";
+    const f = document.createElement("div"); f.className = "fill"; f.style.width = (h.weight / maxW * 100) + "%";
+    t.append(f);
+    const p = document.createElement("div"); p.className = "pct"; p.textContent = pct(h.weight, 1);
+    b.append(n, t, p); host.append(b);
+  }
+}
+
+// One account's own curve, value and holdings, under its row.
+function renderAccountDetail(host, a, d) {
+  const h = a.history;
+  const marks = d.rebalances.filter(r => r.account === a.account).map(r => ({
+    i: h.findIndex(x => x.date >= r.date), label: r.label,
+    color: r.account === "kis-isa" ? "var(--m-isa)" : "var(--m-pbr)",
+  })).filter(m => m.i >= 0);
+  const head = (text, sub) => {
+    const t = document.createElement("h3"); t.textContent = text;
+    if (sub) { const s = document.createElement("span"); s.className = "muted"; s.style.fontWeight = 400;
+               s.textContent = " · " + sub; t.append(s); }
+    host.append(t);
+  };
+  const chart = () => { const c = document.createElement("div"); c.className = "chart"; host.append(c); return c; };
+  head("누적 수익률 (시간가중)", `${h[0].date} 첫 기록부터`);
+  const c1 = chart();
+  head("평가액");
+  const c2 = chart();
+  if (a.holdings.length) { head("보유 비중", "현금 포함"); const b = document.createElement("div");
+                           b.className = "bars"; host.append(b); renderBars(b, a.holdings); }
+  // Charts measure their box, so draw once they are in the document.
+  lineChart(c1, h.map(x => ({ d: x.date, y: x.index - 1 })),
+            { fmtY: v => signedPct(v, 1), fmtTip: v => signedPct(v), zero: true, marks });
+  lineChart(c2, h.map(x => ({ d: x.date, y: x.total })), { fmtY: man, fmtTip: v => won(v) + "원" });
+}
+
 let DATA = null;
+let openAccount = null;
 
 function render() {
   const d = DATA;
@@ -417,6 +469,15 @@ function render() {
     const since = document.createElement("span"); since.className = "muted"; since.textContent = `${a.since}~`;
     meta.append(ch, tw, pr, since);
     row.append(name, val, meta); host.append(row);
+    row.setAttribute("role", "button"); row.tabIndex = 0;
+    row.setAttribute("aria-expanded", openAccount === a.account);
+    const toggle = () => { openAccount = openAccount === a.account ? null : a.account; render(); };
+    row.addEventListener("click", e => { if (!e.target.closest(".acct-detail")) toggle(); });
+    row.addEventListener("keydown", e => { if (e.key === "Enter" && e.target === row) toggle(); });
+    if (openAccount === a.account) {
+      const detail = document.createElement("div"); detail.className = "acct-detail";
+      row.append(detail); renderAccountDetail(detail, a, d);
+    }
   }
 
   const r = d.risk;
@@ -431,21 +492,7 @@ function render() {
   lineChart($("chartDD"), dd.map(p => ({ d: p.date, y: p.dd })),
             { fmtY: v => pct(v, 1), fmtTip: v => pct(v), area: true, zero: true });
 
-  const bars = $("holdings"); bars.textContent = "";
-  const TOP = 10;
-  const rows = r.holdings.slice(0, TOP);
-  const rest = r.holdings.slice(TOP).reduce((s, h) => s + h.weight, 0);
-  if (rest > 0) rows.push({ name: `기타 ${r.holdings.length - TOP}종목`, weight: rest });
-  const maxW = Math.max(...rows.map(h => h.weight));
-  for (const h of rows) {
-    const b = document.createElement("div"); b.className = "bar";
-    const n = document.createElement("div"); n.className = "n"; n.textContent = h.name; n.title = h.name;
-    const t = document.createElement("div"); t.className = "track";
-    const f = document.createElement("div"); f.className = "fill"; f.style.width = (h.weight / maxW * 100) + "%";
-    t.append(f);
-    const p = document.createElement("div"); p.className = "pct"; p.textContent = pct(h.weight, 1);
-    b.append(n, t, p); bars.append(b);
-  }
+  renderBars($("holdings"), r.holdings);
 
   renderUpcoming(d);
   renderFlows(d);
