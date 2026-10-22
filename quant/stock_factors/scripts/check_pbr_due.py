@@ -14,7 +14,8 @@ from quant.stock_factors.scripts import pbr_storage
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("check_pbr_due")
 
-FULL_REBALANCE_TRADING_DAYS = 20
+# See pbr_storage.FULL_REBALANCE_TRADING_DAYS (shared with daily.py's tracker schedule).
+FULL_REBALANCE_TRADING_DAYS = pbr_storage.FULL_REBALANCE_TRADING_DAYS
 
 # See pbr_storage.RETRY_WINDOW_TRADING_DAYS (shared with run_pbr_live --retry).
 RETRY_WINDOW_TRADING_DAYS = pbr_storage.RETRY_WINDOW_TRADING_DAYS

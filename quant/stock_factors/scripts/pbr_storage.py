@@ -17,6 +17,10 @@ DB_PATH = Path(__file__).parent.parent.parent.parent / "data" / "pbr_live.db"
 # run_pbr_live에서 직접 import하기 곤란하기 때문.
 RETRY_WINDOW_TRADING_DAYS = 3
 
+# 전체 리밸런싱 주기(거래일). check_pbr_due가 쓰고, daily.py가 트래커용 다음
+# 리밸런싱 예정일을 계산할 때도 쓴다 - 위와 같은 이유로 여기 둔다.
+FULL_REBALANCE_TRADING_DAYS = 20
+
 def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row

@@ -125,6 +125,17 @@ CREATE TABLE IF NOT EXISTS dividend_fetch_state (
     updated_at  TEXT NOT NULL
 );
 
+-- What the tracker shows as coming up (quant/schedule.py), rewritten
+-- whole by every daily.py close run. Display only - nothing trades off it.
+CREATE TABLE IF NOT EXISTS upcoming (
+    kind        TEXT NOT NULL,      -- tranche / pbr / dividend
+    date        TEXT NOT NULL,
+    account     TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    amount      TEXT,               -- dividend: expected KRW before tax
+    computed_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_cashflows_date ON cashflows(trade_date);
 
 CREATE INDEX IF NOT EXISTS idx_scores_symbol ON scores(symbol, trade_date);
@@ -450,6 +461,20 @@ def save_dividend_fetch_state(conn: sqlite3.Connection, symbol: str,
         "INSERT OR REPLACE INTO dividend_fetch_state "
         "(symbol, fetched_to, updated_at) VALUES (?, ?, ?)",
         (symbol, fetched_to, updated_at),
+    )
+
+
+def save_upcoming(conn: sqlite3.Connection, rows: list[dict],
+                  computed_at: str) -> None:
+    """rows: {"kind", "date", "account", "label", "amount" (Decimal or None)}.
+    Replaces everything: the schedule is recomputed whole each run."""
+    conn.execute("DELETE FROM upcoming")
+    conn.executemany(
+        "INSERT INTO upcoming (kind, date, account, label, amount, computed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [(r["kind"], r["date"], r["account"], r["label"],
+          None if r.get("amount") is None else str(r["amount"]), computed_at)
+         for r in rows],
     )
 
 

@@ -8,10 +8,11 @@ Placing orders is deliberately not part of this yet - the observation
 period runs until the first scheduled rebalance.
 """
 
+import json
 import logging
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -21,14 +22,17 @@ from quant import (
     config,
     dividends,
     indicators,
+    kis_client,
     logging_config,
     market,
+    schedule,
     storage,
     strategy,
     tranche,
 )
 from quant.kis_client import KisApiError, KisClient
 from quant.notify import notify
+from quant.stock_factors.scripts import pbr_storage
 from quant.toss_client import TossApiError
 
 log = logging.getLogger("daily")
@@ -141,6 +145,77 @@ def record_strategy(signal: strategy.Signal, trade_date: str,
 
     log.info("recorded %d scores, %d indicators, %d variant weights",
              len(rows), len(ind_rows), len(variant_rows))
+
+
+# holidays() returns ~3 weeks from its base date, so three pages starting
+# 20 days apart cover the next two months - enough for next month's
+# tranches and the next PBR cycle.
+CALENDAR_PAGE_OFFSETS = (0, 20, 40)
+DIVIDEND_LOOKAHEAD_DAYS = 120
+
+
+def record_upcoming(client: KisClient, past_days: list[str]) -> None:
+    """Record upcoming rebalances and dividends for the asset tracker.
+
+    Display only: the tranche and PBR dates project tranche.due_today's and
+    check_pbr_due's rules forward, but those stay what decides a trade.
+    """
+    now = datetime.now(market.KST)
+    today = now.strftime("%Y-%m-%d")
+    future = schedule.open_days([
+        client.holidays((now + timedelta(days=k)).strftime("%Y%m%d"))
+        for k in CALENDAR_PAGE_OFFSETS])
+    days = sorted(set(past_days) | set(future))
+    upcoming_days = [d for d in days if d >= today]
+
+    strategy_account = accounts.DEFAULT_ACCOUNT
+    with storage.connect() as conn:
+        done = storage.tranches_done_this_month(conn, strategy_account, today)
+        latest = conn.execute(
+            "SELECT p.account, p.positions FROM portfolio p "
+            "JOIN (SELECT account, MAX(trade_date) d FROM portfolio GROUP BY account) m "
+            "ON p.account = m.account AND p.trade_date = m.d").fetchall()
+    with pbr_storage.connect() as conn:
+        pbr_full = pbr_storage.get_latest_full_rebalance_date(conn)
+
+    rows = [{"kind": "tranche", "date": d, "account": strategy_account,
+             "label": f"트랜치 {config.TRANCHES.index(t) + 1}/{len(config.TRANCHES)} "
+                      "리밸런싱 (수동)"}
+            for d, t in schedule.tranche_dates(days, today, done)]
+
+    if pbr_full is not None:
+        due = schedule.trading_days_after(
+            days, pbr_full, pbr_storage.FULL_REBALANCE_TRADING_DAYS)
+        if due is not None and due < today and upcoming_days:
+            due = upcoming_days[0]   # overdue: check_pbr_due runs it next
+        if due is not None:
+            rows.append({"kind": "pbr", "date": due, "account": "toss-bot",
+                         "label": "PBR 전체 리밸런싱 (자동)"})
+
+    # Domestic holdings only: the KSD schedule doesn't cover overseas.
+    holdings = [{"account": r["account"], "symbol": p["symbol"],
+                 "name": p.get("name") or p["symbol"], "qty": p["qty"]}
+                for r in latest for p in json.loads(r["positions"])
+                if p.get("currency", "KRW") == "KRW"]
+    events = []
+    until = now.date() + timedelta(days=DIVIDEND_LOOKAHEAD_DAYS)
+    for symbol in sorted({h["symbol"] for h in holdings}):
+        try:
+            events += [dict(e, symbol=symbol) for e in kis_client.dividend_schedule(
+                client, symbol, from_date=now.date(), to_date=until)]
+        except KisApiError as e:
+            log.error("%s: dividend schedule failed: %s", symbol, e)
+    for d in schedule.upcoming_dividends(events, holdings, today):
+        when = f" · 지급 {d['pay_date']}" if d["pay_date"] else ""
+        per = f"주당 {d['per_share']:,}원" if d["per_share"] else "금액 미정"
+        rows.append({"kind": "dividend", "date": d["record_date"],
+                     "account": d["account"],
+                     "label": f"{d['name']} 배당 기준일 · {d['qty']}주 · {per}{when}",
+                     "amount": d["expected"]})
+
+    with storage.connect() as conn:
+        storage.save_upcoming(conn, rows, now.isoformat())
+    log.info("upcoming: %d rows", len(rows))
 
 
 def main() -> int:
@@ -276,6 +351,15 @@ def main() -> int:
             log.exception("%s: account run failed", account_name)
             problem_accounts.append(f"[{account_name}] {e}")
             overall_ok = False
+
+    if slot == "close" and target is None:
+        try:
+            record_upcoming(market_data, [c["timestamp"][:10] for c in reference])
+        except Exception as e:
+            # The tracker's schedule is display only - its failure must not
+            # fail the run, but should still be seen.
+            log.exception("upcoming schedule failed")
+            problem_accounts.append(f"[upcoming] {e}")
 
     if problem_accounts:
         notify("quant-lab", "daily.py: " + " / ".join(problem_accounts))
