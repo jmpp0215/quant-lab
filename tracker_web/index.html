@@ -477,6 +477,7 @@ function renderAccountDetail(host, a, d) {
   const c2 = chart();
   let rateChart = null;
   if (a.fx) rateChart = renderFx(host, a.fx, head, chart);
+  if (a.pbr && a.pbr.length) renderPbrFills(host, a.pbr, head);
   if (a.holdings.length) { head("보유 비중", "현금 포함"); const b = document.createElement("div");
                            b.className = "bars"; host.append(b); renderBars(b, a.holdings); }
   // Charts measure their box, so draw once they are in the document.
@@ -484,6 +485,35 @@ function renderAccountDetail(host, a, d) {
             { fmtY: v => signedPct(v, 1), fmtTip: v => signedPct(v), zero: true, marks });
   lineChart(c2, h.map(x => ({ d: x.date, y: x.total })), { fmtY: man, fmtTip: v => won(v) + "원" });
   if (rateChart) rateChart();
+}
+
+// PBR fills per rebalance (pbr_slippage.measure). Slippage is signed so
+// positive is in our favour; vs close is what the backtest would credit.
+function renderPbrFills(host, rows, head) {
+  head("PBR 체결 품질", "리밸런싱별");
+  const n = rows.reduce((s, r) => s + r.orders, 0), f = rows.reduce((s, r) => s + r.filled, 0);
+  const cost = rows.reduce((s, r) => s + (r.vs_close_krw || 0), 0);
+  const note = document.createElement("p"); note.className = "fx-note";
+  note.textContent = `주문 ${n}건 중 ${f}건 전량 체결 (${pct(f / n, 0)}). `
+    + `종가 대비 누적 체결 비용 ${signedWon(cost)}. 백테스트가 종가로 가정하는 것과의 차이예요.`;
+  host.append(note);
+  const table = document.createElement("table"); table.className = "fx"; table.style.marginTop = "8px";
+  const th = table.createTHead().insertRow();
+  for (const t of ["날짜", "체결", "지정가 대비", "종가 대비"]) {
+    const c = document.createElement("th"); c.textContent = t; th.append(c);
+  }
+  const body = table.createTBody();
+  for (const r of rows) {
+    const tr = body.insertRow();
+    const d = tr.insertCell(); d.textContent = shortDate(r.date) + (r.retry ? " 재시도" : "");
+    if (r.missed.length) { const sm = document.createElement("small"); sm.className = "muted";
+      sm.style.display = "block"; sm.textContent = "미체결: " + r.missed.join(", "); d.append(sm);
+      d.style.whiteSpace = "normal"; }
+    tr.insertCell().textContent = `${r.filled}/${r.orders}`;
+    tr.insertCell().textContent = signedPct(r.vs_limit);
+    tr.insertCell().textContent = signedPct(r.vs_close);
+  }
+  host.append(table);
 }
 
 const signedWon = v => `${arrow(Math.round(v))} ${won(Math.abs(v))}원`;

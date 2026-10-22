@@ -57,6 +57,67 @@ def _pct(x: Decimal) -> str:
     return f"{x * 100:+.3f}%"
 
 
+def measure(orders: list[tuple], closes: dict[str, Decimal]) -> dict:
+    """Fill outcome and slippage for one rebalance's orders (pure).
+
+    orders: (symbol, side, qty, limit_price, filled_qty, avg_fill_price)
+    rows as pbr_orders stores them; closes: symbol -> that day's close.
+    Slippage is signed so positive is in our favour, weighted by limit
+    notional (vs limit) and by fill notional (vs close). Shared with the
+    asset tracker so both report the same numbers.
+    """
+    n_filled = n_partial = n_unfilled = 0
+    tot_notional = Decimal(0)
+    slip_vs_limit_krw = Decimal(0)
+    slip_vs_close_krw = Decimal(0)
+    close_covered_notional = Decimal(0)
+    rows_out = []
+
+    for symbol, side, qty, limit_price, filled_qty, avg_fill_price in orders:
+        limit_p = Decimal(str(limit_price))
+        filled_qty = filled_qty or 0
+        if filled_qty == 0:
+            n_unfilled += 1
+            rows_out.append((side, symbol, qty, limit_p, None, closes.get(symbol), None, None, "UNFILLED"))
+            continue
+        if filled_qty < qty:
+            n_partial += 1
+            state = "partial"
+        else:
+            n_filled += 1
+            state = "filled"
+
+        avg_p = Decimal(str(avg_fill_price))
+        q = Decimal(filled_qty)
+        notional = limit_p * q
+        tot_notional += notional
+
+        # sign convention: positive = in our favour
+        if side == "BUY":
+            vs_limit = (limit_p - avg_p) / limit_p
+        else:
+            vs_limit = (avg_p - limit_p) / limit_p
+        slip_vs_limit_krw += vs_limit * notional
+
+        close = closes.get(symbol)
+        vs_close = None
+        if close and close > 0:
+            if side == "BUY":
+                vs_close = (close - avg_p) / close
+            else:
+                vs_close = (avg_p - close) / close
+            slip_vs_close_krw += vs_close * (avg_p * q)
+            close_covered_notional += avg_p * q
+
+        rows_out.append((side, symbol, qty, limit_p, avg_p, close, vs_limit, vs_close, state))
+
+    return {"filled": n_filled, "partial": n_partial, "unfilled": n_unfilled,
+            "rows": rows_out, "notional": tot_notional,
+            "vs_limit_krw": slip_vs_limit_krw,
+            "close_notional": close_covered_notional,
+            "vs_close_krw": slip_vs_close_krw}
+
+
 def reconcile_date(conn: sqlite3.Connection, trade_date: str) -> None:
     reb = conn.execute(
         "SELECT target_n_stocks, assets_before, assets_after, "
@@ -99,52 +160,11 @@ def reconcile_date(conn: sqlite3.Connection, trade_date: str) -> None:
         print("  no pbr_orders rows -> nothing to measure")
         return
 
-    closes = _closes({trade_date})
-
-    n_filled = n_partial = n_unfilled = 0
-    tot_notional = Decimal(0)
-    slip_vs_limit_krw = Decimal(0)
-    slip_vs_close_krw = Decimal(0)
-    close_covered_notional = Decimal(0)
-    rows_out = []
-
-    for symbol, side, qty, limit_price, filled_qty, avg_fill_price in orders:
-        limit_p = Decimal(str(limit_price))
-        filled_qty = filled_qty or 0
-        if filled_qty == 0:
-            n_unfilled += 1
-            rows_out.append((side, symbol, qty, limit_p, None, closes.get((trade_date, symbol)), None, None, "UNFILLED"))
-            continue
-        if filled_qty < qty:
-            n_partial += 1
-            state = "partial"
-        else:
-            n_filled += 1
-            state = "filled"
-
-        avg_p = Decimal(str(avg_fill_price))
-        q = Decimal(filled_qty)
-        notional = limit_p * q
-        tot_notional += notional
-
-        # sign convention: positive = in our favour
-        if side == "BUY":
-            vs_limit = (limit_p - avg_p) / limit_p
-        else:
-            vs_limit = (avg_p - limit_p) / limit_p
-        slip_vs_limit_krw += vs_limit * notional
-
-        close = closes.get((trade_date, symbol))
-        vs_close = None
-        if close and close > 0:
-            if side == "BUY":
-                vs_close = (close - avg_p) / close
-            else:
-                vs_close = (avg_p - close) / close
-            slip_vs_close_krw += vs_close * (avg_p * q)
-            close_covered_notional += avg_p * q
-
-        rows_out.append((side, symbol, qty, limit_p, avg_p, close, vs_limit, vs_close, state))
+    m = measure(orders, {sym: c for (d, sym), c in _closes({trade_date}).items()})
+    n_filled, n_partial, n_unfilled = m["filled"], m["partial"], m["unfilled"]
+    rows_out = m["rows"]
+    tot_notional, slip_vs_limit_krw = m["notional"], m["vs_limit_krw"]
+    close_covered_notional, slip_vs_close_krw = m["close_notional"], m["vs_close_krw"]
 
     print(f"\n  orders: {len(orders)}  "
           f"(filled {n_filled}, partial {n_partial}, unfilled {n_unfilled})")

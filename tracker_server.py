@@ -26,7 +26,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from quant import config, returns, storage, tracker
-from quant.stock_factors.scripts import pbr_storage
+from quant.stock_factors.scripts import pbr_slippage, pbr_storage
 
 log = logging.getLogger("tracker")
 
@@ -91,6 +91,43 @@ def _benchmarks(dates: list[str]) -> list[dict]:
     return out
 
 
+def _pbr_fills(conn: sqlite3.Connection, names: dict[str, str]) -> list[dict]:
+    """Per PBR rebalance: fill outcome and slippage (pbr_slippage.measure,
+    the same figures `python -m ...pbr_slippage` prints), newest first."""
+    pbr = sqlite3.connect(f"file:{pbr_storage.DB_PATH}?mode=ro", uri=True)
+    try:
+        rebalances = pbr.execute(
+            "SELECT trade_date, summary_json FROM pbr_rebalance "
+            "ORDER BY trade_date DESC").fetchall()
+        out = []
+        for d, summary in rebalances:
+            orders = pbr.execute(
+                "SELECT symbol, side, qty, limit_price, filled_qty, avg_fill_price "
+                "FROM pbr_orders WHERE trade_date = ?", (d,)).fetchall()
+            if not orders:
+                continue
+            closes = {sym: Decimal(str(c)) for sym, c in conn.execute(
+                "SELECT symbol, close FROM pead_price_raw WHERE date = ? "
+                "AND close IS NOT NULL", (d.replace("-", ""),))}
+            m = pbr_slippage.measure(orders, closes)
+            summary = json.loads(summary) if summary else {}
+            out.append({
+                "date": d, "retry": bool(summary.get("retry_of")),
+                "orders": len(orders), "filled": m["filled"],
+                "partial": m["partial"], "unfilled": m["unfilled"],
+                "missed": [names.get(r[1], r[1]) for r in m["rows"]
+                           if r[8] != "filled"],
+                "vs_limit": _num(m["vs_limit_krw"] / m["notional"])
+                if m["notional"] else None,
+                "vs_close": _num(m["vs_close_krw"] / m["close_notional"])
+                if m["close_notional"] else None,
+                "vs_close_krw": _num(m["vs_close_krw"]),
+            })
+        return out
+    finally:
+        pbr.close()
+
+
 def build(conn: sqlite3.Connection, today: date) -> dict:
     snaps = conn.execute(
         "SELECT account, trade_date, total, cash, positions FROM portfolio "
@@ -105,6 +142,11 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                     if f["account"] == a and f["kind"] == "deposit"]
                 for a in names}
     latest = {s["account"]: s for s in snaps}   # rows are date-ordered
+
+    # Symbol -> name from every snapshot: PBR orders store codes only, and a
+    # symbol sold since is no longer in the latest positions.
+    names_seen = {p["symbol"]: p.get("name") or p["symbol"]
+                  for s_ in snaps for p in json.loads(s_["positions"])}
 
     account_rows = []
     for a in names:
@@ -162,6 +204,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                          for n, v in held_a] if total_a else [],
             "fx": fx,
             "benchmarks": _benchmarks([d for d, _ in series]),
+            "pbr": _pbr_fills(conn, names_seen) if a == "toss-bot" else None,
         })
 
     index = tracker.growth_index(by_account, deposits)
