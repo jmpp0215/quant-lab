@@ -68,6 +68,9 @@ FAN_DIR = storage.DB_PATH.parent / "backtest_fan"
 FANS = {"kis-isa": ("momentum", "2026-08-28"),   # momentum principal date
         "toss-bot": ("pbr", "2026-09-04")}       # first full PBR rebalance
 
+# The `prediction` skill's journal, read only.
+JOURNAL_DIR = Path(__file__).parent / "journal" / "predictions"
+
 # The upcoming list only looks this far ahead.
 UPCOMING_DAYS = 30
 
@@ -374,6 +377,12 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
     upcoming += [{"kind": "macro", "date": d, "account": None, "label": label,
                   "amount": None}
                  for d, label in MACRO_EVENTS if today.isoformat() <= d <= until]
+    predictions = [tracker.parse_prediction(f.read_text(encoding="utf-8")) | {"file": f.name}
+                   for f in sorted(JOURNAL_DIR.glob("*.md"))] if JOURNAL_DIR.exists() else []
+    upcoming += [{"kind": "prediction", "date": e["resolve_by"], "account": None,
+                  "label": f"예측 판정: {e['title']}", "amount": None}
+                 for e in predictions if e.get("status") == "open" and e.get("resolve_by")
+                 and today.isoformat() <= e["resolve_by"] <= until]
     upcoming.sort(key=lambda u: u["date"])
     row = conn.execute("SELECT payload, computed_at FROM rebalance_preview "
                        "WHERE account = 'kis-isa'").fetchone()
@@ -418,6 +427,8 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         "goal": goal,
         "isa": isa,
         "overseas_tax": overseas_tax,
+        "predictions": {"entries": predictions,
+                        "stats": tracker.prediction_stats(predictions)},
         "rebalances": sorted(rebalances, key=lambda r: r["date"]),
         "upcoming": upcoming,
         "preview": preview,

@@ -301,6 +301,43 @@ def fan_percentile(fan: dict, k: int, value: float) -> float | None:
     return None
 
 
+def parse_prediction(text: str) -> dict:
+    """One journal/predictions/*.md entry (the `prediction` skill's
+    format): frontmatter fields, the title, and the **주장:** line.
+    Inline "# ..." comments in frontmatter values are dropped."""
+    meta, body = {}, text
+    if text.startswith("---"):
+        head, _, body = text[3:].partition("\n---")
+        for line in head.splitlines():
+            key, sep, value = line.partition(":")
+            if sep:
+                meta[key.strip()] = value.split("#", 1)[0].strip() or None
+    title = next((ln[2:].strip() for ln in body.splitlines() if ln.startswith("# ")), None)
+    claim = next((ln.split("**주장:**", 1)[1].strip() for ln in body.splitlines()
+                  if "**주장:**" in ln), None)
+    confidence = meta.get("confidence")
+    return meta | {"title": title, "claim": claim,
+                   "confidence": int(confidence) if confidence and confidence.isdigit() else None,
+                   "scored": meta.get("scored") == "true",
+                   "after_the_fact": meta.get("after_the_fact") == "true"}
+
+
+def prediction_stats(entries: list[dict]) -> dict:
+    """Hit rate over scored, resolved entries (partial counts half, void is
+    left out) and the same per 10-point confidence bucket."""
+    done = [e for e in entries if e["scored"] and e.get("status") == "resolved"
+            and e.get("outcome") in ("hit", "miss", "partial")]
+    score = {"hit": 1.0, "partial": 0.5, "miss": 0.0}
+    buckets: dict[int, list[float]] = {}
+    for e in done:
+        if e["confidence"] is not None:
+            buckets.setdefault(min(e["confidence"] // 10 * 10, 90), []).append(score[e["outcome"]])
+    return {"resolved": len(done),
+            "hit_rate": sum(score[e["outcome"]] for e in done) / len(done) if done else None,
+            "by_confidence": [{"bucket": b, "n": len(v), "hit_rate": sum(v) / len(v)}
+                              for b, v in sorted(buckets.items())]}
+
+
 def benchmark_series(candles: list[dict], dates: list[str]) -> list[Decimal | None]:
     """Cumulative return of a benchmark on each date, from dates[0]'s close.
 

@@ -281,3 +281,41 @@ class TestRollingFan:
         assert tracker.fan_percentile(fan, 10, -0.5) == 0.0
         assert tracker.fan_percentile(fan, 10, 0.5) == 100.0
         assert tracker.fan_percentile(fan, 11, 0.0) is None
+
+
+ENTRY = """---
+recorded: 2026-10-19
+resolve_by: 2026-12-31
+confidence: 50
+scored: true
+after_the_fact: false
+status: open                  # open | resolved
+outcome:                      # hit | miss | partial | void
+---
+
+# 앤트로픽은 2026년 안에 상장한다
+
+## 예측
+- **주장:** 앤트로픽이 2026년 안에 미국 거래소에 상장한다.
+"""
+
+
+class TestPredictions:
+    def test_parses_frontmatter_title_and_claim(self):
+        e = tracker.parse_prediction(ENTRY)
+        assert (e["resolve_by"], e["confidence"], e["status"], e["outcome"]) == (
+            "2026-12-31", 50, "open", None)
+        assert e["scored"] is True and e["after_the_fact"] is False
+        assert e["title"] == "앤트로픽은 2026년 안에 상장한다"
+        assert e["claim"] == "앤트로픽이 2026년 안에 미국 거래소에 상장한다."
+
+    def test_stats_count_only_scored_resolved(self):
+        def e(outcome, conf, scored=True, status="resolved"):
+            return {"outcome": outcome, "confidence": conf, "scored": scored, "status": status}
+        entries = [e("hit", 70), e("miss", 75), e("partial", 30), e("void", 50),
+                   e("hit", 90, scored=False), e(None, 60, status="open")]
+        st = tracker.prediction_stats(entries)
+        assert st["resolved"] == 3
+        assert st["hit_rate"] == pytest.approx(0.5)
+        assert st["by_confidence"] == [{"bucket": 30, "n": 1, "hit_rate": 0.5},
+                                       {"bucket": 70, "n": 2, "hit_rate": 0.5}]

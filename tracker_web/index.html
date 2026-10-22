@@ -341,6 +341,9 @@ section[hidden] { display: none; }
     <div class="card" id="goalCard"><h2>목표 자산</h2><div id="goal"></div></div>
     <div class="card"><h2 id="taxTitle">해외주식 양도세</h2><div class="sub" id="taxSub"></div><div id="tax"></div></div>
     <div class="card" id="isaCard"><h2>ISA</h2><div id="isa"></div></div>
+    <div class="card"><h2>예측 저널</h2>
+      <div class="sub">journal/predictions의 기록 · 기록과 판정은 대화에서 (prediction 스킬)</div>
+      <div id="journal"></div></div>
   </section>
 </main>
 
@@ -348,7 +351,7 @@ section[hidden] { display: none; }
   <button role="tab" data-tab="home" aria-selected="true">홈</button>
   <button role="tab" data-tab="risk" aria-selected="false">리스크</button>
   <button role="tab" data-tab="flow" aria-selected="false">입출금</button>
-  <button role="tab" data-tab="goal" aria-selected="false">세금·목표</button>
+  <button role="tab" data-tab="goal" aria-selected="false">더보기</button>
 </nav>
 
 <script>
@@ -788,7 +791,8 @@ function renderUpcoming(d) {
     const what = document.createElement("div"); what.className = "what";
     what.append(u.label);
     const sm = document.createElement("small");
-    sm.textContent = `${u.date} · ${u.account ? ACCOUNT_LABEL(u.account) : "경제 일정"}`;
+    sm.textContent = `${u.date} · ${u.account ? ACCOUNT_LABEL(u.account)
+                                          : u.kind === "prediction" ? "예측 저널" : "경제 일정"}`;
     what.append(sm);
     const amt = document.createElement("span"); amt.className = "amt";
     amt.textContent = u.amount != null ? `약 ${won(u.amount)}원` : "";
@@ -1086,6 +1090,48 @@ function renderGoal(d) {
   }
   renderTax(d);
   renderIsa(d);
+  renderJournal(d);
+}
+
+function renderJournal(d) {
+  const { entries, stats } = d.predictions, host = $("journal"); host.textContent = "";
+  if (!entries.length) { emptyState(host, "기록된 예측이 없어요."); return; }
+  const sum = document.createElement("div"); sum.className = "fx-sum";
+  const open = entries.filter(e => e.status === "open");
+  kv(sum, "열린 예측", `${open.length}건`);
+  kv(sum, "채점된 판정", `${stats.resolved}건`);
+  kv(sum, "적중률", stats.hit_rate == null ? "—" : pct(stats.hit_rate, 0));
+  host.append(sum);
+  if (stats.resolved && stats.resolved < 10) {
+    const p = document.createElement("p"); p.className = "fx-note";
+    p.textContent = `판정이 ${stats.resolved}건뿐이라 적중률은 아직 의미가 작아요.`;
+    host.append(p);
+  }
+  if (stats.by_confidence.length) {
+    const p = document.createElement("p"); p.className = "fx-note";
+    p.textContent = "확신도별: " + stats.by_confidence
+      .map(b => `${b.bucket}%대 ${b.n}건 중 ${pct(b.hit_rate, 0)}`).join(" · ");
+    host.append(p);
+  }
+  const list = document.createElement("div"); list.style.marginTop = "10px";
+  const order = e => (e.status === "open" ? "0" : "1") + (e.resolve_by || e.resolved || "");
+  for (const e of entries.slice().sort((a, b) => order(a).localeCompare(order(b)))) {
+    const row = document.createElement("div"); row.className = "div-row";
+    const dt = document.createElement("span"); dt.className = "muted";
+    dt.textContent = e.status === "open" && e.resolve_by ? dday(e.resolve_by) : shortDate(e.recorded || "");
+    const what = document.createElement("div"); what.append(e.title || e.file);
+    const sm = document.createElement("small"); sm.textContent = e.claim || ""; what.append(sm);
+    const st = document.createElement("span"); st.className = "n";
+    const label = { hit: "적중", miss: "빗나감", partial: "부분 적중", void: "무효" };
+    st.textContent = e.status === "open" ? (e.confidence != null ? `확신 ${e.confidence}%` : "열림")
+                                         : (label[e.outcome] || e.outcome || "판정됨");
+    const note = document.createElement("span"); note.className = "st";
+    note.textContent = e.status === "open" ? (e.resolve_by ? `판정 ${e.resolve_by}` : "기한 없음")
+                     : e.scored ? "채점" : e.after_the_fact ? "사후 기록 · 채점 제외" : "채점 제외";
+    st.append(note);
+    row.append(dt, what, st); list.append(row);
+  }
+  host.append(list);
 }
 
 function kv(host, label, value, cls) {
