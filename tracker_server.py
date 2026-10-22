@@ -26,7 +26,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from quant import config, returns, storage, tracker
+from quant import config, returns, storage, tracker, transfers
 from quant.stock_factors.scripts import pbr_slippage, pbr_storage
 
 log = logging.getLogger("tracker")
@@ -73,6 +73,7 @@ MACRO_EVENTS = [
     ("2026-12-10", "FOMC 금리 결정 (04:00, 경제전망 포함)"),
 ]
 
+ISA_ACCOUNT = "kis-isa"   # tax-free dividends, ISA limits
 CASHFLOW_ACCOUNTS = ("kis-isa", "kis-main", "kis-main-overseas", "toss-bot")
 LABELS = {"kis-isa": "ISA (KIS)", "kis-main": "KIS 국내",
           "kis-main-overseas": "KIS 해외", "toss-bot": "토스"}
@@ -127,6 +128,31 @@ def _pbr_fills(conn: sqlite3.Connection, names: dict[str, str]) -> list[dict]:
         return out
     finally:
         pbr.close()
+
+
+def _dividends(conn: sqlite3.Connection, snaps: list, names: list[str],
+               suspects_by_account: dict[str, list[dict]]) -> dict:
+    """Announced dividends per account (dividend_schedule x shares held),
+    each marked received when quant/transfers.py saw a dividend-sized
+    cash rise in the step containing its pay date."""
+    events = storage.load_dividend_schedule(conn)
+    rows = []
+    for a in names:
+        a_snaps = [{"date": s_["trade_date"], "positions": json.loads(s_["positions"])}
+                   for s_ in snaps if s_["account"] == a]
+        seen = [(c["prev_date"], c["date"]) for c in suspects_by_account.get(a, [])
+                if c["kind"] == "dividend"]
+        for r in transfers.dividend_payouts(a_snaps, events, tax_free=a == ISA_ACCOUNT):
+            pay = r["pay_date"]
+            rows.append({
+                "account": a, "label": LABELS.get(a, a), "name": r["name"],
+                "record_date": r["record_date"], "pay_date": pay,
+                "per_share": _num(r["per_share"]), "qty": r["qty"],
+                "gross": _num(r["gross"]), "net": _num(r["net"]),
+                "received": bool(pay) and any(p < pay <= d for p, d in seen),
+            })
+    return {"coverage_from": min((e["record_date"] for e in events), default=None),
+            "rows": rows}
 
 
 def build(conn: sqlite3.Connection, today: date) -> dict:
@@ -270,10 +296,11 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
     if row is not None:
         preview = json.loads(row["payload"]) | {"computed_at": row["computed_at"]}
 
+    suspects_by_account = {a: storage.transfer_suspects(conn, a) for a in names}
     suspects = [{"account": c["account"], "label": LABELS.get(c["account"], c["account"]),
                  "date": c["date"], "prev_date": c.get("prev_date"),
                  "amount": _num(c["amount"]), "pending": c["kind"] == "pending"}
-                for a in names for c in storage.transfer_suspects(conn, a)
+                for a in names for c in suspects_by_account[a]
                 if c["kind"] in ("transfer", "pending")]
 
     recent_flows = [{"date": f["trade_date"], "account": f["account"],
@@ -309,6 +336,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         "upcoming": upcoming,
         "preview": preview,
         "suspects": suspects,
+        "dividends": _dividends(conn, snaps, names, suspects_by_account),
         "cashflows": recent_flows,
         "cashflow_accounts": [{"account": a, "label": LABELS[a]}
                               for a in CASHFLOW_ACCOUNTS],

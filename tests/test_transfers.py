@@ -144,3 +144,21 @@ class TestExpectedDividends:
                    "pay_date": "2026-11-04"}]
 
         assert transfers.expected_dividends(snaps, events) == [("2026-11-04", D(6100))]
+
+
+class TestDividendPayouts:
+    SNAPS = [snap("2026-10-28", 0, [dict(pos("A", 100, 1000), name="에이")])]
+    EVENTS = [{"symbol": "A", "record_date": "2026-10-30", "amount": D(100),
+               "pay_date": "2026-11-04"},
+              {"symbol": "A", "record_date": "2026-12-31", "amount": D(0),
+               "pay_date": None}]
+
+    def test_net_after_withholding_and_unset_amounts(self):
+        paid, unset = transfers.dividend_payouts(self.SNAPS, self.EVENTS)
+
+        assert (paid["name"], paid["gross"], paid["net"]) == ("에이", D(10000), D(8460))
+        assert (unset["record_date"], unset["gross"], unset["net"]) == ("2026-12-31", None, None)
+
+    def test_isa_is_tax_free(self):
+        paid, _ = transfers.dividend_payouts(self.SNAPS, self.EVENTS, tax_free=True)
+        assert paid["net"] == D(10000)

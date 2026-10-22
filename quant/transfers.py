@@ -98,7 +98,8 @@ def classify(series: list[Step]) -> list[dict]:
             continue
         lo, hi = DIVIDEND_RANGE
         if s.dividends > 0 and lo * s.dividends <= u <= hi * s.dividends + TRADE_FLOOR:
-            out.append({"date": s.date, "amount": u, "kind": "dividend"})
+            out.append({"date": s.date, "prev_date": s.prev_date, "amount": u,
+                        "kind": "dividend"})
             continue
         if abs(u) < THRESHOLD:
             continue
@@ -113,22 +114,41 @@ def classify(series: list[Step]) -> list[dict]:
     return out
 
 
-def expected_dividends(snapshots: list[dict], events: list[dict]) -> list[tuple[str, Decimal]]:
-    """(pay date, gross KRW) one account should receive, for steps().
+TAX_WITHHELD = Decimal("0.154")   # on dividends outside ISA
+
+
+def dividend_payouts(snapshots: list[dict], events: list[dict],
+                     tax_free: bool = False) -> list[dict]:
+    """One account's dividends on announced events, per event.
 
     events: {"symbol", "record_date", "amount" (per share, 0 = unset),
     "pay_date"}. Shares counted from the account's last snapshot before
     the record date - close enough to who held through the ex-date.
+    gross/net are None while the amount is unset; net is after the 15.4%
+    withholding unless tax_free (ISA).
     """
     snaps = sorted(snapshots, key=lambda s: s["date"])
     out = []
     for e in events:
-        if not e.get("pay_date") or e["amount"] <= 0:
-            continue
         before = [s for s in snaps if s["date"] < e["record_date"]]
         if not before:
             continue
-        qty = sum(p["qty"] for p in before[-1]["positions"] if p["symbol"] == e["symbol"])
-        if qty:
-            out.append((e["pay_date"], qty * e["amount"]))
-    return out
+        held = [p for p in before[-1]["positions"] if p["symbol"] == e["symbol"]]
+        qty = sum(p["qty"] for p in held)
+        if not qty:
+            continue
+        gross = qty * e["amount"] if e["amount"] > 0 else None
+        out.append({
+            "symbol": e["symbol"], "name": held[0].get("name") or e["symbol"],
+            "record_date": e["record_date"], "pay_date": e.get("pay_date"),
+            "per_share": e["amount"] if e["amount"] > 0 else None, "qty": qty,
+            "gross": gross,
+            "net": None if gross is None else gross if tax_free else gross * (1 - TAX_WITHHELD),
+        })
+    return sorted(out, key=lambda r: (r["pay_date"] or r["record_date"], r["symbol"]))
+
+
+def expected_dividends(snapshots: list[dict], events: list[dict]) -> list[tuple[str, Decimal]]:
+    """(pay date, gross KRW) one account should receive, for steps()."""
+    return [(r["pay_date"], r["gross"]) for r in dividend_payouts(snapshots, events)
+            if r["pay_date"] and r["gross"] is not None]

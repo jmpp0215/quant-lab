@@ -127,6 +127,13 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .suspect .acts button { flex: 1; font: inherit; font-size: 13px; padding: 8px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; }
 .suspect .acts button.rec { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.div-row { display: grid; grid-template-columns: 3.2em 1fr auto; gap: 8px; align-items: baseline;
+           padding: 7px 0; border-top: 1px solid var(--grid); font-size: 14px; }
+.div-row:first-child { border-top: 0; }
+.div-row small { display: block; color: var(--text-3); font-size: 12px; }
+.div-row .n { text-align: right; font-variant-numeric: tabular-nums; }
+.div-row .st { display: block; font-size: 11px; text-align: right; color: var(--text-3); }
+.div-row .st.ok { color: var(--accent); }
 .order { display: grid; grid-template-columns: 2.6em 1fr auto; gap: 8px; align-items: baseline;
          padding: 7px 0; border-top: 1px solid var(--grid); font-size: 14px; }
 .order:first-child { border-top: 0; }
@@ -263,6 +270,8 @@ section[hidden] { display: none; }
       <div class="chart" id="chartIndex"></div>
       <div class="legend"><span><i style="background:var(--m-isa)"></i>ISA 트랜치</span>
         <span><i style="background:var(--m-pbr)"></i>PBR 리밸런싱</span></div></div>
+    <div class="card" id="divCard"><h2>배당 (세후 추정)</h2>
+      <div class="sub" id="divSub"></div><div id="div"></div></div>
     <div class="card"><h2>벤치마크 비교</h2>
       <div class="sub" id="bmSub"></div>
       <div class="chart" id="chartBM"></div>
@@ -689,6 +698,7 @@ function render() {
   renderBars($("holdings"), r.holdings);
 
   renderSuspects(d);
+  renderDividends(d);
   renderUpcoming(d);
   renderPreview(d);
   renderFlows(d);
@@ -769,6 +779,72 @@ function renderSuspects(d) {
       + ". 결제 지연이면 며칠 안에 반대 금액이 나와서 사라져요.";
     host.append(p);
   }
+}
+
+function renderDividends(d) {
+  const dv = d.dividends, host = $("div"); host.textContent = "";
+  const today = d.generated, year = today.slice(0, 4);
+  $("divSub").textContent = dv.coverage_from
+    ? `${shortDate(dv.coverage_from)} 이후 배당 일정 기준 · 국내 종목만 · ISA는 비과세, 그 외 15.4% 원천징수 반영`
+    : "아직 배당 일정이 수집되지 않았어요 (매일 장 마감 후 수집)";
+  const paid = dv.rows.filter(r => r.pay_date && r.pay_date <= today && r.net != null);
+  const thisYear = paid.filter(r => r.pay_date.startsWith(year));
+  const coming = dv.rows.filter(r => (r.pay_date || r.record_date) > today);
+  const tiles = document.createElement("div"); tiles.className = "tiles";
+  const tile = (label, value, note) => {
+    const t = document.createElement("div"); t.className = "tile";
+    const l = document.createElement("div"); l.className = "label"; l.textContent = label;
+    const v = document.createElement("div"); v.className = "value"; v.textContent = value;
+    const n = document.createElement("div"); n.className = "note"; n.textContent = note;
+    t.append(l, v, n); tiles.append(t);
+  };
+  tile("올해 받은 배당", `${won(thisYear.reduce((s, r) => s + r.net, 0))}원`, `${thisYear.length}건`);
+  const known = coming.filter(r => r.net != null);
+  tile("앞으로 받을 배당", `${won(known.reduce((s, r) => s + r.net, 0))}원`,
+       `${known.length}건${coming.length > known.length ? ` + 금액 미정 ${coming.length - known.length}건` : ""}`);
+  host.append(tiles);
+
+  // Monthly bars of what has been paid, by pay month.
+  const months = {};
+  for (const r of paid) months[r.pay_date.slice(0, 7)] = (months[r.pay_date.slice(0, 7)] || 0) + r.net;
+  const keys = Object.keys(months).sort();
+  if (keys.length) {
+    const h = document.createElement("h3"); h.className = "fx-note"; h.style.margin = "12px 0 6px";
+    h.textContent = "월별 받은 배당"; host.append(h);
+    const bars = document.createElement("div"); bars.className = "bars";
+    const max = Math.max(...keys.map(k => months[k]));
+    for (const k of keys) {
+      const b = document.createElement("div"); b.className = "bar";
+      const n = document.createElement("div"); n.className = "n"; n.textContent = `${Number(k.slice(5))}월`;
+      const t = document.createElement("div"); t.className = "track";
+      const f = document.createElement("div"); f.className = "fill"; f.style.width = (months[k] / max * 100) + "%";
+      t.append(f);
+      const v = document.createElement("div"); v.className = "pct"; v.style.width = "auto"; v.textContent = man(months[k]);
+      b.append(n, t, v); bars.append(b);
+    }
+    host.append(bars);
+  }
+
+  const list = document.createElement("div"); list.style.marginTop = "12px";
+  const rows = [...coming.slice().reverse(), ...paid.slice().reverse()].slice(0, 8);
+  for (const r of rows.sort((a, b) => (b.pay_date || b.record_date).localeCompare(a.pay_date || a.record_date))) {
+    const row = document.createElement("div"); row.className = "div-row";
+    const dt = document.createElement("span"); dt.className = "muted"; dt.textContent = shortDate(r.pay_date || r.record_date);
+    const what = document.createElement("div"); what.append(r.name);
+    const sm = document.createElement("small");
+    sm.textContent = `${r.label} · ${r.qty}주 × ${r.per_share != null ? won(r.per_share) + "원" : "금액 미정"} · 기준일 ${shortDate(r.record_date)}`;
+    what.append(sm);
+    const amt = document.createElement("span"); amt.className = "n";
+    amt.textContent = r.net != null ? won(r.net) + "원" : "—";
+    const st = document.createElement("span"); st.className = "st";
+    const future = (r.pay_date || r.record_date) > today;
+    st.textContent = future ? (r.pay_date ? "지급 예정" : "지급일 미정") : r.received ? "✓ 입금 확인" : "입금 확인 못 함";
+    if (r.received) st.classList.add("ok");
+    amt.append(st);
+    row.append(dt, what, amt); list.append(row);
+  }
+  if (!rows.length) emptyState(list, "기록된 배당이 아직 없어요.");
+  host.append(list);
 }
 
 function renderPreview(d) {
