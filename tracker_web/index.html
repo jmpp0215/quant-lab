@@ -205,6 +205,9 @@ table.fx td:first-child { max-width: 9em; overflow: hidden; text-overflow: ellip
 .empty { color: var(--text-2); font-size: 14px; }
 .empty code { font-size: 12px; background: var(--grid); padding: 1px 5px; border-radius: 4px; }
 
+.chart .band-outer { fill: var(--accent); opacity: .10; }
+.chart .band-inner { fill: var(--accent); opacity: .18; }
+.chart .median { fill: none; stroke: var(--text-3); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .chart .extra { fill: none; stroke-width: 1.5; stroke-linejoin: round; }
 table.bm { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
 table.bm td { padding: 5px 0; border-top: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
@@ -391,13 +394,17 @@ function setSigned(el, v) {
 // ref: { y, label } - a dashed reference line, kept inside the y range.
 // extra: [{ ys, color, label, dash }] - more series on the same x, drawn
 // thinner under the main one and listed in the tooltip; null ys are gaps.
+// bands: [{ lo, hi, cls }] - shaded ranges behind everything (backtest fans).
+// mainClass replaces the main line's class (e.g. a muted median).
 function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, marks = [], ref = null,
-                                   extra = [], label = null }) {
+                                   extra = [], label = null, bands = [], mainClass = "line",
+                                   fmtX = d => shortDate(d) }) {
   host.textContent = "";
   if (points.length < 2) { host.textContent = "데이터가 부족해요"; return; }
   const W = host.clientWidth, H = host.clientHeight;
   const pad = { l: 44, r: 8, t: 8, b: 20 };
-  const ys = points.map(p => p.y).concat(...extra.map(e => e.ys.filter(v => v != null)));
+  const ys = points.map(p => p.y).concat(...extra.map(e => e.ys.filter(v => v != null)),
+                                          ...bands.map(b => b.lo.concat(b.hi)));
   let lo = Math.min(...ys), hi = Math.max(...ys);
   if (zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
   if (ref) { lo = Math.min(lo, ref.y); hi = Math.max(hi, ref.y); }
@@ -426,8 +433,13 @@ function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, mar
     el("line", { x1: pad.l, x2: W - pad.r, y1: y(0), y2: y(0), class: "zero" });
   [0, Math.floor((points.length - 1) / 2), points.length - 1].forEach((i, k) => {
     el("text", { x: x(i), y: H - 4, class: "tick",
-                 "text-anchor": ["start", "middle", "end"][k] }).textContent = shortDate(points[i].d);
+                 "text-anchor": ["start", "middle", "end"][k] }).textContent = fmtX(points[i].d);
   });
+  for (const b of bands) {
+    const top = b.hi.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+    const bottom = b.lo.map((v, i) => `L${x(i).toFixed(1)},${y(v).toFixed(1)}`).reverse().join("");
+    el("path", { d: top + bottom + "Z", class: b.cls });
+  }
   const path = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.y).toFixed(1)}`).join("");
   if (area) {
     const base = y(zero ? 0 : lo);
@@ -447,7 +459,7 @@ function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, mar
     pth.style.stroke = e.color;
     if (e.dash) pth.setAttribute("stroke-dasharray", "4 3");
   }
-  el("path", { d: path, class: "line" });
+  el("path", { d: path, class: mainClass });
   for (const m of marks)
     el("circle", { cx: x(m.i), cy: y(points[m.i].y), r: 4, fill: m.color, class: "mark" });
 
@@ -531,6 +543,8 @@ function renderAccountDetail(host, a, d) {
   host.append(bm);
   head("평가액");
   const c2 = chart();
+  let fanChart = null;
+  if (a.fan) fanChart = renderFan(host, a.fan, head, chart);
   let rateChart = null;
   if (a.fx) rateChart = renderFx(host, a.fx, head, chart);
   if (a.pbr && a.pbr.length) renderPbrFills(host, a.pbr, head);
@@ -540,7 +554,39 @@ function renderAccountDetail(host, a, d) {
   lineChart(c1, h.map(x => ({ d: x.date, y: x.index - 1 })),
             { fmtY: v => signedPct(v, 1), fmtTip: v => signedPct(v), zero: true, marks });
   lineChart(c2, h.map(x => ({ d: x.date, y: x.total })), { fmtY: man, fmtTip: v => won(v) + "원" });
+  if (fanChart) fanChart();
   if (rateChart) rateChart();
+}
+
+// Live return since the strategy started, over its backtest's spread of
+// outcomes at the same number of trading days in. Returns the draw call.
+function renderFan(host, f, head, chart) {
+  const last = f.actual[f.actual.length - 1];
+  head(`${f.label} 범위 vs 실제`, `${shortDate(f.start)} 시작 · ${last.k}거래일째`);
+  const p = document.createElement("p"); p.className = "fx-note";
+  const where = f.percentile == null ? "범위 밖 (백테스트 기간보다 김)"
+    : f.percentile <= 5 ? "하위 5% 아래" : f.percentile >= 95 ? "상위 5% 위"
+    : `약 ${Math.round(f.percentile)}번째 백분위`;
+  p.textContent = `지금 ${signedPct(last.ret)} → 백테스트에서 같은 기간을 보낸 경우들 중 ${where}. `
+    + "옅은 띠 5–95%, 진한 띠 25–75%, 점선 중앙값.";
+  host.append(p);
+  const c = chart();
+  const note = document.createElement("p"); note.className = "fx-note";
+  note.textContent = `${f.source}. ${f.cost_note}. 시작점이 겹치는 구간들이라 독립 표본이 아니에요.`;
+  host.append(note);
+  const n = Math.min(f.days.length, Math.max(60, last.k * 3));
+  const actual = Array(n).fill(null);
+  for (const a of f.actual) if (a.k < n) actual[a.k] = a.ret;
+  // Carry the live value over days without a snapshot, so it draws as a line.
+  for (let i = 1; i <= last.k && i < n; i++) if (actual[i] == null) actual[i] = actual[i - 1];
+  const cut = arr => arr.slice(0, n);
+  return () => lineChart(c, cut(f.days).map((k, i) => ({ d: k, y: f.p50[i] })), {
+    fmtY: v => signedPct(v, 0), fmtTip: v => signedPct(v), zero: true, mainClass: "median",
+    label: "중앙값", fmtX: k => `${k}일`,
+    bands: [{ lo: cut(f.p5), hi: cut(f.p95), cls: "band-outer" },
+            { lo: cut(f.p25), hi: cut(f.p75), cls: "band-inner" }],
+    extra: [{ ys: actual, color: "var(--text)", label: "실제" }],
+  });
 }
 
 // PBR fills per rebalance (pbr_slippage.measure). Slippage is signed so
@@ -1181,6 +1227,8 @@ document.querySelectorAll("nav button").forEach(btn => btn.addEventListener("cli
   showTab(btn.dataset.tab);
 }));
 if (["risk", "flow", "goal"].includes(location.hash.slice(1))) showTab(location.hash.slice(1));
+// #acct=<account> opens that account's detail on the home tab.
+if (location.hash.startsWith("#acct=")) openAccount = decodeURIComponent(location.hash.slice(6));
 let resizeTimer;
 addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => DATA && render(), 150); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });

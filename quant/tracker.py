@@ -252,6 +252,55 @@ def overseas_gains_tax(rows: list[dict]) -> dict:
             "taxable": taxable, "tax": taxable * OVERSEAS_GAINS_RATE}
 
 
+FAN_QUANTILES = (5, 25, 50, 75, 95)
+
+
+def rolling_fan(values: list[float], horizon: int, min_paths: int = 30,
+                cost: float = 0.0, cost_every: int = 0) -> dict:
+    """Distribution of cumulative return k trading days after every start.
+
+    values: one strategy's value per trading day, oldest first. Every day
+    is a start, so paths overlap - quantiles of overlapping windows, not
+    independent samples. cost (a fraction, e.g. 0.004) is taken once at
+    the start and again every cost_every days, for a backtest that ran
+    without trading costs. Stops at horizon or once fewer than min_paths
+    windows reach that far. Returns {"days", "p5".."p95", "n"}.
+    """
+    out = {"days": [], "n": [], **{f"p{q}": [] for q in FAN_QUANTILES}}
+    for k in range(horizon + 1):
+        paths = len(values) - k
+        if paths < min_paths:
+            break
+        charges = 1 + (k // cost_every if cost_every else 0)
+        keep = (1 - cost) ** charges if cost else 1.0
+        rets = sorted(values[i + k] / values[i] * keep - 1 for i in range(paths))
+        out["days"].append(k)
+        out["n"].append(paths)
+        for q in FAN_QUANTILES:
+            pos = q / 100 * (paths - 1)
+            lo = int(pos)
+            hi = min(lo + 1, paths - 1)
+            out[f"p{q}"].append(rets[lo] + (rets[hi] - rets[lo]) * (pos - lo))
+    return out
+
+
+def fan_percentile(fan: dict, k: int, value: float) -> float | None:
+    """Roughly where `value` sits at day k: interpolated between the stored
+    quantiles, clamped to 0-100 outside the 5-95 band. None past the fan."""
+    if k not in fan["days"]:
+        return None
+    i = fan["days"].index(k)
+    pts = [(q, fan[f"p{q}"][i]) for q in FAN_QUANTILES]
+    if value <= pts[0][1]:
+        return 0.0 if value < pts[0][1] else float(pts[0][0])
+    if value >= pts[-1][1]:
+        return 100.0 if value > pts[-1][1] else float(pts[-1][0])
+    for (q0, v0), (q1, v1) in zip(pts, pts[1:], strict=False):
+        if v0 <= value <= v1:
+            return q0 + (q1 - q0) * ((value - v0) / (v1 - v0) if v1 > v0 else 0)
+    return None
+
+
 def benchmark_series(candles: list[dict], dates: list[str]) -> list[Decimal | None]:
     """Cumulative return of a benchmark on each date, from dates[0]'s close.
 

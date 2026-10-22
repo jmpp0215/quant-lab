@@ -250,3 +250,34 @@ class TestOverseasGainsTax:
     def test_under_deduction_is_untaxed(self):
         t = tracker.overseas_gains_tax([{"pnl": "1000", "rate": "1400"}])
         assert (t["taxable"], t["tax"]) == (0, 0)
+
+
+class TestRollingFan:
+    def test_quantiles_over_every_start(self):
+        # steady +1%/day: every window k days long returns 1.01^k - 1
+        values = [1.01 ** i for i in range(50)]
+        fan = tracker.rolling_fan(values, horizon=5, min_paths=10)
+
+        assert fan["days"] == [0, 1, 2, 3, 4, 5]
+        assert fan["p50"][3] == pytest.approx(1.01 ** 3 - 1)
+        assert fan["p5"][3] == pytest.approx(fan["p95"][3])
+        assert fan["n"][5] == 45
+
+    def test_stops_when_too_few_windows(self):
+        fan = tracker.rolling_fan([1.0] * 12, horizon=100, min_paths=10)
+        assert fan["days"][-1] == 2
+
+    def test_cost_charged_at_start_and_every_period(self):
+        fan = tracker.rolling_fan([1.0] * 100, horizon=25, min_paths=10,
+                                  cost=0.01, cost_every=20)
+        assert fan["p50"][0] == pytest.approx(-0.01)
+        assert fan["p50"][19] == pytest.approx(-0.01)
+        assert fan["p50"][20] == pytest.approx(0.99 ** 2 - 1)
+
+    def test_percentile_interpolates_and_clamps(self):
+        fan = {"days": [10], "p5": [-0.1], "p25": [0.0], "p50": [0.05],
+               "p75": [0.1], "p95": [0.2]}
+        assert tracker.fan_percentile(fan, 10, 0.025) == pytest.approx(37.5)
+        assert tracker.fan_percentile(fan, 10, -0.5) == 0.0
+        assert tracker.fan_percentile(fan, 10, 0.5) == 100.0
+        assert tracker.fan_percentile(fan, 11, 0.0) is None

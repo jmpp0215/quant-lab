@@ -62,6 +62,12 @@ BENCHMARKS = [("102110", "코스피200"), ("133690", "나스닥100"),
               (config.CASH_SYMBOL, "현금성(CD·MMF)")]
 CANDLE_DIR = storage.DB_PATH.parent / "candles" / "kis"
 
+# Backtest return bands (scratch/pbr_fan.py, scratch/momproxy/fan.py) and the
+# date each account's live strategy started, to overlay the account on them.
+FAN_DIR = storage.DB_PATH.parent / "backtest_fan"
+FANS = {"kis-isa": ("momentum", "2026-08-28"),   # momentum principal date
+        "toss-bot": ("pbr", "2026-09-04")}       # first full PBR rebalance
+
 # The upcoming list only looks this far ahead.
 UPCOMING_DAYS = 30
 
@@ -86,6 +92,29 @@ LABELS = {"kis-isa": "ISA (KIS)", "kis-main": "KIS 국내",
 
 def _num(d: Decimal | None) -> float | None:
     return None if d is None else float(d)
+
+
+def _fan(account: str, own_index: list[tuple[str, Decimal]]) -> dict | None:
+    """The account's backtest band plus its own return since the strategy
+    started, by trading days elapsed (the KIS candle cache's calendar)."""
+    if account not in FANS:
+        return None
+    name, start = FANS[account]
+    path = FAN_DIR / f"{name}.json"
+    calendar_path = CANDLE_DIR / f"{BENCHMARKS[0][0]}.json"
+    if not path.exists() or not calendar_path.exists():
+        return None
+    fan = json.loads(path.read_text())
+    calendar = sorted(c["timestamp"][:10] for c in json.loads(calendar_path.read_text()))
+    base = next((v for d, v in own_index if d >= start), None)
+    if base is None or start not in calendar:
+        return None
+    k0 = calendar.index(start)
+    actual = [{"k": calendar.index(d) - k0, "date": d, "ret": _num(v / base - 1)}
+              for d, v in own_index if d >= start and d in calendar]
+    last = actual[-1]
+    return fan | {"start": start, "actual": actual,
+                  "percentile": tracker.fan_percentile(fan, last["k"], last["ret"])}
 
 
 def _benchmarks(dates: list[str]) -> list[dict]:
@@ -262,6 +291,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                          for n, v in held_a] if total_a else [],
             "fx": fx,
             "benchmarks": _benchmarks([d for d, _ in series]),
+            "fan": _fan(a, own),
             "pbr": _pbr_fills(conn, names_seen) if a == "toss-bot" else None,
         })
 
