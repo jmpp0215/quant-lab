@@ -11,10 +11,11 @@ Two figures, because they answer different questions:
   period's transfers taken out. "How did the strategy do?" - unaffected by
   when or how much was deposited.
 
-The starting point is a cashflow row of kind "principal": the account
-value taken as the money put in on that date (no transfer accompanied it,
-so it is never netted out of cash reconciliation). Deposits/withdrawals
-(kind "deposit") after that date add to it.
+The starting point is a cashflow row of kind "principal": the money taken
+as put in on that date - the account value, or its cost basis (purchase
+amount of holdings + cash) - with no transfer accompanying it, so it is
+never netted out of cash reconciliation. Deposits/withdrawals (kind
+"deposit") after that date add to it.
 """
 
 from dataclasses import dataclass
@@ -48,10 +49,15 @@ def compute(snapshots: list[tuple[str, Decimal]],
     if start is None:
         start, prev_value = series[0]
         series = series[1:]
+    elif series[0][0] == start:
+        # A principal taken at cost (purchase amount + cash) differs from
+        # that day's value by the unrealised gain so far - a gain the
+        # principal return should show but the time-weighted return, which
+        # measures from the start date on, should not.
+        prev_value = series[0][1]
+        series = series[1:]
     else:
         prev_value = money_in
-        if series[0][0] == start:
-            series = series[1:]
 
     deposits = sorted((d, a) for d, a, k in flows if k == "deposit" and d > start)
     if money_in is not None:

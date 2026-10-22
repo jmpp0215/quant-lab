@@ -61,6 +61,15 @@ class TestCompute:
         assert r.money_in == D(100)
         assert r.principal_return == D("0.1")
 
+    def test_cost_basis_principal_counts_unrealised_gain_in_principal_only(self):
+        # Bought for 100, worth 120 on the principal date, then +10%.
+        flows = [("2026-10-21", D(100), "principal")]
+        r = returns.compute(snaps(("2026-10-21", 120), ("2026-10-23", 132)),
+                            flows)
+
+        assert r.principal_return == D("0.32")
+        assert r.time_weighted == D("0.1")
+
     def test_opening_balance_rows_are_not_money_in(self):
         # opening_balance is a cash-reconciliation reference, not a transfer.
         flows = PRINCIPAL + [("2026-09-10", D(5000), "opening_balance")]
