@@ -4,8 +4,9 @@
     python tracker_server.py --port 9000
 
 Reads with mode=ro; the writes are POST /cashflow (an external
-deposit/withdrawal, the same row cashflow.py records) and POST
-/transfer/dismiss (a suspected transfer the user says wasn't one). Nothing on the
+deposit/withdrawal, the same row cashflow.py records), POST
+/transfer/dismiss (a suspected transfer the user says wasn't one) and
+POST /settings/isa (ISA details). Nothing on the
 order path (or any broker client) is imported. Bound to localhost only -
 phone access goes through `tailscale serve`, which adds HTTPS (needed for
 the PWA to install) without exposing the port to the internet.
@@ -41,14 +42,18 @@ GOAL_TARGET = None           # KRW, e.g. Decimal("100000000")
 GOAL_MONTHLY = Decimal("0")  # KRW added per month
 GOAL_ANNUAL_RETURN = Decimal("0.05")
 
-# ISA contribution limits. None hides the section - set after checking the
-# current rules (the 2026 reform may have changed them). Paid-in amounts are
-# entered by hand: cashflows can't supply them - the "principal" row is a
-# cost basis on the tracker start date, not what was paid in.
-ISA_ANNUAL_LIMIT = None      # KRW per calendar year
-ISA_TOTAL_LIMIT = None       # KRW over the account's life
-ISA_PAID_THIS_YEAR = Decimal("0")
-ISA_PAID_TOTAL = Decimal("0")
+# ISA details the user enters in the tracker (settings table): limits are
+# not hard-coded because the 2026 reform (reported: 40M/yr, 200M total,
+# tax-free 10M for 서민형) wasn't confirmed against an official source on
+# 2026-10-23, and paid-in can't come from cashflows - the "principal" row is
+# a cost basis on the tracker start date, not what was paid in.
+ISA_SETTINGS = {
+    "isa_type": "text", "isa_open_date": "date", "isa_paid_total": "won",
+    "isa_paid_this_year": "won", "isa_annual_limit": "won",
+    "isa_total_limit": "won", "isa_taxfree_limit": "won",
+}
+ISA_MANDATORY_YEARS = 3        # 의무가입기간
+ISA_EXCESS_TAX = Decimal("0.099")   # 분리과세 on gains over the tax-free limit
 
 # Compared against on the home chart and in each account's detail, from
 # the KIS candle cache daily.py keeps (KRW-listed, so FX is included the
@@ -284,12 +289,36 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                 "eta": tracker.month_after(today, months)
                 if months is not None else None}
 
-    isa = None
-    if ISA_ANNUAL_LIMIT is not None or ISA_TOTAL_LIMIT is not None:
-        isa = {"annual_limit": _num(ISA_ANNUAL_LIMIT),
-               "total_limit": _num(ISA_TOTAL_LIMIT),
-               "this_year": _num(ISA_PAID_THIS_YEAR),
-               "total": _num(ISA_PAID_TOTAL)}
+    settings = storage.load_settings(conn)
+    isa = {k: settings.get(k) for k in ISA_SETTINGS}
+    won_ = {k: Decimal(v) for k, v in isa.items() if ISA_SETTINGS[k] == "won" and v}
+    isa_value = Decimal(latest[ISA_ACCOUNT]["total"]) if ISA_ACCOUNT in latest else None
+    if isa["isa_open_date"]:
+        opened = date.fromisoformat(isa["isa_open_date"])
+        isa["mandatory_until"] = opened.replace(
+            year=opened.year + ISA_MANDATORY_YEARS).isoformat()
+    if isa_value is not None and "isa_paid_total" in won_:
+        gain = isa_value - won_["isa_paid_total"]
+        isa["value"], isa["gain"] = _num(isa_value), _num(gain)
+        if "isa_taxfree_limit" in won_:
+            isa["excess_tax"] = _num(max(gain - won_["isa_taxfree_limit"], Decimal("0"))
+                                     * ISA_EXCESS_TAX)
+
+    sells = [dict(r) for r in conn.execute(
+        "SELECT * FROM overseas_realized WHERE date LIKE ? ORDER BY date",
+        (f"{today.year}-%",))]
+    gains = tracker.overseas_gains_tax(sells)
+    overseas_tax = {k: _num(v) for k, v in gains.items()} | {
+        "year": today.year,
+        "sells": [{"date": r["date"], "name": r["name"], "qty": r["qty"],
+                   "pnl_usd": _num(Decimal(r["pnl"])),
+                   "pnl_krw": _num(Decimal(r["pnl"]) * Decimal(r["rate"]))} for r in sells],
+        # Held at a KRW loss: selling would offset gains (judgement is the user's).
+        "losers": [{"name": h["name"], "loss": h["price_effect"] + h["fx_effect"],
+                    "krw_return": h["krw_return"]}
+                   for a in account_rows if a["fx"] for h in a["fx"]["holdings"]
+                   if h["price_effect"] + h["fx_effect"] < 0],
+    }
 
     rebalances = [{"date": r["d"], "account": "kis-isa", "label": "ISA 트랜치"}
                   for r in conn.execute(
@@ -358,6 +387,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         },
         "goal": goal,
         "isa": isa,
+        "overseas_tax": overseas_tax,
         "rebalances": sorted(rebalances, key=lambda r: r["date"]),
         "upcoming": upcoming,
         "preview": preview,
@@ -408,6 +438,31 @@ def record_cashflow(body: dict, db: Path = storage.DB_PATH) -> tuple[int, dict]:
     return 200, {"ok": True}
 
 
+def save_isa_settings(body: dict, db: Path = storage.DB_PATH) -> tuple[int, dict]:
+    """Store ISA details; only ISA_SETTINGS keys, validated by type.
+    An empty value clears the setting."""
+    values = {}
+    for key, value in body.items():
+        kind = ISA_SETTINGS.get(key)
+        if kind is None:
+            raise ValueError(f"unknown setting {key}")
+        value = str(value).strip().replace(",", "") if value is not None else ""
+        if not value:
+            values[key] = None
+        elif kind == "won":
+            amount = Decimal(value)
+            if amount < 0 or amount != amount.to_integral_value():
+                raise ValueError(f"{key}: a whole number of won")
+            values[key] = str(amount)
+        elif kind == "date":
+            values[key] = date.fromisoformat(value).isoformat()
+        else:
+            values[key] = value[:40]
+    with storage.connect(db) as conn:
+        storage.save_settings(conn, values, datetime.now(KST).isoformat())
+    return 200, {"ok": True}
+
+
 def dismiss_transfer(body: dict, db: Path = storage.DB_PATH) -> tuple[int, dict]:
     """Mark a suspected transfer as not one (body: account, date, amount)."""
     account = body["account"]
@@ -435,7 +490,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         handler = {"/cashflow": record_cashflow,
-                   "/transfer/dismiss": dismiss_transfer}.get(self.path)
+                   "/transfer/dismiss": dismiss_transfer,
+                   "/settings/isa": save_isa_settings}.get(self.path)
         if handler is None:
             return self._json(404, {"error": "not found"})
         # A JSON body forces a CORS preflight, which this server never

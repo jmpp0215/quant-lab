@@ -898,6 +898,53 @@ def dividend_schedule(client: "KisClient", symbol: str, *,
             for row in resp.get("output1", [])]
 
 
+def overseas_realized(client: "KisClient", start: date, end: date) -> list[dict]:
+    """Overseas sells with realized P&L between two dates (해외주식 기간손익,
+    TTTS3039R), in USD, one row per sell.
+
+    Verified live 2026-10-23 (kis-main):
+    - ovrs_rlzt_pfls_amt = frcr_sll_amt_smtl1 - frcr_pchs_amt1 - stck_sll_tlex
+      (sell proceeds - average cost - sell-side fee), e.g. ETN 4978.56 -
+      4758.2088 - 7.57 = 212.7812.
+    - With WCRC_FRCR_DVSN_CD "02" KIS converts BOTH cost and proceeds at
+      frst_bltn_exrt (that sell day's first published rate), so its KRW
+      figure is not the tax basis, which converts the cost at the buy-date
+      rate. Callers get USD plus that rate and decide.
+    - At most 20 rows per call; msg_cd KIOK0500 means more follow (KIOK0510:
+      complete). Continuing needs the tr_cont request header, which the
+      shared get() doesn't send - so a window that comes back incomplete is
+      split in half and each half fetched instead.
+    """
+    resp = client.get(
+        "/uapi/overseas-stock/v1/trading/inquire-period-profit",
+        "TTTS3039R",
+        params={
+            "CANO": client.cano, "ACNT_PRDT_CD": client.acnt_prdt_cd,
+            "OVRS_EXCG_CD": "", "NATN_CD": "", "CRCY_CD": "", "PDNO": "",
+            "INQR_STRT_DT": start.strftime("%Y%m%d"),
+            "INQR_END_DT": end.strftime("%Y%m%d"),
+            "WCRC_FRCR_DVSN_CD": "01",
+            "CTX_AREA_FK200": "", "CTX_AREA_NK200": "",
+        },
+    )
+    if resp.get("msg_cd") == "KIOK0500":
+        if start >= end:
+            raise RuntimeError(f"more than one page of overseas sells on {start}")
+        mid = start + (end - start) / 2
+        return (overseas_realized(client, start, mid)
+                + overseas_realized(client, mid + timedelta(days=1), end))
+    return [{
+        "date": f"{r['trad_day'][:4]}-{r['trad_day'][4:6]}-{r['trad_day'][6:]}",
+        "symbol": r["ovrs_pdno"], "name": r["ovrs_item_name"],
+        "qty": int(Decimal(r["slcl_qty"])),
+        "cost": Decimal(r["frcr_pchs_amt1"]),
+        "proceeds": Decimal(r["frcr_sll_amt_smtl1"]),
+        "fee": Decimal(r["stck_sll_tlex"]),
+        "pnl": Decimal(r["ovrs_rlzt_pfls_amt"]),
+        "rate": Decimal(r["frst_bltn_exrt"]),
+    } for r in resp.get("output1", [])]
+
+
 def dividend_yield(client: "KisClient", symbol: str, price: Decimal, *,
                    months: int = 12, today: date | None = None) -> Decimal:
     """Trailing distribution yield from real KSD payout history, as a

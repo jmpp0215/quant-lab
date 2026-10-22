@@ -236,3 +236,17 @@ class TestContributions:
              for d, p in [("2026-09-30", 100), ("2026-10-01", 110), ("2026-10-02", 130)]]
         rows = tracker.contributions({"x": a}, {}, {}, "2026-10-02", "2026-10-31")
         assert self.total(rows) == D(20)
+
+
+class TestOverseasGainsTax:
+    def test_net_gain_over_deduction_taxed_at_22_percent(self):
+        rows = [{"pnl": "2000", "rate": "1400"},   # 2,800,000
+                {"pnl": "-100", "rate": "1300"}]   # -130,000
+        t = tracker.overseas_gains_tax(rows)
+        assert t["pnl_krw"] == D(2670000)
+        assert t["taxable"] == D(170000)
+        assert t["tax"] == D(37400)
+
+    def test_under_deduction_is_untaxed(self):
+        t = tracker.overseas_gains_tax([{"pnl": "1000", "rate": "1400"}])
+        assert (t["taxable"], t["tax"]) == (0, 0)

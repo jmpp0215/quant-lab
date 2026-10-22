@@ -163,6 +163,7 @@ table.fx th { font-weight: 500; color: var(--text-3); font-size: 11px; text-alig
 table.fx th:first-child, table.fx td:first-child { text-align: left; }
 table.fx td { padding: 5px 0; border-top: 1px solid var(--grid); text-align: right;
               font-variant-numeric: tabular-nums; }
+table.fx.sells th:nth-child(2), table.fx.sells td:nth-child(2) { text-align: left; padding-left: 8px; }
 table.fx td:first-child { max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                           color: var(--text-2); }
 .chart .ref { stroke: var(--text-3); stroke-width: 1; stroke-dasharray: 4 3; }
@@ -335,7 +336,8 @@ section[hidden] { display: none; }
 
   <section id="tab-goal" hidden>
     <div class="card" id="goalCard"><h2>목표 자산</h2><div id="goal"></div></div>
-    <div class="card" id="isaCard"><h2>ISA 납입 한도</h2><div id="isa"></div></div>
+    <div class="card"><h2 id="taxTitle">해외주식 양도세</h2><div class="sub" id="taxSub"></div><div id="tax"></div></div>
+    <div class="card" id="isaCard"><h2>ISA</h2><div id="isa"></div></div>
   </section>
 </main>
 
@@ -343,7 +345,7 @@ section[hidden] { display: none; }
   <button role="tab" data-tab="home" aria-selected="true">홈</button>
   <button role="tab" data-tab="risk" aria-selected="false">리스크</button>
   <button role="tab" data-tab="flow" aria-selected="false">입출금</button>
-  <button role="tab" data-tab="goal" aria-selected="false">목표</button>
+  <button role="tab" data-tab="goal" aria-selected="false">세금·목표</button>
 </nav>
 
 <script>
@@ -1036,18 +1038,114 @@ function renderGoal(d) {
       : `월 ${man(g.monthly)}원 적립 · 연 ${pct(g.annual_return, 1)} 가정 → ${g.eta} 도달 예상 (${g.months}개월)`;
     host.append(big, m, eta);
   }
-  const i = d.isa, ih = $("isa");
-  if (!i) { emptyState(ih, "한도가 설정되지 않았어요. 설정하려면", "tracker_server.py → ISA_ANNUAL_LIMIT"); return; }
-  ih.textContent = "";
-  for (const [label, used, limit] of [["올해 납입", i.this_year, i.annual_limit],
-                                      ["누적 납입", i.total, i.total_limit]]) {
-    if (limit == null) continue;
-    const l = document.createElement("div"); l.className = "label";
-    l.textContent = `${label} ${man(used)}원 / ${man(limit)}원 · 남은 한도 ${man(Math.max(limit - used, 0))}원`;
+  renderTax(d);
+  renderIsa(d);
+}
+
+function kv(host, label, value, cls) {
+  const l = document.createElement("span"); l.textContent = label;
+  const v = document.createElement("span"); v.className = "v" + (cls ? " " + cls : ""); v.textContent = value;
+  host.append(l, v);
+}
+
+function renderTax(d) {
+  const t = d.overseas_tax, host = $("tax"); host.textContent = "";
+  $("taxTitle").textContent = `해외주식 양도세 (${t.year}년)`;
+  $("taxSub").textContent = "KIS 해외 기간손익 기준 추정이에요. KIS는 매수·매도 모두 매도일 환율로 환산하지만, 실제 세금은 매수일 환율로 원가를 계산해서 달라질 수 있어요.";
+  const sum = document.createElement("div"); sum.className = "fx-sum";
+  kv(sum, `실현 손익 (매도 ${t.sells.length}건)`, `${t.pnl_krw >= 0 ? "+" : "−"}${won(Math.abs(t.pnl_krw))}원`);
+  kv(sum, "기본공제", `${won(t.deduction)}원`);
+  kv(sum, "과세 대상", `${won(t.taxable)}원`);
+  const tot = document.createElement("span"); tot.className = "tot"; tot.textContent = "예상 세액 (22%)";
+  const tv = document.createElement("span"); tv.className = "v tot"; tv.textContent = `${won(t.tax)}원`;
+  sum.append(tot, tv);
+  host.append(sum);
+  const used = Math.max(t.pnl_krw, 0) / t.deduction;
+  const m = document.createElement("div"); m.className = "meter";
+  const f = document.createElement("div"); f.style.width = Math.min(used, 1) * 100 + "%"; m.append(f);
+  const ml = document.createElement("p"); ml.className = "fx-note";
+  ml.textContent = `공제 사용 ${pct(used, 0)}${used > 1 ? " · 공제를 넘었어요" : ` · 남은 공제 ${won(t.deduction - Math.max(t.pnl_krw, 0))}원`}`;
+  host.append(m, ml);
+  if (t.losers.length) {
+    const p = document.createElement("p"); p.className = "fx-note";
+    p.textContent = "원화 기준 평가손실 종목 (연내 매도하면 이익과 상계): " + t.losers
+      .map(x => `${x.name} ${won(x.loss)}원 (${signedPct(x.krw_return, 1)})`).join(", ")
+      + ". 매도 여부는 직접 판단하세요.";
+    host.append(p);
+  }
+  const table = document.createElement("table"); table.className = "fx sells"; table.style.marginTop = "8px";
+  const th = table.createTHead().insertRow();
+  for (const h of ["매도일", "종목", "수량", "손익"]) { const c = document.createElement("th"); c.textContent = h; th.append(c); }
+  const body = table.createTBody();
+  for (const r of t.sells.slice().reverse()) {
+    const tr = body.insertRow();
+    for (const v of [shortDate(r.date), r.name, `${r.qty}주`, `${r.pnl_krw >= 0 ? "+" : "−"}${man(Math.abs(r.pnl_krw))}`])
+      tr.insertCell().textContent = v;
+  }
+  if (t.sells.length) host.append(table);
+}
+
+const ISA_FIELDS = [
+  ["isa_type", "유형", "text", "서민형"], ["isa_open_date", "가입일", "date", ""],
+  ["isa_paid_total", "누적 납입액 (원)", "won", ""], ["isa_paid_this_year", "올해 납입액 (원)", "won", ""],
+  ["isa_annual_limit", "연간 납입 한도 (원)", "won", ""], ["isa_total_limit", "총 납입 한도 (원)", "won", "보도: 2억, 미확인"],
+  ["isa_taxfree_limit", "비과세 한도 (원)", "won", "보도: 서민형 1,000만, 미확인"],
+];
+let isaEditing = false;
+
+function renderIsa(d) {
+  const i = d.isa, host = $("isa"); host.textContent = "";
+  if (isaEditing) {
+    const form = document.createElement("form"); form.className = "flow";
+    for (const [key, label, kind, hint] of ISA_FIELDS) {
+      const l = document.createElement("label"); l.append(label);
+      const inp = document.createElement("input"); inp.name = key;
+      inp.type = kind === "date" ? "date" : "text";
+      if (kind === "won") inp.inputMode = "numeric";
+      inp.value = i[key] ? (kind === "won" ? Number(i[key]).toLocaleString("ko-KR") : i[key]) : "";
+      inp.placeholder = hint;
+      l.append(inp); form.append(l);
+    }
+    const msg = document.createElement("div"); msg.className = "msg";
+    const btn = document.createElement("button"); btn.className = "primary"; btn.type = "submit"; btn.textContent = "저장";
+    form.append(btn, msg);
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      const body = Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, v.replace(/,/g, "")]));
+      btn.disabled = true;
+      try { await postJSON("settings/isa", body); isaEditing = false; await load(); }
+      catch (err) { msg.className = "msg err"; msg.textContent = "저장하지 못했어요: " + err.message; btn.disabled = false; }
+    });
+    host.append(form);
+    return;
+  }
+  const sum = document.createElement("div"); sum.className = "fx-sum";
+  kv(sum, "유형 · 가입일", `${i.isa_type || "—"} · ${i.isa_open_date || "—"}`);
+  if (i.mandatory_until) kv(sum, "의무 보유 만료", `${i.mandatory_until} (${dday(i.mandatory_until)})`);
+  if (i.gain != null) {
+    kv(sum, "납입 대비 손익", `${i.gain >= 0 ? "+" : "−"}${won(Math.abs(i.gain))}원 (${signedPct(i.gain / Number(i.isa_paid_total))})`);
+  }
+  if (i.excess_tax != null) kv(sum, "비과세 초과분 세금 (9.9%)", `${won(i.excess_tax)}원`);
+  host.append(sum);
+  for (const [label, used, limit] of [["올해 납입", i.isa_paid_this_year, i.isa_annual_limit],
+                                      ["누적 납입", i.isa_paid_total, i.isa_total_limit]]) {
+    if (!limit || used == null) continue;
+    const l = document.createElement("p"); l.className = "fx-note";
+    l.textContent = `${label} ${man(Number(used))}원 / ${man(Number(limit))}원 · 남은 한도 ${man(Math.max(limit - used, 0))}원`;
     const m = document.createElement("div"); m.className = "meter";
     const f = document.createElement("div"); f.style.width = Math.min(used / limit, 1) * 100 + "%"; m.append(f);
-    ih.append(l, m);
+    host.append(l, m);
   }
+  const missing = ISA_FIELDS.filter(([k]) => !i[k]).map(([, label]) => label.replace(/ \(원\)/, ""));
+  if (missing.length) {
+    const p = document.createElement("p"); p.className = "fx-note";
+    p.textContent = "아직 비어 있는 값: " + missing.join(", ") + ". 2026년 한도 개편은 공식 확정 여부를 확인하고 넣어 주세요.";
+    host.append(p);
+  }
+  const edit = document.createElement("button"); edit.className = "primary"; edit.type = "button";
+  edit.style.marginTop = "10px"; edit.style.width = "100%"; edit.textContent = "ISA 정보 수정";
+  edit.addEventListener("click", () => { isaEditing = true; renderIsa(d); });
+  host.append(edit);
 }
 
 async function load() {

@@ -170,6 +170,29 @@ CREATE TABLE IF NOT EXISTS transfer_reviews (
     PRIMARY KEY (account, date)
 );
 
+-- Overseas sells with realized P&L (kis_client.overseas_realized), in
+-- USD, replaced per year by daily.py. For the tracker's capital gains
+-- tax estimate.
+CREATE TABLE IF NOT EXISTS overseas_realized (
+    date        TEXT NOT NULL,
+    account     TEXT NOT NULL,
+    symbol      TEXT NOT NULL,
+    name        TEXT,
+    qty         INTEGER NOT NULL,
+    cost        TEXT NOT NULL,
+    proceeds    TEXT NOT NULL,
+    fee         TEXT NOT NULL,
+    pnl         TEXT NOT NULL,
+    rate        TEXT NOT NULL      -- KRW/USD KIS converts both legs at
+);
+
+-- Values the user enters in the tracker (ISA details), key -> text.
+CREATE TABLE IF NOT EXISTS settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT,
+    updated_at  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_cashflows_date ON cashflows(trade_date);
 
 CREATE INDEX IF NOT EXISTS idx_scores_symbol ON scores(symbol, trade_date);
@@ -556,6 +579,30 @@ def save_transfer_review(conn: sqlite3.Connection, account: str, date: str,
     conn.execute(
         "INSERT OR REPLACE INTO transfer_reviews (account, date, amount, reviewed_at) "
         "VALUES (?, ?, ?, ?)", (account, date, str(amount), reviewed_at))
+
+
+def save_overseas_realized(conn: sqlite3.Connection, account: str, year: int,
+                           rows: list[dict]) -> None:
+    """Replace one account's realized sells for a calendar year."""
+    conn.execute("DELETE FROM overseas_realized WHERE account = ? AND date LIKE ?",
+                 (account, f"{year}-%"))
+    conn.executemany(
+        "INSERT INTO overseas_realized (date, account, symbol, name, qty, cost, "
+        "proceeds, fee, pnl, rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(r["date"], account, r["symbol"], r.get("name"), r["qty"], str(r["cost"]),
+          str(r["proceeds"]), str(r["fee"]), str(r["pnl"]), str(r["rate"]))
+         for r in rows])
+
+
+def load_settings(conn: sqlite3.Connection) -> dict[str, str]:
+    return {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM settings")}
+
+
+def save_settings(conn: sqlite3.Connection, values: dict[str, str | None],
+                  updated_at: str) -> None:
+    conn.executemany(
+        "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+        [(k, v, updated_at) for k, v in values.items()])
 
 
 def save_dividend_schedule(conn: sqlite3.Connection, symbol: str,

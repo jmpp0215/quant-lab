@@ -432,6 +432,19 @@ def main() -> int:
             problem_accounts.append(f"[upcoming] {e}")
 
     if slot == "close" and target is None:
+        # Realized overseas sells this year, for the tracker's capital gains
+        # tax estimate. Overseas orders are placed by hand, not by this
+        # system, so the broker's record is the only one.
+        try:
+            factory = accounts.ACCOUNTS["kis-main-overseas"]["client"]
+            overseas = client_cache.get(factory) or factory()
+            today = datetime.now(market.KST).date()
+            sells = kis_client.overseas_realized(overseas, today.replace(month=1, day=1), today)
+            with storage.connect() as conn:
+                storage.save_overseas_realized(conn, "kis-main-overseas", today.year, sells)
+        except Exception as e:
+            log.exception("overseas realized fetch failed")
+            problem_accounts.append(f"[overseas realized] {e}")
         try:
             backups.run(datetime.now(market.KST).date().isoformat())
         except Exception as e:

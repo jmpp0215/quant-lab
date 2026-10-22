@@ -74,3 +74,22 @@ class TestDismissTransfer:
         with pytest.raises(ValueError):
             tracker_server.dismiss_transfer(
                 {"account": "nope", "date": "2026-08-21", "amount": 1}, db)
+
+
+class TestSaveIsaSettings:
+    def test_stores_validated_values_and_clears_empty_ones(self, db):
+        body = {"isa_type": "서민형", "isa_open_date": "2025-03-01",
+                "isa_paid_total": "13,510,023", "isa_annual_limit": "40000000",
+                "isa_taxfree_limit": ""}
+        assert tracker_server.save_isa_settings(body, db) == (200, {"ok": True})
+        with storage.connect(db) as conn:
+            s = storage.load_settings(conn)
+        assert s["isa_paid_total"] == "13510023"
+        assert s["isa_open_date"] == "2025-03-01"
+        assert s["isa_taxfree_limit"] is None
+
+    @pytest.mark.parametrize("bad", [{"nope": "1"}, {"isa_paid_total": "-1"},
+                                     {"isa_paid_total": "1.5"}, {"isa_open_date": "2025-13-01"}])
+    def test_rejects_bad_input(self, db, bad):
+        with pytest.raises((ValueError, ArithmeticError)):
+            tracker_server.save_isa_settings(bad, db)

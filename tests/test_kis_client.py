@@ -282,3 +282,39 @@ class TestDividendSchedule:
         assert rows == [
             {"record_date": "2026-09-30", "amount": Decimal("61"), "pay_date": "2026-10-02"},
             {"record_date": "2026-12-31", "amount": Decimal("0"), "pay_date": None}]
+
+
+class StubPeriodProfitClient:
+    """Returns >20 rows (KIOK0500) for any window longer than one month."""
+    cano, acnt_prdt_cd = "1", "01"
+
+    def __init__(self):
+        self.windows = []
+
+    def get(self, path, tr_id, params):
+        start, end = params["INQR_STRT_DT"], params["INQR_END_DT"]
+        self.windows.append((start, end))
+        if start < "20260901" < end or start <= "20260917" <= end and start < "20260901":
+            return {"msg_cd": "KIOK0500", "output1": []}
+        rows = [] if not start <= "20260917" <= end else [{
+            "trad_day": "20260917", "ovrs_pdno": "ETN", "ovrs_item_name": "이턴",
+            "slcl_qty": "12", "frcr_pchs_amt1": "4758.20880",
+            "frcr_sll_amt_smtl1": "4978.560000", "stck_sll_tlex": "7.5700",
+            "ovrs_rlzt_pfls_amt": "212.78120", "frst_bltn_exrt": "1368.30000000"}]
+        return {"msg_cd": "KIOK0510", "output1": rows}
+
+
+class TestOverseasRealized:
+    def test_splits_incomplete_windows_and_parses_rows(self):
+        from datetime import date
+        from decimal import Decimal
+
+        from quant import kis_client
+        client = StubPeriodProfitClient()
+        rows = kis_client.overseas_realized(client, date(2026, 1, 1), date(2026, 10, 23))
+
+        assert len(client.windows) > 1
+        assert rows == [{"date": "2026-09-17", "symbol": "ETN", "name": "이턴", "qty": 12,
+                         "cost": Decimal("4758.20880"), "proceeds": Decimal("4978.560000"),
+                         "fee": Decimal("7.5700"), "pnl": Decimal("212.78120"),
+                         "rate": Decimal("1368.30000000")}]

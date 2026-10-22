@@ -232,6 +232,26 @@ def contributions(snapshots: dict[str, list[dict]],
             for (a, n, k), v in merged.items() if v]
 
 
+OVERSEAS_GAINS_DEDUCTION = Decimal("2500000")   # KRW per person per year
+OVERSEAS_GAINS_RATE = Decimal("0.22")           # 20% + 2% local income tax
+
+
+def overseas_gains_tax(rows: list[dict]) -> dict:
+    """Estimated tax on a year's realized overseas gains.
+
+    rows: kis_client.overseas_realized output (USD pnl and the rate KIS
+    converts at). Gains and losses net within the year; the 2.5M deduction
+    applies to the net. The KRW figure converts each sell's P&L at that
+    sell day's rate, as KIS does - the tax law converts the cost at the
+    buy-date rate instead, so this is an estimate, not the filing figure.
+    """
+    pnl_krw = sum((Decimal(r["pnl"]) * Decimal(r["rate"]) for r in rows), Decimal("0"))
+    taxable = max(pnl_krw - OVERSEAS_GAINS_DEDUCTION, Decimal("0"))
+    return {"pnl_usd": sum((Decimal(r["pnl"]) for r in rows), Decimal("0")),
+            "pnl_krw": pnl_krw, "deduction": OVERSEAS_GAINS_DEDUCTION,
+            "taxable": taxable, "tax": taxable * OVERSEAS_GAINS_RATE}
+
+
 def benchmark_series(candles: list[dict], dates: list[str]) -> list[Decimal | None]:
     """Cumulative return of a benchmark on each date, from dates[0]'s close.
 
