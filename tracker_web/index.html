@@ -108,6 +108,16 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .acct-detail { grid-column: 1 / -1; padding-top: 10px; cursor: default; }
 .acct-detail h3 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 12px 0 6px; }
 .acct-detail .chart { height: 150px; }
+.order { display: grid; grid-template-columns: 2.6em 1fr auto; gap: 8px; align-items: baseline;
+         padding: 7px 0; border-top: 1px solid var(--grid); font-size: 14px; }
+.order:first-child { border-top: 0; }
+.order .side { font-size: 12px; font-weight: 600; }
+.order .side.buy { color: var(--up); } .order .side.sell { color: var(--down); }
+.order small { display: block; color: var(--text-3); font-size: 12px; }
+.order .n { text-align: right; font-variant-numeric: tabular-nums; }
+.picks { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.picks span { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--grid);
+              color: var(--text-2); }
 .fx-sum { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 14px; }
 .fx-sum .v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .fx-sum .tot { border-top: 1px solid var(--grid); padding-top: 4px; }
@@ -215,6 +225,8 @@ section[hidden] { display: none; }
         <div class="value" id="principal">—</div><div class="note" id="principalNote"></div></div>
     </div>
     <div class="card"><h2>다가오는 일정</h2><div class="sub">30일 이내</div><div id="upcoming"></div></div>
+    <div class="card" id="previewCard" hidden><h2 id="previewTitle"></h2>
+      <div class="sub" id="previewSub"></div><div id="preview"></div></div>
     <div class="card"><h2>누적 수익률 (시간가중)</h2>
       <div class="sub">입출금·계좌 추가 효과를 뺀 운용 성과</div>
       <div class="chart" id="chartIndex"></div>
@@ -560,6 +572,7 @@ function render() {
   renderBars($("holdings"), r.holdings);
 
   renderUpcoming(d);
+  renderPreview(d);
   renderFlows(d);
   renderGoal(d);
 }
@@ -588,6 +601,44 @@ function renderUpcoming(d) {
     row.append(dd, what, amt); host.append(row);
   }
 }
+
+function renderPreview(d) {
+  const p = d.preview, card = $("previewCard");
+  card.hidden = !p || p.date > addDays(d.generated, UPCOMING_WINDOW);
+  if (card.hidden) return;
+  $("previewTitle").textContent = `다음 리밸런싱 미리보기 · 트랜치 ${p.tranche}/${p.tranches} · ${shortDate(p.date)} (${dday(p.date)})`;
+  $("previewSub").textContent = `${shortDate(p.signal_date)} 신호·종가 기준 추정이에요. 실제 주문은 당일 가격으로 다시 계산돼요.`;
+  const host = $("preview"); host.textContent = "";
+  const warn = text => { const b = document.createElement("div"); b.className = "banner";
+                         b.textContent = text; host.append(b); };
+  if (p.drift) warn("장부와 실제 잔고가 달라요 (" + Object.entries(p.drift).map(([s, q]) => `${s} ${q > 0 ? "+" : ""}${q}주`).join(", ")
+                    + "). 리밸런싱 전에 정리해야 실행돼요.");
+  if (Number(p.deposit_needed) > 0)
+    warn(`현금이 모자라 목표의 일부만 채워요. 약 ${man(Number(p.deposit_needed))}원을 입금하면 목표(${man(Number(p.target))}원)를 채울 수 있어요.`);
+  const picks = document.createElement("div"); picks.className = "picks";
+  for (const x of p.picks) { const c = document.createElement("span");
+    c.textContent = `${x.name} ${pct(Number(x.weight), 0)}`; picks.append(c); }
+  host.append(picks);
+  if (!p.orders.length) { emptyState(host, "지금 신호대로면 이 트랜치는 바꿀 게 없어요."); return; }
+  let sold = 0, bought = 0;
+  for (const o of p.orders) {
+    const n = Number(o.notional);
+    if (o.side === "SELL") sold += n; else bought += n;
+    const row = document.createElement("div"); row.className = "order";
+    const side = document.createElement("span"); side.className = "side " + o.side.toLowerCase();
+    side.textContent = o.side === "SELL" ? "매도" : "매수";
+    const what = document.createElement("div"); what.append(o.name);
+    const sm = document.createElement("small"); sm.textContent = `${o.qty}주 × ${won(Number(o.price))}원`; what.append(sm);
+    const amt = document.createElement("span"); amt.className = "n"; amt.textContent = won(n) + "원";
+    row.append(side, what, amt); host.append(row);
+  }
+  const tot = document.createElement("p"); tot.className = "fx-note";
+  tot.textContent = `매도 ${man(sold)}원 · 매수 ${man(bought)}원 · 트랜치 목표 ${man(Number(p.target))}원 (지금 ${man(Number(p.holds))}원)`;
+  host.append(tot);
+}
+
+const UPCOMING_WINDOW = 30;
+const addDays = (iso, n) => new Date(new Date(iso).getTime() + n * 864e5).toISOString().slice(0, 10);
 
 function renderFlows(d) {
   const sel = $("flowAccount");

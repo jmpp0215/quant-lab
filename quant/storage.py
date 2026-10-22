@@ -136,6 +136,14 @@ CREATE TABLE IF NOT EXISTS upcoming (
     computed_at TEXT NOT NULL
 );
 
+-- The next tranche's estimated orders (daily.tranche_preview), one row per
+-- account, replaced every close run. Display only.
+CREATE TABLE IF NOT EXISTS rebalance_preview (
+    account     TEXT PRIMARY KEY,
+    payload     TEXT NOT NULL,      -- JSON, Decimals as strings
+    computed_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_cashflows_date ON cashflows(trade_date);
 
 CREATE INDEX IF NOT EXISTS idx_scores_symbol ON scores(symbol, trade_date);
@@ -476,6 +484,18 @@ def save_upcoming(conn: sqlite3.Connection, rows: list[dict],
           None if r.get("amount") is None else str(r["amount"]), computed_at)
          for r in rows],
     )
+
+
+def save_preview(conn: sqlite3.Connection, account: str, payload: dict | None,
+                 computed_at: str) -> None:
+    """Replace the account's tranche preview; None clears it (no tranche
+    scheduled in the calendar window, or no signal this run)."""
+    conn.execute("DELETE FROM rebalance_preview WHERE account = ?", (account,))
+    if payload is not None:
+        conn.execute(
+            "INSERT INTO rebalance_preview (account, payload, computed_at) "
+            "VALUES (?, ?, ?)",
+            (account, json.dumps(payload, ensure_ascii=False), computed_at))
 
 
 if __name__ == "__main__":

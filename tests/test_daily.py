@@ -171,3 +171,46 @@ class TestAccountsInSlot:
         registry = {"a": {}, "b": {"snapshot_slot": "morning"}}
         assert daily.accounts_in_slot(registry, "close") == ["a"]
         assert daily.accounts_in_slot(registry, "morning") == ["b"]
+
+
+class TestTranchePreview:
+    # Real universe codes so config lookups behave as in production; prices
+    # are multiples of the 5-won ETF tick.
+    A, B = "102110", "091170"
+    PRICES = {A: Decimal("100000"), B: Decimal("10000")}
+
+    def setup_method(self):
+        from quant import config
+        self.config, self.tranches = config, config.TRANCHES
+        config.TRANCHES = (0, 5, 10)
+
+    def teardown_method(self):
+        self.config.TRANCHES = self.tranches
+
+    def test_sizes_to_a_third_of_the_account_and_plans_orders(self):
+        # Sleeve 5 holds 10 x A (1,000,000); others hold 10 x A each; cash
+        # 600,000 -> account 3,600,000, target 1,200,000, all into B.
+        books = {0: {self.A: 10}, 5: {self.A: 10}, 10: {self.A: 10}}
+        p = daily.tranche_preview({self.B: Decimal("1")}, books, 5, self.PRICES,
+                                  Decimal("600000"), {self.A: 30})
+
+        assert (p["tranche"], p["tranches"], p["drift"]) == (2, 3, None)
+        assert Decimal(p["target"]) == Decimal("1200000")
+        assert [(o["side"], o["symbol"], o["qty"]) for o in p["orders"]] == [
+            ("SELL", self.A, 10), ("BUY", self.B, 120)]
+
+    def test_reports_drift_without_hiding_the_plan(self):
+        books = {0: {self.A: 10}}
+        p = daily.tranche_preview({self.A: Decimal("1")}, books, 0, self.PRICES,
+                                  Decimal("0"), {self.A: 9})
+
+        assert p["drift"] == {self.A: -1}
+
+    def test_short_account_reports_deposit_needed(self):
+        books = {0: {}, 5: {self.A: 20}, 10: {}}
+        p = daily.tranche_preview({self.B: Decimal("1")}, books, 0, self.PRICES,
+                                  Decimal("100000"), {self.A: 20})
+
+        # account 2,100,000 -> target 700,000; reachable only the 100,000 cash
+        assert Decimal(p["value"]) == Decimal("100000")
+        assert Decimal(p["deposit_needed"]) > 0

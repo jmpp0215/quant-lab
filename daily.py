@@ -34,6 +34,7 @@ from quant.kis_client import KisApiError, KisClient
 from quant.notify import notify
 from quant.stock_factors.scripts import pbr_storage
 from quant.toss_client import TossApiError
+from rebalance_run import plan_for_tranche
 
 log = logging.getLogger("daily")
 
@@ -154,11 +155,46 @@ CALENDAR_PAGE_OFFSETS = (0, 20, 40)
 DIVIDEND_LOOKAHEAD_DAYS = 120
 
 
-def record_upcoming(client: KisClient, past_days: list[str]) -> None:
-    """Record upcoming rebalances and dividends for the asset tracker.
+def tranche_preview(weights: dict[str, Decimal], books: dict[int, dict[str, int]],
+                    which: int, prices: dict[str, Decimal], cash: Decimal,
+                    actual: dict[str, int]) -> dict:
+    """What tranche `which` would trade at these prices - the sizing and
+    plan rebalance_run.py shows before its first confirm, without placing
+    anything. The live run reprices at the touch and resizes buys after
+    its sells fill, so this is an estimate of that plan, not the plan.
+    """
+    book = books.get(which, {})
+    budget = tranche.sleeve_budget(books, which, prices, cash)
+    targets = tranche.target_quantities(weights, budget.value, prices)
+    orders = plan_for_tranche(book, targets, prices)
+    return {
+        "tranche": config.TRANCHES.index(which) + 1,
+        "tranches": len(config.TRANCHES),
+        "drift": tranche.reconcile(books, actual) or None,
+        "target": str(budget.target), "value": str(budget.value),
+        "deposit_needed": str(budget.deposit_needed),
+        "holds": str(tranche.sleeve_equity(book, prices)),
+        "picks": [{"symbol": s, "name": config.UNIVERSE.get(s, s), "weight": str(w)}
+                  for s, w in sorted(weights.items(), key=lambda kv: -kv[1])],
+        "book": [{"symbol": s, "name": config.UNIVERSE.get(s, s), "qty": q}
+                 for s, q in sorted(book.items())],
+        "orders": [{"symbol": o.symbol, "name": o.name, "side": o.side,
+                    "qty": o.quantity, "price": str(o.limit_price),
+                    "notional": str(o.notional)} for o in orders],
+    }
+
+
+def record_upcoming(client: KisClient, past_days: list[str],
+                    signal: strategy.Signal | None = None,
+                    signal_date: str | None = None,
+                    closes: dict[str, Decimal] | None = None) -> None:
+    """Record upcoming rebalances and dividends for the asset tracker, and
+    a preview of the next tranche's orders when the signal is at hand.
 
     Display only: the tranche and PBR dates project tranche.due_today's and
     check_pbr_due's rules forward, but those stay what decides a trade.
+    Runs after the close, so scheduling starts from the next open day: a
+    tranche or PBR run still due today can only happen then.
     """
     now = datetime.now(market.KST)
     today = now.strftime("%Y-%m-%d")
@@ -166,11 +202,13 @@ def record_upcoming(client: KisClient, past_days: list[str]) -> None:
         client.holidays((now + timedelta(days=k)).strftime("%Y%m%d"))
         for k in CALENDAR_PAGE_OFFSETS])
     days = sorted(set(past_days) | set(future))
-    upcoming_days = [d for d in days if d >= today]
+    upcoming_days = [d for d in days if d > today]
+    start = upcoming_days[0] if upcoming_days else today
 
     strategy_account = accounts.DEFAULT_ACCOUNT
     with storage.connect() as conn:
-        done = storage.tranches_done_this_month(conn, strategy_account, today)
+        done = storage.tranches_done_this_month(conn, strategy_account, start)
+        books = storage.load_all_tranche_holdings(conn, strategy_account)
         latest = conn.execute(
             "SELECT p.account, p.positions FROM portfolio p "
             "JOIN (SELECT account, MAX(trade_date) d FROM portfolio GROUP BY account) m "
@@ -181,13 +219,14 @@ def record_upcoming(client: KisClient, past_days: list[str]) -> None:
     rows = [{"kind": "tranche", "date": d, "account": strategy_account,
              "label": f"트랜치 {config.TRANCHES.index(t) + 1}/{len(config.TRANCHES)} "
                       "리밸런싱 (수동)"}
-            for d, t in schedule.tranche_dates(days, today, done)]
+            for d, t in schedule.tranche_dates(days, start, done)]
+    next_tranche = schedule.tranche_dates(days, start, done)[:1]
 
     if pbr_full is not None:
         due = schedule.trading_days_after(
             days, pbr_full, pbr_storage.FULL_REBALANCE_TRADING_DAYS)
-        if due is not None and due < today and upcoming_days:
-            due = upcoming_days[0]   # overdue: check_pbr_due runs it next
+        if due is not None and due < start:
+            due = start   # overdue: check_pbr_due runs it next
         if due is not None:
             rows.append({"kind": "pbr", "date": due, "account": "toss-bot",
                          "label": "PBR 전체 리밸런싱 (자동)"})
@@ -213,9 +252,22 @@ def record_upcoming(client: KisClient, past_days: list[str]) -> None:
                      "label": f"{d['name']} 배당 기준일 · {d['qty']}주 · {per}{when}",
                      "amount": d["expected"]})
 
+    preview = None
+    if signal is not None and closes and next_tranche:
+        due_date, which = next_tranche[0]
+        cfg = accounts.ACCOUNTS[strategy_account]
+        cash = cfg["buying_power"](client, closes)
+        actual = {p["symbol"]: p["qty"] for r in latest
+                  if r["account"] == strategy_account
+                  for p in json.loads(r["positions"])}
+        preview = tranche_preview(signal.weights, books, which, closes, cash, actual)
+        preview |= {"date": due_date, "signal_date": signal_date, "cash": str(cash)}
+
     with storage.connect() as conn:
         storage.save_upcoming(conn, rows, now.isoformat())
-    log.info("upcoming: %d rows", len(rows))
+        storage.save_preview(conn, strategy_account, preview, now.isoformat())
+    log.info("upcoming: %d rows, preview: %s", len(rows),
+             "none" if preview is None else f"{len(preview['orders'])} orders")
 
 
 def main() -> int:
@@ -291,6 +343,7 @@ def main() -> int:
 
     overall_ok = True
     problem_accounts: list[str] = []
+    strategy_signal = None
     # Reuse the market-data client for the kis-isa account so it does not
     # authenticate a second KIS session for the same credentials.
     client_cache: dict = {accounts.ACCOUNTS["kis-isa"]["client"]: market_data}
@@ -321,6 +374,7 @@ def main() -> int:
                         for s, evs in dividend_events.items()
                     }
                 signal = strategy.evaluate(data, dividend_events)
+                strategy_signal = signal
                 log.info("\n%s", strategy.format_signal(signal))
                 record_strategy(signal, trade_date, session, data,
                                dividend_events)
@@ -354,7 +408,9 @@ def main() -> int:
 
     if slot == "close" and target is None:
         try:
-            record_upcoming(market_data, [c["timestamp"][:10] for c in reference])
+            closes = {sym: Decimal(cs[0]["closePrice"]) for sym, cs in data.items() if cs}
+            record_upcoming(market_data, [c["timestamp"][:10] for c in reference],
+                            strategy_signal, trade_date, closes)
         except Exception as e:
             # The tracker's schedule is display only - its failure must not
             # fail the run, but should still be seen.

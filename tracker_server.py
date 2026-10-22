@@ -202,6 +202,12 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                   "amount": None}
                  for d, label in MACRO_EVENTS if today.isoformat() <= d <= until]
     upcoming.sort(key=lambda u: u["date"])
+    row = conn.execute("SELECT payload, computed_at FROM rebalance_preview "
+                       "WHERE account = 'kis-isa'").fetchone()
+    preview = None
+    if row is not None:
+        preview = json.loads(row["payload"]) | {"computed_at": row["computed_at"]}
+
     recent_flows = [{"date": f["trade_date"], "account": f["account"],
                      "label": LABELS.get(f["account"], f["account"]),
                      "amount": _num(Decimal(f["amount"])), "note": f["note"]}
@@ -232,6 +238,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         "isa": isa,
         "rebalances": sorted(rebalances, key=lambda r: r["date"]),
         "upcoming": upcoming,
+        "preview": preview,
         "cashflows": recent_flows,
         "cashflow_accounts": [{"account": a, "label": LABELS[a]}
                               for a in CASHFLOW_ACCOUNTS],
