@@ -703,7 +703,11 @@ function render() {
     const mi = d.accounts.reduce((s, a) => s + a.money_in, 0);
     setSigned($("principal"), (d.total - mi) / mi);
     const since = d.accounts.map(a => a.since).sort().pop();
-    $("principalNote").textContent = `원금 ${man(mi)}원 · ${shortDate(since)} 매입금액+현금 기준`;
+    const bases = [...new Set(d.accounts.map(a => a.principal_basis))];
+    const basisText = bases.length === 1 ? bases[0]
+      : d.accounts.filter(a => a.principal_basis !== "매입금액+현금")
+          .map(a => `${a.label} ${a.principal_basis}`).join(", ") + ", 그 외 매입금액+현금";
+    $("principalNote").textContent = `원금 ${man(mi)}원 · ${shortDate(since)} 기준 (${basisText})`;
   } else {
     $("principal").textContent = "—"; $("principal").style.color = "";
     $("principalNote").textContent = `원금 미입력: ${missing.map(a => a.label).join(", ")}`;
@@ -735,7 +739,7 @@ function render() {
     const tw = document.createElement("span"); tw.textContent = `시간가중 ${signedPct(a.time_weighted)}`;
     const pr = document.createElement("span");
     pr.textContent = a.principal_return == null ? "원금 미입력"
-                   : `원금 대비 ${signedPct(a.principal_return)}`;
+                   : `${a.principal_basis} 대비 ${signedPct(a.principal_return)}`;
     if (a.principal_return == null) pr.className = "muted";
     const since = document.createElement("span"); since.className = "muted"; since.textContent = `${a.since}~`;
     meta.append(ch, tw, pr, since);
@@ -1213,6 +1217,7 @@ function renderIsa(d) {
   }
   const sum = document.createElement("div"); sum.className = "fx-sum";
   kv(sum, "유형 · 가입일", `${i.isa_type || "—"} · ${i.isa_open_date || "—"}`);
+  if (i.isa_paid_total) kv(sum, "누적 납입", `${won(Number(i.isa_paid_total))}원`);
   if (i.mandatory_until) kv(sum, "의무 보유 만료", `${i.mandatory_until} (${dday(i.mandatory_until)})`);
   if (i.gain != null) {
     kv(sum, "납입 대비 손익", `${i.gain >= 0 ? "+" : "−"}${won(Math.abs(i.gain))}원 (${signedPct(i.gain / Number(i.isa_paid_total))})`);
@@ -1232,6 +1237,11 @@ function renderIsa(d) {
   if (missing.length) {
     const p = document.createElement("p"); p.className = "fx-note";
     p.textContent = "아직 비어 있는 값: " + missing.join(", ") + ". 2026년 한도 개편은 공식 확정 여부를 확인하고 넣어 주세요.";
+    host.append(p);
+  }
+  if (i.paid_as_of) {
+    const p = document.createElement("p"); p.className = "fx-note";
+    p.textContent = `누적 납입액은 ${i.paid_as_of}에 입력한 값에 그 뒤 ISA 입금 기록(${won(i.paid_added)}원)을 더한 거예요. 입금은 입출금 탭에만 기록하면 돼요.`;
     host.append(p);
   }
   const edit = document.createElement("button"); edit.className = "primary"; edit.type = "button";

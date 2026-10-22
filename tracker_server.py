@@ -53,6 +53,12 @@ ISA_SETTINGS = {
     "isa_total_limit": "won", "isa_taxfree_limit": "won",
 }
 ISA_MANDATORY_YEARS = 3        # 의무가입기간
+
+# What each account's principal row stands for (cashflows kind
+# "principal"), shown under the principal return. Anything not listed is
+# the 10/21 cost basis.
+PRINCIPAL_BASIS = {"kis-isa": "납입원금"}
+DEFAULT_PRINCIPAL_BASIS = "매입금액+현금"
 ISA_EXCESS_TAX = Decimal("0.099")   # 분리과세 on gains over the tax-free limit
 
 # Compared against on the home chart and in each account's detail, from
@@ -286,6 +292,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
             "value": _num(series[-1][1]), "as_of": series[-1][0],
             "day_change": _num(series[-1][1] - prev) if prev is not None else None,
             "since": r.start, "money_in": _num(r.money_in),
+            "principal_basis": PRINCIPAL_BASIS.get(a, DEFAULT_PRINCIPAL_BASIS),
             "principal_return": _num(r.principal_return),
             "time_weighted": _num(r.time_weighted),
             "history": [{"date": d, "total": _num(v), "index": _num(i)}
@@ -324,7 +331,20 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
 
     settings = storage.load_settings(conn)
     isa = {k: settings.get(k) for k in ISA_SETTINGS}
-    won_ = {k: Decimal(v) for k, v in isa.items() if ISA_SETTINGS[k] == "won" and v}
+    # Paid-in as entered, plus ISA deposits recorded after it was entered,
+    # so a contribution is recorded once (as a cashflow) and counted here too.
+    row = conn.execute("SELECT updated_at FROM settings WHERE key = 'isa_paid_total'").fetchone()
+    if row and isa["isa_paid_total"]:
+        as_of = row["updated_at"][:10]
+        paid = tracker.isa_paid(
+            Decimal(isa["isa_paid_total"]),
+            Decimal(isa["isa_paid_this_year"]) if isa["isa_paid_this_year"] else None,
+            as_of, [(f["trade_date"], Decimal(f["amount"])) for f in flows
+                    if f["account"] == ISA_ACCOUNT and f["kind"] == "deposit"], today)
+        isa["isa_paid_total"] = str(paid["total"])
+        isa["isa_paid_this_year"] = None if paid["this_year"] is None else str(paid["this_year"])
+        isa["paid_as_of"], isa["paid_added"] = as_of, _num(paid["added"])
+    won_ = {k: Decimal(isa[k]) for k, kind in ISA_SETTINGS.items() if kind == "won" and isa[k]}
     isa_value = Decimal(latest[ISA_ACCOUNT]["total"]) if ISA_ACCOUNT in latest else None
     if isa["isa_open_date"]:
         opened = date.fromisoformat(isa["isa_open_date"])

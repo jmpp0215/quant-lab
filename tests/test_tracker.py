@@ -319,3 +319,21 @@ class TestPredictions:
         assert st["hit_rate"] == pytest.approx(0.5)
         assert st["by_confidence"] == [{"bucket": 30, "n": 1, "hit_rate": 0.5},
                                        {"bucket": 70, "n": 2, "hit_rate": 0.5}]
+
+
+class TestIsaPaid:
+    DEPOSITS = [("2026-10-20", D(999)), ("2026-11-03", D(1000000)), ("2027-01-05", D(500000))]
+
+    def test_adds_deposits_after_the_entry_date(self):
+        p = tracker.isa_paid(D(13510023), D(2000000), "2026-10-23", self.DEPOSITS,
+                             date(2026, 12, 1))
+        assert (p["total"], p["this_year"], p["added"]) == (D(15010023), D(3000000), D(1500000))
+
+    def test_new_year_counts_only_that_years_deposits(self):
+        p = tracker.isa_paid(D(13510023), D(2000000), "2026-10-23", self.DEPOSITS,
+                             date(2027, 2, 1))
+        assert p["this_year"] == D(500000)
+
+    def test_unknown_this_year_stays_unknown_in_the_entry_year(self):
+        p = tracker.isa_paid(D(100), None, "2026-10-23", [], date(2026, 12, 1))
+        assert (p["total"], p["this_year"]) == (D(100), None)

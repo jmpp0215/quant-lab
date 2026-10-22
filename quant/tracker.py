@@ -338,6 +338,23 @@ def prediction_stats(entries: list[dict]) -> dict:
                               for b, v in sorted(buckets.items())]}
 
 
+def isa_paid(paid_total: Decimal, paid_this_year: Decimal | None, as_of: str,
+             deposits: list[tuple[str, Decimal]], today: date) -> dict:
+    """Paid-in as the user entered it on `as_of`, plus ISA deposits recorded
+    after that date - so a contribution is entered once, as a cashflow.
+
+    paid_this_year is the entered year-to-date figure; in a later year it
+    no longer applies and only that year's deposits count.
+    """
+    later = [(d, a) for d, a in deposits if d > as_of]
+    added = sum((a for _, a in later), Decimal("0"))
+    year = str(today.year)
+    this_year = sum((a for d, a in later if d.startswith(year)), Decimal("0"))
+    if as_of[:4] == year:
+        this_year = paid_this_year + this_year if paid_this_year is not None else None
+    return {"total": paid_total + added, "this_year": this_year, "added": added}
+
+
 def benchmark_series(candles: list[dict], dates: list[str]) -> list[Decimal | None]:
     """Cumulative return of a benchmark on each date, from dates[0]'s close.
 
