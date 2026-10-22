@@ -108,6 +108,19 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .acct-detail { grid-column: 1 / -1; padding-top: 10px; cursor: default; }
 .acct-detail h3 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 12px 0 6px; }
 .acct-detail .chart { height: 150px; }
+.fx-sum { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 14px; }
+.fx-sum .v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.fx-sum .tot { border-top: 1px solid var(--grid); padding-top: 4px; }
+.fx-note { font-size: 12px; color: var(--text-2); margin: 6px 0 0; }
+table.fx { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.fx th { font-weight: 500; color: var(--text-3); font-size: 11px; text-align: right; padding: 0 0 4px; }
+table.fx th:first-child, table.fx td:first-child { text-align: left; }
+table.fx td { padding: 5px 0; border-top: 1px solid var(--grid); text-align: right;
+              font-variant-numeric: tabular-nums; }
+table.fx td:first-child { max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                          color: var(--text-2); }
+.chart .ref { stroke: var(--text-3); stroke-width: 1; stroke-dasharray: 4 3; }
+.chart .ref-label { fill: var(--text-2); font-size: 11px; }
 .acct .name { font-weight: 600; }
 .acct .val { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 .acct .meta { grid-column: 1 / -1; font-size: 12px; color: var(--text-2);
@@ -293,7 +306,8 @@ function setSigned(el, v) {
 
 // Single-series line/area chart with a snapping crosshair tooltip.
 // marks: [{ i, color, label }] - event dots on the line, listed in the tooltip.
-function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, marks = [] }) {
+// ref: { y, label } - a dashed reference line, kept inside the y range.
+function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, marks = [], ref = null }) {
   host.textContent = "";
   if (points.length < 2) { host.textContent = "데이터가 부족해요"; return; }
   const W = host.clientWidth, H = host.clientHeight;
@@ -301,6 +315,7 @@ function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, mar
   const ys = points.map(p => p.y);
   let lo = Math.min(...ys), hi = Math.max(...ys);
   if (zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+  if (ref) { lo = Math.min(lo, ref.y); hi = Math.max(hi, ref.y); }
   if (lo === hi) { lo -= 1; hi += 1; }
   const span = hi - lo; lo -= span * 0.05;
   if (!(zero && hi === 0)) hi += span * 0.05;   // a drawdown never goes above 0
@@ -332,6 +347,10 @@ function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, mar
   if (area) {
     const base = y(zero ? 0 : lo);
     el("path", { d: `${path}L${x(points.length - 1)},${base}L${x(0)},${base}Z`, class: "area" });
+  }
+  if (ref) {
+    el("line", { x1: pad.l, x2: W - pad.r, y1: y(ref.y), y2: y(ref.y), class: "ref" });
+    el("text", { x: W - pad.r, y: y(ref.y) - 5, "text-anchor": "end", class: "ref-label" }).textContent = ref.label;
   }
   el("path", { d: path, class: "line" });
   for (const m of marks)
@@ -406,12 +425,58 @@ function renderAccountDetail(host, a, d) {
   const c1 = chart();
   head("평가액");
   const c2 = chart();
+  let rateChart = null;
+  if (a.fx) rateChart = renderFx(host, a.fx, head, chart);
   if (a.holdings.length) { head("보유 비중", "현금 포함"); const b = document.createElement("div");
                            b.className = "bars"; host.append(b); renderBars(b, a.holdings); }
   // Charts measure their box, so draw once they are in the document.
   lineChart(c1, h.map(x => ({ d: x.date, y: x.index - 1 })),
             { fmtY: v => signedPct(v, 1), fmtTip: v => signedPct(v), zero: true, marks });
   lineChart(c2, h.map(x => ({ d: x.date, y: x.total })), { fmtY: man, fmtTip: v => won(v) + "원" });
+  if (rateChart) rateChart();
+}
+
+const signedWon = v => `${arrow(Math.round(v))} ${won(Math.abs(v))}원`;
+
+// Price vs exchange-rate effect since purchase; returns a function that
+// draws the rate chart once it is in the document.
+function renderFx(host, fx, head, chart) {
+  head("환율 효과", "매입 이후, 주식만");
+  const sum = document.createElement("div"); sum.className = "fx-sum";
+  const line = (label, v, cls) => {
+    const l = document.createElement("span"); l.textContent = label;
+    const r = document.createElement("span"); r.className = "v delta " + dir(Math.round(v));
+    r.textContent = signedWon(v);
+    if (cls) { l.classList.add(cls); r.classList.add(cls); }
+    sum.append(l, r);
+  };
+  line("주가 효과 (달러 기준 수익)", fx.price_effect);
+  line("환율 효과", fx.fx_effect);
+  line("원화 손익", fx.price_effect + fx.fx_effect, "tot");
+  const note = document.createElement("p"); note.className = "fx-note";
+  note.textContent = `달러로 ${signedPct(fx.value / fx.cost - 1)} · 원화로 ${signedPct(fx.value_krw / fx.cost_krw - 1)}. `
+    + `평균 매입 환율 ${won(fx.buy_rate)}원 → 지금 ${won(fx.rate)}원 (${signedPct(fx.rate / fx.buy_rate - 1, 1)}).`;
+  host.append(sum, note);
+
+  const table = document.createElement("table"); table.className = "fx";
+  const thead = table.createTHead().insertRow();
+  for (const t of ["종목", "달러 수익률", "원화 수익률", "환율 효과"]) {
+    const th = document.createElement("th"); th.textContent = t; thead.append(th);
+  }
+  const body = table.createTBody();
+  for (const x of fx.holdings) {
+    const tr = body.insertRow();
+    const cells = [x.name, signedPct(x.usd_return, 1), signedPct(x.krw_return, 1), man(x.fx_effect)];
+    cells.forEach((c, i) => { const td = tr.insertCell(); td.textContent = c;
+      if (i === 0) td.title = c; });
+  }
+  table.style.marginTop = "10px";
+  host.append(table);
+
+  head("원/달러 환율", "스냅샷 기준");
+  const c = chart();
+  return () => lineChart(c, fx.rate_history.map(r => ({ d: r.date, y: r.rate })),
+    { fmtY: v => won(v), fmtTip: v => won(v) + "원", ref: { y: fx.buy_rate, label: `평균 매입 ${won(fx.buy_rate)}` } });
 }
 
 let DATA = null;

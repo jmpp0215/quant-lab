@@ -101,6 +101,37 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         total_a = Decimal(row["total"])
         held_a = tracker.holdings([{"total": total_a, "cash": Decimal(row["cash"]),
                                     "positions": json.loads(row["positions"])}])
+        fx = None
+        rate = tracker.implied_rate({"total": total_a, "cash": Decimal(row["cash"]),
+                                     "positions": json.loads(row["positions"])})
+        split = tracker.fx_split(json.loads(row["positions"]), rate) if rate else []
+        if split:
+            cost = sum((x.cost for x in split), Decimal("0"))
+            cost_krw = sum((x.cost_krw for x in split), Decimal("0"))
+            rates = []
+            for snap in snaps:
+                if snap["account"] != a:
+                    continue
+                r_ = tracker.implied_rate({"total": Decimal(snap["total"]),
+                                           "cash": Decimal(snap["cash"]),
+                                           "positions": json.loads(snap["positions"])})
+                if r_ is not None:
+                    rates.append({"date": snap["trade_date"], "rate": _num(r_)})
+            fx = {
+                "rate": _num(rate), "buy_rate": _num(cost_krw / cost),
+                "cost": _num(cost), "cost_krw": _num(cost_krw),
+                "value": _num(sum((x.value for x in split), Decimal("0"))),
+                "value_krw": _num(sum((x.value_krw for x in split), Decimal("0"))),
+                "price_effect": _num(sum((x.price_effect for x in split), Decimal("0"))),
+                "fx_effect": _num(sum((x.fx_effect for x in split), Decimal("0"))),
+                "holdings": [{"name": x.name, "usd_return": _num(x.value / x.cost - 1),
+                              "krw_return": _num(x.value_krw / x.cost_krw - 1),
+                              "buy_rate": _num(x.buy_rate),
+                              "price_effect": _num(x.price_effect),
+                              "fx_effect": _num(x.fx_effect)}
+                             for x in sorted(split, key=lambda x: -x.value_krw)],
+                "rate_history": rates,
+            }
         account_rows.append({
             "account": a, "label": LABELS.get(a, a),
             "value": _num(series[-1][1]), "as_of": series[-1][0],
@@ -112,6 +143,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                         for (d, v), (_, i) in zip(series, own, strict=True)],
             "holdings": [{"name": n, "weight": _num(v / total_a)}
                          for n, v in held_a] if total_a else [],
+            "fx": fx,
         })
 
     index = tracker.growth_index(by_account, deposits)

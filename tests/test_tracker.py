@@ -133,3 +133,34 @@ class TestMonthsToGoal:
     def test_month_after(self):
         assert tracker.month_after(date(2026, 10, 31), 3) == "2027-01"
         assert tracker.month_after(date(2026, 1, 15), 0) == "2026-01"
+
+
+class TestImpliedRate:
+    def test_foreign_share_of_total_over_own_currency_value(self):
+        row = {"total": D(1500), "cash": D(300), "positions": [
+            {"symbol": "K", "qty": 1, "price": "200"},
+            {"symbol": "X", "qty": 2, "price": "2.5", "currency": "USD"}]}
+        assert tracker.implied_rate(row) == D(200)
+
+    def test_none_without_foreign_positions(self):
+        row = {"total": D(100), "cash": D(0), "positions": [
+            {"symbol": "K", "qty": 1, "price": "100"}]}
+        assert tracker.implied_rate(row) is None
+
+
+class TestFxSplit:
+    def test_price_and_fx_effects_sum_to_krw_gain(self):
+        # Bought $100 at 1,500 (150,000원); now $110 at 1,300 (143,000원).
+        [s] = tracker.fx_split([{"symbol": "A", "name": "에이", "qty": 1,
+                                 "price": "110", "currency": "USD",
+                                 "cost": "100", "cost_krw": "150000"}], D(1300))
+
+        assert s.buy_rate == 1500
+        assert s.price_effect == D(15000)       # +$10 at 1,500
+        assert s.fx_effect == D(-22000)         # $110 x (1,300 - 1,500)
+        assert s.price_effect + s.fx_effect == s.value_krw - s.cost_krw
+
+    def test_skips_krw_and_costless_positions(self):
+        positions = [{"symbol": "K", "qty": 1, "price": "100"},
+                     {"symbol": "X", "qty": 1, "price": "1", "currency": "USD"}]
+        assert tracker.fx_split(positions, D(1300)) == []

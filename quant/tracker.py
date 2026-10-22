@@ -8,6 +8,7 @@ later), holdings weights, and a goal projection.
 """
 
 import math
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
@@ -100,16 +101,64 @@ def holdings(latest: list[dict]) -> list[tuple[str, Decimal]]:
         for p in row["positions"]:
             v = Decimal(p["price"]) * p["qty"]
             (foreign if p.get("currency", "KRW") != "KRW" else krw).append((p, v))
-        foreign_sum = sum((v for _, v in foreign), Decimal("0"))
-        if foreign_sum:
-            rate = (row["total"] - row["cash"]
-                    - sum((v for _, v in krw), Decimal("0"))) / foreign_sum
+        rate = implied_rate(row)
+        if rate is not None:
             krw += [(p, v * rate) for p, v in foreign]
         for p, v in krw:
             name = p.get("name") or p["symbol"]
             values[name] = values.get(name, Decimal("0")) + v
         values["현금"] = values.get("현금", Decimal("0")) + row["cash"]
     return sorted(values.items(), key=lambda kv: kv[1], reverse=True)
+
+
+def implied_rate(row: dict) -> Decimal | None:
+    """KRW per unit of the foreign positions' currency, as the snapshot
+    values them: whatever of the KRW total isn't cash or KRW positions,
+    over the foreign positions' own-currency value. None without any."""
+    krw = foreign = Decimal("0")
+    for p in row["positions"]:
+        v = Decimal(p["price"]) * p["qty"]
+        if p.get("currency", "KRW") == "KRW":
+            krw += v
+        else:
+            foreign += v
+    return (row["total"] - row["cash"] - krw) / foreign if foreign else None
+
+
+@dataclass(frozen=True)
+class FxSplit:
+    """A foreign holding's KRW gain since purchase, split in two.
+
+    price_effect: the own-currency gain, at the average rate paid.
+    fx_effect: the rate move since purchase, on today's own-currency value.
+    They sum to value_krw - cost_krw exactly.
+    """
+    name: str
+    cost: Decimal          # own currency
+    cost_krw: Decimal      # KRW actually paid
+    value: Decimal         # own currency, now
+    value_krw: Decimal
+    buy_rate: Decimal
+    price_effect: Decimal
+    fx_effect: Decimal
+
+
+def fx_split(positions: list[dict], rate: Decimal) -> list[FxSplit]:
+    """FxSplit for each foreign position that carries cost and cost_krw
+    (kis_client.snapshot_overseas), at today's rate."""
+    out = []
+    for p in positions:
+        if p.get("currency", "KRW") == "KRW" or not p.get("cost") or not p.get("cost_krw"):
+            continue
+        cost, cost_krw = Decimal(p["cost"]), Decimal(p["cost_krw"])
+        value = Decimal(p["price"]) * p["qty"]
+        buy_rate = cost_krw / cost
+        out.append(FxSplit(
+            name=p.get("name") or p["symbol"], cost=cost, cost_krw=cost_krw,
+            value=value, value_krw=value * rate, buy_rate=buy_rate,
+            price_effect=(value - cost) * buy_rate,
+            fx_effect=value * (rate - buy_rate)))
+    return out
 
 
 def hhi(weights: list[Decimal]) -> Decimal:

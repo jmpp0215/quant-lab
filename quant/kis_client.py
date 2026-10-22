@@ -752,10 +752,17 @@ def snapshot_overseas(client: "KisClient") -> storage.AccountSnapshot:
     """
     resp = client.holdings_overseas()
     
+    # cost / cost_krw: purchase amount in USD (frcr_pchs_amt) and in KRW at
+    # the exchange rates actually paid (pchs_rmnd_wcrc_amt) - their ratio is
+    # the average buy rate the tracker splits FX effect from price effect
+    # with. Checked live 2026-10-23: frcr_pchs_amt = avg_unpr3 x qty; the
+    # KRW figures imply 1,415-1,513 KRW/USD against a current 1,325.5, so
+    # they are not today's rate. Not yet matched against the KIS app.
     positions = [
         {"symbol": item["pdno"], "name": item["prdt_name"],
          "qty": int(Decimal(item["ccld_qty_smtl1"])), "price": item["ovrs_now_pric1"],
-         "currency": "USD"}
+         "currency": "USD", "cost": item.get("frcr_pchs_amt"),
+         "cost_krw": item.get("pchs_rmnd_wcrc_amt")}
         for item in resp.get("output1", [])
         if int(Decimal(item.get("ccld_qty_smtl1", "0"))) > 0
     ]

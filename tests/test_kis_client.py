@@ -239,7 +239,10 @@ class StubOverseasClient:
     account = "main"
 
     def holdings_overseas(self):
-        return {"output1": [], "output3": {
+        return {"output1": [{
+            "pdno": "AAPL", "prdt_name": "애플", "ccld_qty_smtl1": "1.00000000",
+            "ovrs_now_pric1": "344.95500", "frcr_pchs_amt": "296.67000",
+            "pchs_rmnd_wcrc_amt": "449010"}], "output3": {
             "tot_asst_amt": "33712224", "evlu_amt_smtl_amt": "28141686",
             "frcr_evlu_tota": "4981851", "tot_dncl_amt": "588687"}}
 
@@ -253,3 +256,8 @@ class TestSnapshotOverseas:
         snap = kis_client.snapshot_overseas(StubOverseasClient())
         assert str(snap.total) == "33123537"
         assert str(snap.cash) == "4981851"
+
+    def test_positions_carry_usd_and_krw_cost(self):
+        from quant import kis_client
+        [p] = kis_client.snapshot_overseas(StubOverseasClient()).positions
+        assert (p["cost"], p["cost_krw"]) == ("296.67000", "449010")
