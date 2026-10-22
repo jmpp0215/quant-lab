@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import backups
 from quant import (
     accounts,
     candles,
@@ -429,6 +430,13 @@ def main() -> int:
             # fail the run, but should still be seen.
             log.exception("upcoming schedule failed")
             problem_accounts.append(f"[upcoming] {e}")
+
+    if slot == "close" and target is None:
+        try:
+            backups.run(datetime.now(market.KST).date().isoformat())
+        except Exception as e:
+            log.exception("backup failed")
+            problem_accounts.append(f"[backup] {e}")
 
     if problem_accounts:
         notify("quant-lab", "daily.py: " + " / ".join(problem_accounts))

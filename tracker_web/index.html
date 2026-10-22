@@ -78,6 +78,11 @@ header { display: flex; justify-content: space-between; align-items: baseline;
          padding: 8px 0 4px; }
 header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .asof { color: var(--text-3); font-size: 13px; }
+.head-r { display: flex; align-items: center; gap: 8px; }
+.eye { background: none; border: 0; color: var(--text-2); padding: 4px; cursor: pointer; line-height: 0; }
+.eye .slash { display: none; }
+.eye[aria-pressed="true"] .slash { display: inline; }
+.eye[aria-pressed="true"] { color: var(--accent); }
 .banner { background: var(--surface); border: 1px solid var(--border);
           border-left: 3px solid var(--warn); border-radius: 10px;
           padding: 10px 12px; margin: 8px 0; font-size: 13px; color: var(--text-2); }
@@ -228,7 +233,11 @@ section[hidden] { display: none; }
 </head>
 <body>
 <main>
-  <header><h1>자산 트래커</h1><span class="asof" id="asof"></span></header>
+  <header><h1>자산 트래커</h1>
+    <span class="head-r"><span class="asof" id="asof"></span>
+      <button class="eye" id="hideBtn" type="button" aria-pressed="false" aria-label="금액 가리기">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path class="slash" d="M4 4l16 16" stroke="currentColor" stroke-width="1.8"/></svg>
+      </button></span></header>
   <div class="banner" id="banner" hidden></div>
 
   <section id="tab-home">
@@ -313,8 +322,15 @@ section[hidden] { display: none; }
 
 <script>
 const $ = id => document.getElementById(id);
-const won = v => Math.round(v).toLocaleString("ko-KR");
+// Hide mode masks every won amount (charts and tooltips included); rates
+// and percentages stay, so returns can be checked in public.
+let HIDE = false;
+try { HIDE = localStorage.getItem("tracker-hide") === "1"; } catch {}
+const MASK = "•••";
+const wonRaw = v => Math.round(v).toLocaleString("ko-KR");   // confirm dialogs: never masked
+const won = v => HIDE ? MASK : wonRaw(v);
 const man = v => {
+  if (HIDE) return MASK;
   const a = Math.abs(v);
   if (a >= 1e8) return (v / 1e8).toFixed(a >= 1e9 ? 0 : 1).replace(/\.0$/, "") + "억";
   if (a >= 1e4) return Math.round(v / 1e4).toLocaleString("ko-KR") + "만";
@@ -738,7 +754,7 @@ function renderSuspects(d) {
     };
     rec.addEventListener("click", () => {
       const amount = Math.round(x.amount);
-      if (!confirm(`${x.label} · ${x.date}\n${kind} ${won(Math.abs(amount))}원으로 기록할까요?\n정확한 금액을 알면 입출금 탭에서 직접 입력해도 돼요.`)) return;
+      if (!confirm(`${x.label} · ${x.date}\n${kind} ${wonRaw(Math.abs(amount))}원으로 기록할까요?\n정확한 금액을 알면 입출금 탭에서 직접 입력해도 돼요.`)) return;
       act(() => postJSON("cashflow", { account: x.account, date: x.date, amount,
                                        note: "트래커 자동 감지에서 기록", force: true }), "기록했어요.");
     });
@@ -828,7 +844,7 @@ async function submitFlow(force) {
   const body = { account: $("flowAccount").value, date: $("flowDate").value,
                  amount: flowSign * amount, note: $("flowNote").value, force };
   const kind = flowSign > 0 ? "입금" : "출금";
-  if (!force && !confirm(`${ACCOUNT_LABEL(body.account)} · ${body.date}\n${kind} ${won(amount)}원을 기록할까요?`)) return;
+  if (!force && !confirm(`${ACCOUNT_LABEL(body.account)} · ${body.date}\n${kind} ${wonRaw(amount)}원을 기록할까요?`)) return;
   btn.disabled = true; msg.className = "msg"; msg.textContent = "기록 중…";
   try {
     const res = await fetch("cashflow", { method: "POST",
@@ -912,6 +928,13 @@ function showTab(tab) {
   for (const t of ["home", "risk", "flow", "goal"]) $("tab-" + t).hidden = t !== tab;
   if (DATA) render();   // charts measure their width, which is 0 while hidden
 }
+$("hideBtn").setAttribute("aria-pressed", HIDE);
+$("hideBtn").addEventListener("click", () => {
+  HIDE = !HIDE;
+  $("hideBtn").setAttribute("aria-pressed", HIDE);
+  try { localStorage.setItem("tracker-hide", HIDE ? "1" : "0"); } catch {}
+  if (DATA) render();
+});
 document.querySelectorAll("nav button").forEach(btn => btn.addEventListener("click", () => {
   history.replaceState(null, "", "#" + btn.dataset.tab);
   showTab(btn.dataset.tab);
