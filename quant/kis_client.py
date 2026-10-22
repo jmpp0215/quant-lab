@@ -741,6 +741,14 @@ def snapshot_overseas(client: "KisClient") -> storage.AccountSnapshot:
     Note: output3.tot_asst_amt is provided in KRW, whereas output1 positions
     are in USD. The returned snapshot sets currency="KRW" and cash is also
     computed in KRW to align with the total.
+
+    tot_asst_amt also includes the account's KRW deposit (tot_dncl_amt):
+    with 통합증거금 the domestic and overseas sides share one KRW cash
+    balance, which snapshot() already records for kis-main. It is taken
+    out here so the two snapshots don't count it twice (verified
+    2026-10-23: tot_asst_amt 33,712,224 = evlu_amt_smtl_amt 28,141,686 +
+    frcr_evlu_tota 4,981,851 + tot_dncl_amt 588,687, the last equal to
+    kis-main's cash).
     """
     resp = client.holdings_overseas()
     
@@ -753,8 +761,9 @@ def snapshot_overseas(client: "KisClient") -> storage.AccountSnapshot:
     ]
     
     output3 = resp.get("output3", {})
-    # total asset in KRW
-    total = Decimal(output3.get("tot_asst_amt", "0"))
+    # total asset in KRW, minus the KRW deposit kis-main already records
+    total = (Decimal(output3.get("tot_asst_amt", "0"))
+             - Decimal(output3.get("tot_dncl_amt", "0")))
     
     # Since total is in KRW, cash should also be in KRW to make sense.
     stock_value_krw = Decimal(output3.get("evlu_amt_smtl_amt", "0"))
@@ -845,6 +854,38 @@ def dividend_events(client: "KisClient", symbol: str, *,
         out.append({"record_date": f"{raw[:4]}-{raw[4:6]}-{raw[6:]}",
                     "amount": amount})
     return out
+
+
+def dividend_schedule(client: "KisClient", symbol: str, *,
+                      from_date: date, to_date: date) -> list[dict]:
+    """Announced dividend events, kept even before the amount is set.
+
+    Same endpoint as dividend_events(), which drops zero-amount rows since
+    it feeds payout history; an upcoming record date is announced first
+    and gets its per_sto_divi_amt later (verified live 2026-10-23: future
+    record dates come back with "0"). Returns [{"record_date", "amount"
+    (Decimal, 0 = not set yet), "pay_date" ("YYYY-MM-DD" or None)}].
+    """
+    resp = client.get(
+        "/uapi/domestic-stock/v1/ksdinfo/dividend",
+        "HHKDB669102C0",
+        params={
+            "CTS": "",
+            "GB1": "0",
+            "F_DT": from_date.strftime("%Y%m%d"),
+            "T_DT": to_date.strftime("%Y%m%d"),
+            "SHT_CD": symbol,
+            "HIGH_GB": "",
+        },
+    )
+
+    def iso(raw: str | None) -> str | None:
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}" if raw else None
+
+    return [{"record_date": iso(row["record_date"]),
+             "amount": Decimal(row.get("per_sto_divi_amt") or "0"),
+             "pay_date": iso(row.get("divi_pay_dt"))}
+            for row in resp.get("output1", [])]
 
 
 def dividend_yield(client: "KisClient", symbol: str, price: Decimal, *,

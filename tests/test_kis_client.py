@@ -233,3 +233,23 @@ class TestSnapshotCash:
         }))
         assert str(snap.cash) == "4532999"
         assert str(snap.total) == "16857838"
+
+
+class StubOverseasClient:
+    account = "main"
+
+    def holdings_overseas(self):
+        return {"output1": [], "output3": {
+            "tot_asst_amt": "33712224", "evlu_amt_smtl_amt": "28141686",
+            "frcr_evlu_tota": "4981851", "tot_dncl_amt": "588687"}}
+
+
+class TestSnapshotOverseas:
+    def test_shared_krw_deposit_is_left_to_the_domestic_snapshot(self):
+        # 통합증거금: tot_asst_amt includes the KRW deposit that
+        # snapshot() records for kis-main - counting it here too inflated
+        # the combined total by that amount (live figures, 2026-10-23).
+        from quant import kis_client
+        snap = kis_client.snapshot_overseas(StubOverseasClient())
+        assert str(snap.total) == "33123537"
+        assert str(snap.cash) == "4981851"
