@@ -178,3 +178,61 @@ class TestBenchmarkSeries:
 
     def test_no_close_before_first_date(self):
         assert tracker.benchmark_series(self.CANDLES, ["2026-09-30"]) == [None]
+
+
+class TestContributions:
+    @staticmethod
+    def snap(date, cash, positions, total=None):
+        value = sum((D(p["price"]) * p["qty"] for p in positions), D(0))
+        return {"date": date, "cash": D(cash), "positions": positions,
+                "total": D(total) if total is not None else D(cash) + value}
+
+    def total(self, rows):
+        return sum((r["amount"] for r in rows), D(0))
+
+    def test_price_moves_by_holding_and_sum_matches_gain(self):
+        a = [self.snap("d1", 100, [{"symbol": "A", "name": "에이", "qty": 10, "price": "100"},
+                                   {"symbol": "B", "name": "비", "qty": 5, "price": "200"}]),
+             self.snap("d2", 100, [{"symbol": "A", "name": "에이", "qty": 10, "price": "110"},
+                                   {"symbol": "B", "name": "비", "qty": 5, "price": "190"}])]
+        rows = tracker.contributions({"x": a}, {}, {}, "d1", "d2")
+
+        assert {(r["name"], r["amount"]) for r in rows} == {("에이", D(100)), ("비", D(-50))}
+        assert self.total(rows) == D(50)
+
+    def test_deposit_is_not_gain_and_dividend_has_its_own_row(self):
+        a = [self.snap("d1", 100, [{"symbol": "A", "qty": 1, "price": "100"}]),
+             self.snap("d2", 1180, [{"symbol": "A", "qty": 1, "price": "100"}])]
+        rows = tracker.contributions({"x": a}, {"x": [("d2", D(1000))]},
+                                     {"x": [("d2", D(80))]}, "d1", "d2")
+
+        assert [(r["name"], r["kind"], r["amount"]) for r in rows] == [("배당", "dividend", D(80))]
+
+    def test_foreign_split_into_price_and_rate(self):
+        # $10 x 10 shares at 1,300 -> $11 at 1,200; $100 cash
+        def usd(date, price, rate):
+            return {"date": date, "cash": D(100) * D(rate),
+                    "total": (D(100) + D(price) * 10) * D(rate),
+                    "positions": [{"symbol": "X", "name": "엑스", "qty": 10,
+                                   "price": str(price), "currency": "USD"}]}
+        rows = tracker.contributions({"o": [usd("d1", 10, 1300), usd("d2", 11, 1200)]},
+                                     {}, {}, "d1", "d2")
+        got = {(r["name"], r["kind"]): r["amount"] for r in rows}
+
+        assert got[("엑스", "stock")] == D(13000)        # +$10 at 1,300
+        assert got[("환율", "fx")] == D(-11000) + D(-10000)  # $110 and $100 cash x -100
+        assert self.total(rows) == D(210 * 1200 - 200 * 1300)
+
+    def test_trade_slippage_lands_in_other(self):
+        # bought 1 B at 100 (close 100) but cash fell by 103
+        a = [self.snap("d1", 1000, []),
+             self.snap("d2", 897, [{"symbol": "B", "qty": 1, "price": "100"}])]
+        rows = tracker.contributions({"x": a}, {}, {}, "d1", "d2")
+
+        assert [(r["name"], r["amount"]) for r in rows] == [("기타", D(-3))]
+
+    def test_only_steps_ending_in_the_window(self):
+        a = [self.snap(d, 0, [{"symbol": "A", "qty": 1, "price": str(p)}])
+             for d, p in [("2026-09-30", 100), ("2026-10-01", 110), ("2026-10-02", 130)]]
+        rows = tracker.contributions({"x": a}, {}, {}, "2026-10-02", "2026-10-31")
+        assert self.total(rows) == D(20)

@@ -155,6 +155,32 @@ def _dividends(conn: sqlite3.Connection, snaps: list, names: list[str],
             "rows": rows}
 
 
+def _contributions(snaps: list, names: list[str], flows: list,
+                   suspects_by_account: dict[str, list[dict]], today: date) -> dict:
+    """tracker.contributions for this month, last month and all history."""
+    by_account = {a: [{"date": s_["trade_date"], "total": Decimal(s_["total"]),
+                       "cash": Decimal(s_["cash"]), "positions": json.loads(s_["positions"])}
+                      for s_ in snaps if s_["account"] == a] for a in names}
+    deposits = {a: [(f["trade_date"], Decimal(f["amount"])) for f in flows
+                    if f["account"] == a and f["kind"] == "deposit"] for a in names}
+    dividends = {a: [(c["date"], c["amount"]) for c in suspects_by_account[a]
+                     if c["kind"] == "dividend"] for a in names}
+    first = today.replace(day=1)
+    last_month_end = first - timedelta(days=1)
+    periods = {"this_month": (first.isoformat(), today.isoformat()),
+               "last_month": (last_month_end.replace(day=1).isoformat(),
+                              last_month_end.isoformat()),
+               "all": ("0000-00-00", today.isoformat())}
+    out = {}
+    for key, (start, end) in periods.items():
+        rows = tracker.contributions(by_account, deposits, dividends, start, end)
+        out[key] = {"start": start, "end": end,
+                    "rows": [{"account": r["account"], "label": LABELS.get(r["account"], r["account"]),
+                              "name": r["name"], "kind": r["kind"],
+                              "amount": _num(r["amount"])} for r in rows]}
+    return out
+
+
 def build(conn: sqlite3.Connection, today: date) -> dict:
     snaps = conn.execute(
         "SELECT account, trade_date, total, cash, positions FROM portfolio "
@@ -337,6 +363,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         "preview": preview,
         "suspects": suspects,
         "dividends": _dividends(conn, snaps, names, suspects_by_account),
+        "contributions": _contributions(snaps, names, flows, suspects_by_account, today),
         "cashflows": recent_flows,
         "cashflow_accounts": [{"account": a, "label": LABELS[a]}
                               for a in CASHFLOW_ACCOUNTS],

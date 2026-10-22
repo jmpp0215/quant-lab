@@ -127,6 +127,16 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .suspect .acts button { flex: 1; font: inherit; font-size: 13px; padding: 8px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; }
 .suspect .acts button.rec { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.cb { display: grid; grid-template-columns: minmax(0, 7em) 1fr 5.4em; gap: 8px; align-items: center;
+      font-size: 13px; padding: 3px 0; }
+.cb .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.cb .track { position: relative; height: 10px; }
+.cb .track::before { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px;
+                     border-left: 1px solid var(--text-3); }
+.cb .fill { position: absolute; top: 0; height: 100%; }
+.cb .fill.up { left: 50%; background: var(--up); border-radius: 0 4px 4px 0; }
+.cb .fill.down { right: 50%; background: var(--down); border-radius: 4px 0 0 4px; }
+.cb .v { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .div-row { display: grid; grid-template-columns: 3.2em 1fr auto; gap: 8px; align-items: baseline;
            padding: 7px 0; border-top: 1px solid var(--grid); font-size: 14px; }
 .div-row:first-child { border-top: 0; }
@@ -270,6 +280,13 @@ section[hidden] { display: none; }
       <div class="chart" id="chartIndex"></div>
       <div class="legend"><span><i style="background:var(--m-isa)"></i>ISA 트랜치</span>
         <span><i style="background:var(--m-pbr)"></i>PBR 리밸런싱</span></div></div>
+    <div class="card"><h2>수익 기여</h2>
+      <div class="seg" id="contribSeg" role="group" aria-label="기간" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 10px">
+        <button type="button" data-p="this_month" aria-pressed="true">이번 달</button>
+        <button type="button" data-p="last_month" aria-pressed="false">지난달</button>
+        <button type="button" data-p="all" aria-pressed="false">전체</button>
+      </div>
+      <div id="contrib"></div></div>
     <div class="card" id="divCard"><h2>배당 (세후 추정)</h2>
       <div class="sub" id="divSub"></div><div id="div"></div></div>
     <div class="card"><h2>벤치마크 비교</h2>
@@ -699,6 +716,7 @@ function render() {
 
   renderSuspects(d);
   renderDividends(d);
+  renderContrib(d);
   renderUpcoming(d);
   renderPreview(d);
   renderFlows(d);
@@ -779,6 +797,55 @@ function renderSuspects(d) {
       + ". 결제 지연이면 며칠 안에 반대 금액이 나와서 사라져요.";
     host.append(p);
   }
+}
+
+let contribPeriod = "this_month";
+document.querySelectorAll("#contribSeg button").forEach(b => b.addEventListener("click", () => {
+  contribPeriod = b.dataset.p;
+  document.querySelectorAll("#contribSeg button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  if (DATA) renderContrib(DATA);
+}));
+
+// Diverging bars around zero: gains right in --up, losses left in --down.
+function divergingBars(host, items) {
+  const max = Math.max(...items.map(i => Math.abs(i.amount)), 1);
+  for (const it of items) {
+    const row = document.createElement("div"); row.className = "cb";
+    const n = document.createElement("div"); n.className = "n"; n.textContent = it.name; n.title = it.name;
+    const t = document.createElement("div"); t.className = "track";
+    const f = document.createElement("div"); f.className = "fill " + (it.amount >= 0 ? "up" : "down");
+    f.style.width = (Math.abs(it.amount) / max * 50) + "%"; t.append(f);
+    const v = document.createElement("div"); v.className = "v delta " + dir(Math.round(it.amount));
+    v.textContent = `${arrow(Math.round(it.amount))}${man(Math.abs(it.amount))}`;
+    row.append(n, t, v); host.append(row);
+  }
+}
+
+function renderContrib(d) {
+  const c = d.contributions[contribPeriod], host = $("contrib"); host.textContent = "";
+  const total = c.rows.reduce((s, r) => s + r.amount, 0);
+  const head = document.createElement("p"); head.className = "fx-note"; head.style.marginTop = "0";
+  const from = contribPeriod === "all" ? d.history[0].date : c.start;
+  head.textContent = `${from} ~ ${c.end} 손익 ${total >= 0 ? "+" : "−"}${won(Math.abs(total))}원 (입출금 제외)`;
+  host.append(head);
+  if (!c.rows.length) { emptyState(host, "이 기간에는 기록이 없어요."); return; }
+
+  const sum = key => { const m = {}; for (const r of c.rows) m[key(r)] = (m[key(r)] || 0) + r.amount; return m; };
+  const h = t => { const e = document.createElement("h3"); e.className = "fx-note"; e.style.margin = "10px 0 4px";
+                   e.textContent = t; host.append(e); };
+  h("계좌별");
+  divergingBars(host, Object.entries(sum(r => r.label)).map(([name, amount]) => ({ name, amount }))
+    .sort((a, b) => b.amount - a.amount));
+
+  h("항목별");
+  const items = Object.entries(sum(r => r.name)).map(([name, amount]) => ({ name, amount }))
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  const TOP = 8, top = items.slice(0, TOP), rest = items.slice(TOP);
+  if (rest.length) top.push({ name: `그 외 ${rest.length}개`, amount: rest.reduce((s, i) => s + i.amount, 0) });
+  divergingBars(host, top.sort((a, b) => b.amount - a.amount));
+  const note = document.createElement("p"); note.className = "fx-note";
+  note.textContent = "환율 = 해외 주식·달러 예수금의 환율 변동분. 기타 = 종가와 다른 체결가, 수수료, 매매한 날의 장중 변동.";
+  host.append(note);
 }
 
 function renderDividends(d) {

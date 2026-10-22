@@ -163,6 +163,75 @@ def fx_split(positions: list[dict], rate: Decimal) -> list[FxSplit]:
     return out
 
 
+def contributions(snapshots: dict[str, list[dict]],
+                  deposits: dict[str, list[tuple[str, Decimal]]],
+                  dividends: dict[str, list[tuple[str, Decimal]]],
+                  start: str, end: str) -> list[dict]:
+    """Where an account's gain came from, between start and end inclusive.
+
+    snapshots: account -> [{"date", "total", "cash", "positions"}];
+    deposits: recorded transfers; dividends: cash changes the transfer
+    detector labelled dividends (date, KRW). Every snapshot step whose
+    later date falls in [start, end] is split into:
+
+    - "stock": each position held over the step, qty x its KRW price
+      change - for a foreign position the own-currency move at the old
+      rate (kind "stock") and the rate move on the new value (kind "fx");
+    - "fx": also the rate move on foreign cash;
+    - "dividend": as given;
+    - "other": what's left - fills away from the close, fees, intraday
+      moves on positions bought in the step.
+
+    Rows: {"account", "name", "kind", "amount"}, merged by (account, name,
+    kind). They sum exactly to the change in total value less transfers.
+    """
+    merged: dict[tuple[str, str, str], Decimal] = {}
+
+    def add(account, name, kind, amount):
+        key = (account, name, kind)
+        merged[key] = merged.get(key, Decimal("0")) + amount
+
+    for account, series in snapshots.items():
+        series = sorted(series, key=lambda s: s["date"])
+        for prev, cur in zip(series, series[1:], strict=False):
+            if not start <= cur["date"] <= end:
+                continue
+            moved = sum((a for d, a in deposits.get(account, [])
+                         if prev["date"] < d <= cur["date"]), Decimal("0"))
+            gain = cur["total"] - prev["total"] - moved
+            explained = Decimal("0")
+            rate_prev, rate_cur = implied_rate(prev), implied_rate(cur)
+            now = {p["symbol"]: p for p in cur["positions"]}
+            for p in prev["positions"]:
+                c = now.get(p["symbol"])
+                if c is None:
+                    continue   # sold in the step: its proceeds land in "other"
+                name = p.get("name") or p["symbol"]
+                qty = Decimal(p["qty"])
+                p0, p1 = Decimal(p["price"]), Decimal(c["price"])
+                if p.get("currency", "KRW") != "KRW" and rate_prev and rate_cur:
+                    price_part = qty * (p1 - p0) * rate_prev
+                    fx_part = qty * p1 * (rate_cur - rate_prev)
+                    add(account, name, "stock", price_part)
+                    add(account, "환율", "fx", fx_part)
+                    explained += price_part + fx_part
+                else:
+                    add(account, name, "stock", qty * (p1 - p0))
+                    explained += qty * (p1 - p0)
+            if rate_prev and rate_cur and any(
+                    p.get("currency", "KRW") != "KRW" for p in prev["positions"]):
+                cash_fx = prev["cash"] / rate_prev * (rate_cur - rate_prev)
+                add(account, "환율", "fx", cash_fx)
+                explained += cash_fx
+            paid = sum((a for d, a in dividends.get(account, [])
+                        if prev["date"] < d <= cur["date"]), Decimal("0"))
+            if paid:
+                add(account, "배당", "dividend", paid)
+            add(account, "기타", "other", gain - explained - paid)
+    return [{"account": a, "name": n, "kind": k, "amount": v}
+            for (a, n, k), v in merged.items() if v]
+
+
 def benchmark_series(candles: list[dict], dates: list[str]) -> list[Decimal | None]:
     """Cumulative return of a benchmark on each date, from dates[0]'s close.
 
