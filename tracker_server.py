@@ -57,7 +57,7 @@ ISA_MANDATORY_YEARS = 3        # 의무가입기간
 # What each account's principal row stands for (cashflows kind
 # "principal"), shown under the principal return. Anything not listed is
 # the 10/21 cost basis.
-PRINCIPAL_BASIS = {"kis-isa": "납입원금"}
+PRINCIPAL_BASIS = {"kis-isa": "납입원금", "toss-bot": "8/13 잔액+이후 입금"}
 DEFAULT_PRINCIPAL_BASIS = "매입금액+현금"
 ISA_EXCESS_TAX = Decimal("0.099")   # 분리과세 on gains over the tax-free limit
 

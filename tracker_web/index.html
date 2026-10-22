@@ -707,7 +707,9 @@ function render() {
     const basisText = bases.length === 1 ? bases[0]
       : d.accounts.filter(a => a.principal_basis !== "매입금액+현금")
           .map(a => `${a.label} ${a.principal_basis}`).join(", ") + ", 그 외 매입금액+현금";
-    $("principalNote").textContent = `원금 ${man(mi)}원 · ${shortDate(since)} 기준 (${basisText})`;
+    $("principalNote").textContent = bases.length === 1
+      ? `원금 ${man(mi)}원 · ${shortDate(since)} ${basisText} 기준`
+      : `원금 ${man(mi)}원 (${basisText})`;
   } else {
     $("principal").textContent = "—"; $("principal").style.color = "";
     $("principalNote").textContent = `원금 미입력: ${missing.map(a => a.label).join(", ")}`;
