@@ -25,7 +25,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from quant import returns, storage, tracker
+from quant import config, returns, storage, tracker
 from quant.stock_factors.scripts import pbr_storage
 
 log = logging.getLogger("tracker")
@@ -48,6 +48,13 @@ ISA_ANNUAL_LIMIT = None      # KRW per calendar year
 ISA_TOTAL_LIMIT = None       # KRW over the account's life
 ISA_PAID_THIS_YEAR = Decimal("0")
 ISA_PAID_TOTAL = Decimal("0")
+
+# Compared against on the home chart and in each account's detail, from
+# the KIS candle cache daily.py keeps (KRW-listed, so FX is included the
+# same way it is in the accounts).
+BENCHMARKS = [("102110", "코스피200"), ("133690", "나스닥100"),
+              (config.CASH_SYMBOL, "현금성(CD·MMF)")]
+CANDLE_DIR = storage.DB_PATH.parent / "candles" / "kis"
 
 # The upcoming list only looks this far ahead.
 UPCOMING_DAYS = 30
@@ -72,6 +79,16 @@ LABELS = {"kis-isa": "ISA (KIS)", "kis-main": "KIS 국내",
 
 def _num(d: Decimal | None) -> float | None:
     return None if d is None else float(d)
+
+
+def _benchmarks(dates: list[str]) -> list[dict]:
+    out = []
+    for symbol, label in BENCHMARKS:
+        path = CANDLE_DIR / f"{symbol}.json"
+        candles = json.loads(path.read_text()) if path.exists() else []
+        out.append({"symbol": symbol, "label": label,
+                    "returns": [_num(r) for r in tracker.benchmark_series(candles, dates)]})
+    return out
 
 
 def build(conn: sqlite3.Connection, today: date) -> dict:
@@ -144,6 +161,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
             "holdings": [{"name": n, "weight": _num(v / total_a)}
                          for n, v in held_a] if total_a else [],
             "fx": fx,
+            "benchmarks": _benchmarks([d for d, _ in series]),
         })
 
     index = tracker.growth_index(by_account, deposits)
@@ -225,6 +243,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         "accounts": account_rows,
         "history": [{"date": d, "total": _num(t), "index": _num(i)}
                     for (d, i), t in zip(index, totals, strict=True)],
+        "benchmarks": _benchmarks(dates),
         "risk": {
             "days": len(index),
             "max_drawdown": _num(tracker.max_drawdown(index)),

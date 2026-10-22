@@ -164,3 +164,17 @@ class TestFxSplit:
         positions = [{"symbol": "K", "qty": 1, "price": "100"},
                      {"symbol": "X", "qty": 1, "price": "1", "currency": "USD"}]
         assert tracker.fx_split(positions, D(1300)) == []
+
+
+class TestBenchmarkSeries:
+    # newest-first, like the candle cache; no candle on 10-03 (holiday)
+    CANDLES = [{"timestamp": f"2026-10-0{d}T00:00:00.000+09:00", "closePrice": c}
+               for d, c in [(5, "110"), (2, "105"), (1, "100")]]
+
+    def test_returns_from_first_date_using_last_close_at_or_before(self):
+        dates = ["2026-10-01", "2026-10-03", "2026-10-05"]
+        assert tracker.benchmark_series(self.CANDLES, dates) == [
+            0, D("0.05"), D("0.1")]
+
+    def test_no_close_before_first_date(self):
+        assert tracker.benchmark_series(self.CANDLES, ["2026-09-30"]) == [None]

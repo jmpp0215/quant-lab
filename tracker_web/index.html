@@ -30,6 +30,8 @@
   /* event markers: categorical slots 2 (orange) and 3 (aqua) */
   --m-isa: #eb6834;
   --m-pbr: #1baf7a;
+  --b-1: #6250d6;
+  --b-2: #eda100;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -48,6 +50,8 @@
     --warn: #fab219;
     --m-isa: #d95926;
     --m-pbr: #199e70;
+    --b-1: #9085e9;
+    --b-2: #c98500;
   }
 }
 :root[data-theme="dark"] {
@@ -57,6 +61,7 @@
   --accent: #3987e5; --accent-soft: #1c3557;
   --up: #e66767; --down: #5598e7; --warn: #fab219;
   --m-isa: #d95926; --m-pbr: #199e70;
+  --b-1: #9085e9; --b-2: #c98500;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -168,6 +173,11 @@ table.fx td:first-child { max-width: 9em; overflow: hidden; text-overflow: ellip
 .empty { color: var(--text-2); font-size: 14px; }
 .empty code { font-size: 12px; background: var(--grid); padding: 1px 5px; border-radius: 4px; }
 
+.chart .extra { fill: none; stroke-width: 1.5; stroke-linejoin: round; }
+table.bm { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+table.bm td { padding: 5px 0; border-top: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+table.bm td:last-child { text-align: right; }
+table.bm i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 .chart .mark { stroke: var(--surface); stroke-width: 2; }
 .legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-2); margin-top: 6px; }
 .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
@@ -232,6 +242,10 @@ section[hidden] { display: none; }
       <div class="chart" id="chartIndex"></div>
       <div class="legend"><span><i style="background:var(--m-isa)"></i>ISA 트랜치</span>
         <span><i style="background:var(--m-pbr)"></i>PBR 리밸런싱</span></div></div>
+    <div class="card"><h2>벤치마크 비교</h2>
+      <div class="sub" id="bmSub"></div>
+      <div class="chart" id="chartBM"></div>
+      <table class="bm" id="bmTable"></table></div>
     <div class="card"><h2>총 자산 추이</h2>
       <div class="sub">입금과 계좌 추가로 생긴 계단도 포함</div>
       <div class="chart" id="chartTotal"></div></div>
@@ -319,12 +333,15 @@ function setSigned(el, v) {
 // Single-series line/area chart with a snapping crosshair tooltip.
 // marks: [{ i, color, label }] - event dots on the line, listed in the tooltip.
 // ref: { y, label } - a dashed reference line, kept inside the y range.
-function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, marks = [], ref = null }) {
+// extra: [{ ys, color, label, dash }] - more series on the same x, drawn
+// thinner under the main one and listed in the tooltip; null ys are gaps.
+function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, marks = [], ref = null,
+                                   extra = [], label = null }) {
   host.textContent = "";
   if (points.length < 2) { host.textContent = "데이터가 부족해요"; return; }
   const W = host.clientWidth, H = host.clientHeight;
   const pad = { l: 44, r: 8, t: 8, b: 20 };
-  const ys = points.map(p => p.y);
+  const ys = points.map(p => p.y).concat(...extra.map(e => e.ys.filter(v => v != null)));
   let lo = Math.min(...ys), hi = Math.max(...ys);
   if (zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
   if (ref) { lo = Math.min(lo, ref.y); hi = Math.max(hi, ref.y); }
@@ -364,6 +381,16 @@ function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, mar
     el("line", { x1: pad.l, x2: W - pad.r, y1: y(ref.y), y2: y(ref.y), class: "ref" });
     el("text", { x: W - pad.r, y: y(ref.y) - 5, "text-anchor": "end", class: "ref-label" }).textContent = ref.label;
   }
+  for (const e of extra) {
+    let dpath = "", pen = false;
+    e.ys.forEach((v, i) => {
+      if (v == null) { pen = false; return; }
+      dpath += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`; pen = true;
+    });
+    const pth = el("path", { d: dpath, class: "extra" });
+    pth.style.stroke = e.color;
+    if (e.dash) pth.setAttribute("stroke-dasharray", "4 3");
+  }
   el("path", { d: path, class: "line" });
   for (const m of marks)
     el("circle", { cx: x(m.i), cy: y(points[m.i].y), r: 4, fill: m.color, class: "mark" });
@@ -385,6 +412,13 @@ function lineChart(host, points, { fmtY, fmtTip, area = false, zero = false, mar
     const b = document.createElement("b"); b.textContent = fmtTip(p.y);
     const s = document.createElement("span"); s.textContent = p.d;
     tip.append(b, s);
+    if (label) b.textContent = `${label} ${fmtTip(p.y)}`;
+    for (const e of extra) {
+      if (e.ys[i] == null) continue;
+      const row = document.createElement("span"); row.className = "ev";
+      const k = document.createElement("i"); k.style.background = e.color;
+      row.append(k, `${e.label} ${fmtTip(e.ys[i])}`); tip.append(row);
+    }
     for (const m of marks.filter(m => m.i === i)) {
       const e = document.createElement("span"); e.className = "ev";
       const dotEl = document.createElement("i"); dotEl.style.background = m.color;
@@ -435,6 +469,10 @@ function renderAccountDetail(host, a, d) {
   const chart = () => { const c = document.createElement("div"); c.className = "chart"; host.append(c); return c; };
   head("누적 수익률 (시간가중)", `${h[0].date} 첫 기록부터`);
   const c1 = chart();
+  const bm = document.createElement("p"); bm.className = "fx-note";
+  bm.textContent = `같은 기간 내 계좌 ${signedPct(h[h.length - 1].index - 1)} · ` + a.benchmarks
+    .map(b => `${b.label} ${signedPct(b.returns[b.returns.length - 1])}`).join(" · ");
+  host.append(bm);
   head("평가액");
   const c2 = chart();
   let rateChart = null;
@@ -491,6 +529,26 @@ function renderFx(host, fx, head, chart) {
     { fmtY: v => won(v), fmtTip: v => won(v) + "원", ref: { y: fx.buy_rate, label: `평균 매입 ${won(fx.buy_rate)}` } });
 }
 
+const BM_COLORS = ["var(--b-1)", "var(--b-2)", "var(--text-3)"];
+
+function renderBenchmarks(d) {
+  const hist = d.history;
+  $("bmSub").textContent = `${hist[0].date} 이후, 원화 기준 (나스닥100은 국내 상장 ETF라 환율 포함)`;
+  const extra = d.benchmarks.map((b, k) => ({ ys: b.returns, color: BM_COLORS[k], label: b.label, dash: k === 2 }));
+  lineChart($("chartBM"), hist.map(h => ({ d: h.date, y: h.index - 1 })),
+            { fmtY: v => signedPct(v, 1), fmtTip: v => signedPct(v), zero: true, extra, label: "내 자산" });
+  // The table below doubles as the legend.
+  const t = $("bmTable"); t.textContent = "";
+  const rows = [["var(--accent)", "내 자산 (시간가중)", hist[hist.length - 1].index - 1]]
+    .concat(extra.map(e => [e.color, e.label, e.ys[e.ys.length - 1]]));
+  for (const [color, name, v] of rows) {
+    const tr = t.insertRow(); const a = tr.insertCell(); const i = document.createElement("i");
+    i.style.background = color; a.append(i, name);
+    const b = tr.insertCell(); b.textContent = signedPct(v);
+    b.style.color = v == null ? "" : v > 0 ? "var(--up)" : v < 0 ? "var(--down)" : "";
+  }
+}
+
 let DATA = null;
 let openAccount = null;
 
@@ -524,6 +582,7 @@ function render() {
   })).filter(m => m.i >= 0);
   lineChart($("chartIndex"), hist.map(h => ({ d: h.date, y: h.index - 1 })),
             { fmtY: v => signedPct(v, 1), fmtTip: v => signedPct(v), zero: true, marks });
+  renderBenchmarks(d);
   lineChart($("chartTotal"), hist.map(h => ({ d: h.date, y: h.total })),
             { fmtY: man, fmtTip: v => won(v) + "원" });
 

@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+from quant import momentum
+
 TRADING_DAYS = 252
 
 
@@ -158,6 +160,26 @@ def fx_split(positions: list[dict], rate: Decimal) -> list[FxSplit]:
             value=value, value_krw=value * rate, buy_rate=buy_rate,
             price_effect=(value - cost) * buy_rate,
             fx_effect=value * (rate - buy_rate)))
+    return out
+
+
+def benchmark_series(candles: list[dict], dates: list[str]) -> list[Decimal | None]:
+    """Cumulative return of a benchmark on each date, from dates[0]'s close.
+
+    candles newest-first (candles.py's cache). Each date takes the last
+    close at or before it - the same date-anchored lookup the momentum
+    signal uses, since a benchmark's calendar needn't match the account's.
+    None for every date if there is no close at or before the first.
+    """
+    if not dates:
+        return []
+    base = momentum._price_at_or_before(candles, date.fromisoformat(dates[0]))
+    if not base:
+        return [None] * len(dates)
+    out = []
+    for d in dates:
+        p = momentum._price_at_or_before(candles, date.fromisoformat(d))
+        out.append(p / base - 1 if p is not None else None)
     return out
 
 
