@@ -3,8 +3,9 @@
     python tracker_server.py                 http://127.0.0.1:8765
     python tracker_server.py --port 9000
 
-Reads with mode=ro; the one write is POST /cashflow (an external
-deposit/withdrawal, the same row cashflow.py records). Nothing on the
+Reads with mode=ro; the writes are POST /cashflow (an external
+deposit/withdrawal, the same row cashflow.py records) and POST
+/transfer/dismiss (a suspected transfer the user says wasn't one). Nothing on the
 order path (or any broker client) is imported. Bound to localhost only -
 phone access goes through `tailscale serve`, which adds HTTPS (needed for
 the PWA to install) without exposing the port to the internet.
@@ -269,6 +270,12 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
     if row is not None:
         preview = json.loads(row["payload"]) | {"computed_at": row["computed_at"]}
 
+    suspects = [{"account": c["account"], "label": LABELS.get(c["account"], c["account"]),
+                 "date": c["date"], "prev_date": c.get("prev_date"),
+                 "amount": _num(c["amount"]), "pending": c["kind"] == "pending"}
+                for a in names for c in storage.transfer_suspects(conn, a)
+                if c["kind"] in ("transfer", "pending")]
+
     recent_flows = [{"date": f["trade_date"], "account": f["account"],
                      "label": LABELS.get(f["account"], f["account"]),
                      "amount": _num(Decimal(f["amount"])), "note": f["note"]}
@@ -301,6 +308,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         "rebalances": sorted(rebalances, key=lambda r: r["date"]),
         "upcoming": upcoming,
         "preview": preview,
+        "suspects": suspects,
         "cashflows": recent_flows,
         "cashflow_accounts": [{"account": a, "label": LABELS[a]}
                               for a in CASHFLOW_ACCOUNTS],
@@ -345,6 +353,19 @@ def record_cashflow(body: dict, db: Path = storage.DB_PATH) -> tuple[int, dict]:
     return 200, {"ok": True}
 
 
+def dismiss_transfer(body: dict, db: Path = storage.DB_PATH) -> tuple[int, dict]:
+    """Mark a suspected transfer as not one (body: account, date, amount)."""
+    account = body["account"]
+    if account not in CASHFLOW_ACCOUNTS:
+        raise ValueError(f"unknown account {account}")
+    day = date.fromisoformat(body["date"]).isoformat()
+    with storage.connect(db) as conn:
+        storage.save_transfer_review(conn, account, day, Decimal(str(body["amount"])),
+                                     datetime.now(KST).isoformat())
+    log.info("transfer dismissed: %s %s", account, day)
+    return 200, {"ok": True}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.split("?")[0] != "/data.json":
@@ -358,7 +379,9 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path != "/cashflow":
+        handler = {"/cashflow": record_cashflow,
+                   "/transfer/dismiss": dismiss_transfer}.get(self.path)
+        if handler is None:
             return self._json(404, {"error": "not found"})
         # A JSON body forces a CORS preflight, which this server never
         # answers, so another site open in the browser can't post here; the
@@ -369,7 +392,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(403, {"error": "forbidden"})
         try:
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            status, payload = record_cashflow(body)
+            status, payload = handler(body)
         except (ValueError, KeyError, TypeError, ArithmeticError) as e:
             status, payload = 400, {"error": f"잘못된 입력: {e}"}
         self._json(status, payload)
@@ -388,6 +411,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    storage.init()   # tables added since daily.py last ran; reads are mode=ro
     port = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv \
         else DEFAULT_PORT
     server = ThreadingHTTPServer(("127.0.0.1", port),

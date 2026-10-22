@@ -113,6 +113,15 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .acct-detail { grid-column: 1 / -1; padding-top: 10px; cursor: default; }
 .acct-detail h3 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 12px 0 6px; }
 .acct-detail .chart { height: 150px; }
+.suspect { padding: 10px 0; border-top: 1px solid var(--grid); }
+.suspect:first-child { border-top: 0; padding-top: 0; }
+.suspect .top { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.suspect .top b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.suspect small { color: var(--text-3); font-size: 12px; }
+.suspect .acts { display: flex; gap: 8px; margin-top: 8px; }
+.suspect .acts button { flex: 1; font: inherit; font-size: 13px; padding: 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; }
+.suspect .acts button.rec { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .order { display: grid; grid-template-columns: 2.6em 1fr auto; gap: 8px; align-items: baseline;
          padding: 7px 0; border-top: 1px solid var(--grid); font-size: 14px; }
 .order:first-child { border-top: 0; }
@@ -234,6 +243,9 @@ section[hidden] { display: none; }
       <div class="tile"><div class="label">원금 대비 수익률</div>
         <div class="value" id="principal">—</div><div class="note" id="principalNote"></div></div>
     </div>
+    <div class="card" id="suspectCard" hidden><h2>확인이 필요한 입출금</h2>
+      <div class="sub">매매·배당·환율·결제 지연으로 설명되지 않는 현금 변화예요. 입출금이 맞으면 기록해 주세요.</div>
+      <div id="suspects"></div></div>
     <div class="card"><h2>다가오는 일정</h2><div class="sub">30일 이내</div><div id="upcoming"></div></div>
     <div class="card" id="previewCard" hidden><h2 id="previewTitle"></h2>
       <div class="sub" id="previewSub"></div><div id="preview"></div></div>
@@ -660,6 +672,7 @@ function render() {
 
   renderBars($("holdings"), r.holdings);
 
+  renderSuspects(d);
   renderUpcoming(d);
   renderPreview(d);
   renderFlows(d);
@@ -688,6 +701,57 @@ function renderUpcoming(d) {
     const amt = document.createElement("span"); amt.className = "amt";
     amt.textContent = u.amount != null ? `약 ${won(u.amount)}원` : "";
     row.append(dd, what, amt); host.append(row);
+  }
+}
+
+async function postJSON(path, body) {
+  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify(body) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || res.status);
+  return out;
+}
+
+function renderSuspects(d) {
+  const list = d.suspects.filter(x => !x.pending), waiting = d.suspects.filter(x => x.pending);
+  const card = $("suspectCard"), host = $("suspects");
+  card.hidden = !d.suspects.length;
+  host.textContent = "";
+  for (const x of list) {
+    const row = document.createElement("div"); row.className = "suspect";
+    const top = document.createElement("div"); top.className = "top";
+    const what = document.createElement("span");
+    what.append(`${x.label} · ${x.date}`);
+    const sm = document.createElement("small"); sm.style.display = "block";
+    sm.textContent = `${x.prev_date} 이후 현금 변화 중 설명 안 되는 금액`; what.append(sm);
+    const amt = document.createElement("b"); amt.className = "delta " + dir(x.amount);
+    amt.textContent = `${x.amount > 0 ? "+" : "−"}${won(Math.abs(x.amount))}원`;
+    top.append(what, amt);
+    const acts = document.createElement("div"); acts.className = "acts";
+    const kind = x.amount > 0 ? "입금" : "출금";
+    const rec = document.createElement("button"); rec.className = "rec"; rec.textContent = `${kind}으로 기록`;
+    const no = document.createElement("button"); no.textContent = "입출금 아니에요";
+    const act = async (fn, okMsg) => {
+      rec.disabled = no.disabled = true;
+      try { await fn(); sm.textContent = okMsg; await load(); }
+      catch (e) { sm.textContent = "처리하지 못했어요: " + e.message; rec.disabled = no.disabled = false; }
+    };
+    rec.addEventListener("click", () => {
+      const amount = Math.round(x.amount);
+      if (!confirm(`${x.label} · ${x.date}\n${kind} ${won(Math.abs(amount))}원으로 기록할까요?\n정확한 금액을 알면 입출금 탭에서 직접 입력해도 돼요.`)) return;
+      act(() => postJSON("cashflow", { account: x.account, date: x.date, amount,
+                                       note: "트래커 자동 감지에서 기록", force: true }), "기록했어요.");
+    });
+    no.addEventListener("click", () => act(() => postJSON("transfer/dismiss",
+      { account: x.account, date: x.date, amount: x.amount }), "다시 묻지 않을게요."));
+    acts.append(rec, no);
+    row.append(top, acts); host.append(row);
+  }
+  if (waiting.length) {
+    const p = document.createElement("p"); p.className = "fx-note";
+    p.textContent = "지켜보는 중: " + waiting.map(x => `${x.label} ${x.date} ${x.amount > 0 ? "+" : "−"}${man(Math.abs(x.amount))}원`).join(", ")
+      + ". 결제 지연이면 며칠 안에 반대 금액이 나와서 사라져요.";
+    host.append(p);
   }
 }
 

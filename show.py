@@ -21,7 +21,6 @@ from decimal import Decimal
 
 # Shared with daily.py's own health check, so "no drift" here and "no
 # notification arrived" mean the same threshold was applied.
-from daily import CASH_ALERT_THRESHOLD
 from quant import accounts, config, returns, storage, tranche
 
 
@@ -352,11 +351,11 @@ def health() -> None:
             else:
                 drift_text = "no tranches"
 
-            unexplained = storage.unexplained_cash_change(
-                conn, name, pf["trade_date"])
-            cash_text = (f"UNEXPLAINED {unexplained:+,.0f}"
-                        if abs(unexplained) > CASH_ALERT_THRESHOLD
-                        else "ok")
+            suspects = [s for s in storage.transfer_suspects(conn, name)
+                        if s["kind"] in ("transfer", "pending")]
+            cash_text = ("TRANSFER? " + ", ".join(
+                f"{s['date']} {s['amount']:+,.0f}" + (" (pending)" if s["kind"] == "pending" else "")
+                for s in suspects)) if suspects else "ok"
 
             print(f"{_pad(name, 20)}{pf['trade_date']:<12}"
                   f"{_pad(drift_text, 19)}{cash_text}")

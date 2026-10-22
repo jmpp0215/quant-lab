@@ -261,3 +261,24 @@ class TestSnapshotOverseas:
         from quant import kis_client
         [p] = kis_client.snapshot_overseas(StubOverseasClient()).positions
         assert (p["cost"], p["cost_krw"]) == ("296.67000", "449010")
+
+
+class StubDividendClient:
+    def get(self, path, tr_id, params):
+        return {"output1": [
+            {"record_date": "20260930", "per_sto_divi_amt": "61", "divi_pay_dt": "2026/10/02"},
+            {"record_date": "20261231", "per_sto_divi_amt": "0", "divi_pay_dt": ""}]}
+
+
+class TestDividendSchedule:
+    def test_normalises_both_date_formats_and_keeps_unset_amounts(self):
+        from datetime import date
+        from decimal import Decimal
+
+        from quant import kis_client
+        rows = kis_client.dividend_schedule(StubDividendClient(), "091170",
+                                            from_date=date(2026, 9, 1),
+                                            to_date=date(2027, 1, 31))
+        assert rows == [
+            {"record_date": "2026-09-30", "amount": Decimal("61"), "pay_date": "2026-10-02"},
+            {"record_date": "2026-12-31", "amount": Decimal("0"), "pay_date": None}]

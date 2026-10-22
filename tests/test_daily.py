@@ -61,65 +61,71 @@ class TestCheckAccountHealth:
                 "2026-08-24")
         assert problems == []
 
-    def test_large_unexplained_cash_drop_is_reported(self, tmp_path):
+    @staticmethod
+    def _history(db, account, cashes, positions=()):
+        # daily.py saves today's portfolio row before calling the check.
+        with storage.connect(db) as conn:
+            for i, cash in enumerate(cashes):
+                storage.save_portfolio(conn, f"2026-08-{20 + i:02d}", account, "KRW",
+                                       Decimal(cash), Decimal(cash), list(positions))
+
+    def _check(self, db, account="test-acc", positions=()):
+        with storage.connect(db) as conn:
+            return check_account_health(conn, account, snapshot(positions=list(positions)),
+                                        "2026-08-29")
+
+    def test_confirmed_unrecorded_withdrawal_is_reported(self, tmp_path):
         db = tmp_path / "test.db"
         storage.init(db)
-        with storage.connect(db) as conn:
-            storage.save_portfolio(conn, "2026-08-21", "test-acc", "KRW",
-                                   Decimal("500000"), Decimal("500000"), [])
-        # daily.py saves today's portfolio row before calling this, so
-        # unexplained_cash_change has both rows to diff.
-        with storage.connect(db) as conn:
-            storage.save_portfolio(conn, "2026-08-24", "test-acc", "KRW",
-                                   Decimal("150000"), Decimal("150000"), [])
-            problems = check_account_health(
-                conn, "test-acc", snapshot(positions=[], cash="150000"),
-                "2026-08-24")
-        assert any("unexplained cash" in p for p in problems)
+        self._history(db, "test-acc", ["500000", "150000", "150000", "150000", "150000"])
+        problems = self._check(db)
+        assert any("unrecorded transfer" in p and "-350,000" in p for p in problems)
+
+    def test_change_too_recent_to_confirm_is_not_reported_yet(self, tmp_path):
+        # Settlement can undo it within the next snapshots, so wait.
+        db = tmp_path / "test.db"
+        storage.init(db)
+        self._history(db, "test-acc", ["500000", "500000", "150000"])
+        assert self._check(db) == []
 
     def test_small_cash_wobble_is_not_reported(self, tmp_path):
         db = tmp_path / "test.db"
         storage.init(db)
-        with storage.connect(db) as conn:
-            storage.save_portfolio(conn, "2026-08-21", "test-acc", "KRW",
-                                   Decimal("500000"), Decimal("500000"), [])
-            storage.save_portfolio(conn, "2026-08-24", "test-acc", "KRW",
-                                   Decimal("500500"), Decimal("500500"), [])
-            problems = check_account_health(
-                conn, "test-acc", snapshot(positions=[], cash="500500"),
-                "2026-08-24")
-        assert problems == []
+        self._history(db, "test-acc", ["500000", "500500", "500500", "500500", "500500"])
+        assert self._check(db) == []
 
-    def test_deposit_explains_a_cash_increase(self, tmp_path):
+    def test_recorded_deposit_explains_a_cash_increase(self, tmp_path):
+        db = tmp_path / "test.db"
+        storage.init(db)
+        self._history(db, "test-acc", ["500000", "1500000", "1500000", "1500000", "1500000"])
+        with storage.connect(db) as conn:
+            storage.save_cashflow(conn, "2026-08-21", "test-acc", Decimal("1000000"),
+                                  note="deposit")
+        assert self._check(db) == []
+
+    def test_dismissed_suspect_is_not_reported_again(self, tmp_path):
+        db = tmp_path / "test.db"
+        storage.init(db)
+        self._history(db, "test-acc", ["500000", "150000", "150000", "150000", "150000"])
+        with storage.connect(db) as conn:
+            storage.save_transfer_review(conn, "test-acc", "2026-08-21",
+                                         Decimal("-350000"), "2026-08-29T00:00:00")
+        assert self._check(db) == []
+
+    def test_overseas_rate_move_is_not_reported(self, tmp_path):
+        # kis-main-overseas: USD cash and positions valued in KRW, so the
+        # exchange rate alone moves the KRW cash every day (+30,047 / -6,010
+        # KRW on 2026-09-29/30 under the old check).
         db = tmp_path / "test.db"
         storage.init(db)
         with storage.connect(db) as conn:
-            storage.save_portfolio(conn, "2026-08-21", "test-acc", "KRW",
-                                   Decimal("500000"), Decimal("500000"), [])
-            storage.save_cashflow(conn, "2026-08-24", "test-acc",
-                                  Decimal("1000000"), note="deposit")
-            storage.save_portfolio(conn, "2026-08-24", "test-acc", "KRW",
-                                   Decimal("1500000"), Decimal("1500000"), [])
-            problems = check_account_health(
-                conn, "test-acc", snapshot(positions=[], cash="1500000"),
-                "2026-08-24")
-        assert problems == []
-
-    def test_overseas_account_skips_the_cash_check(self, tmp_path):
-        # kis-main-overseas snapshots USD cash converted to KRW, so the
-        # exchange rate alone moves it every day (+30,047 / -6,010 KRW on
-        # 2026-09-29/30) - not something a deposit/fill check can explain.
-        db = tmp_path / "test.db"
-        storage.init(db)
-        with storage.connect(db) as conn:
-            storage.save_portfolio(conn, "2026-08-21", "kis-main-overseas",
-                                   "KRW", Decimal("500000"), Decimal("500000"), [])
-            storage.save_portfolio(conn, "2026-08-24", "kis-main-overseas",
-                                   "KRW", Decimal("530047"), Decimal("530047"), [])
-            problems = check_account_health(
-                conn, "kis-main-overseas",
-                snapshot(positions=[], cash="530047"), "2026-08-24")
-        assert problems == []
+            for i, rate in enumerate(["1393", "1328", "1340", "1345", "1350"]):
+                r = Decimal(rate)
+                storage.save_portfolio(
+                    conn, f"2026-08-{20 + i:02d}", "kis-main-overseas", "KRW",
+                    (Decimal("3758.47") + 2500) * r, Decimal("3758.47") * r,
+                    [{"symbol": "AMZN", "qty": 10, "price": "250", "currency": "USD"}])
+        assert self._check(db, "kis-main-overseas") == []
 
 
 class TestHealthcheckProblem:

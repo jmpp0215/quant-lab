@@ -51,3 +51,26 @@ class TestRecordCashflow:
         with pytest.raises((ValueError, ArithmeticError)):
             tracker_server.record_cashflow(dict(BODY, **bad), db)
         assert rows(db) == []
+
+
+class TestDismissTransfer:
+    def test_records_a_review_that_hides_the_suspect(self, db):
+        with storage.connect(db) as conn:
+            for d, cash in [("2026-08-20", "500000"), ("2026-08-21", "150000"),
+                            ("2026-08-24", "150000"), ("2026-08-25", "150000"),
+                            ("2026-08-26", "150000")]:
+                storage.save_portfolio(conn, d, "kis-isa", "KRW", Decimal(cash),
+                                       Decimal(cash), [])
+            assert [s["date"] for s in storage.transfer_suspects(conn, "kis-isa")] == [
+                "2026-08-21"]
+
+        body = {"account": "kis-isa", "date": "2026-08-21", "amount": -350000}
+        assert tracker_server.dismiss_transfer(body, db) == (200, {"ok": True})
+
+        with storage.connect(db) as conn:
+            assert storage.transfer_suspects(conn, "kis-isa") == []
+
+    def test_unknown_account_raises(self, db):
+        with pytest.raises(ValueError):
+            tracker_server.dismiss_transfer(
+                {"account": "nope", "date": "2026-08-21", "amount": 1}, db)

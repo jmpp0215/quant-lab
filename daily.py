@@ -38,10 +38,6 @@ from rebalance_run import plan_for_tranche
 
 log = logging.getLogger("daily")
 
-# Below this, a cash mismatch is more likely rounding/timing noise than
-# something worth waking up for.
-CASH_ALERT_THRESHOLD = Decimal("1000")
-
 # healthcheck.zsh (the launchd watchdog) stamps this file every run, weekdays
 # 13:15 and 16:30. daily.py runs at 15:40, so a stamp older than 4 hours
 # means today's 13:15 check never ran - the watchdog itself is down, and
@@ -88,13 +84,16 @@ def check_account_health(conn, account_name: str, snap: storage.AccountSnapshot,
         if drift:
             problems.append(f"tranche books disagree with the account: {drift}")
 
-    if not accounts.ACCOUNTS.get(account_name, {}).get("cash_check", True):
-        return problems
-
-    unexplained = storage.unexplained_cash_change(conn, account_name, trade_date)
-    if abs(unexplained) > CASH_ALERT_THRESHOLD:
-        problems.append(
-            f"unexplained cash change: {unexplained:+,.0f} {snap.currency}")
+    # Cash changes that trades, distributions, the exchange rate and
+    # settlement timing don't explain (quant/transfers.py) - reported only
+    # once confirmed, i.e. not undone within the next few snapshots, and
+    # until the user records or dismisses them in the tracker.
+    suspects = [s for s in storage.transfer_suspects(conn, account_name)
+                if s["kind"] == "transfer"]
+    if suspects:
+        problems.append("unrecorded transfer? " + ", ".join(
+            f"{s['date']} {s['amount']:+,.0f} KRW" for s in suspects)
+            + " - record or dismiss in the tracker")
 
     return problems
 
@@ -153,6 +152,10 @@ def record_strategy(signal: strategy.Signal, trade_date: str,
 # tranches and the next PBR cycle.
 CALENDAR_PAGE_OFFSETS = (0, 20, 40)
 DIVIDEND_LOOKAHEAD_DAYS = 120
+# Paid dividends are matched against cash changes (quant/transfers.py), so
+# the schedule also reaches back - KR pay dates trail record dates by
+# up to ~a month, and a symbol sold since may still pay.
+DIVIDEND_LOOKBACK_DAYS = 60
 
 
 def tranche_preview(weights: dict[str, Decimal], books: dict[int, dict[str, int]],
@@ -213,6 +216,9 @@ def record_upcoming(client: KisClient, past_days: list[str],
             "SELECT p.account, p.positions FROM portfolio p "
             "JOIN (SELECT account, MAX(trade_date) d FROM portfolio GROUP BY account) m "
             "ON p.account = m.account AND p.trade_date = m.d").fetchall()
+        since = (now.date() - timedelta(days=DIVIDEND_LOOKBACK_DAYS)).isoformat()
+        recent = conn.execute("SELECT positions FROM portfolio WHERE trade_date >= ?",
+                              (since,)).fetchall()
     with pbr_storage.connect() as conn:
         pbr_full = pbr_storage.get_latest_full_rebalance_date(conn)
 
@@ -236,14 +242,21 @@ def record_upcoming(client: KisClient, past_days: list[str],
                  "name": p.get("name") or p["symbol"], "qty": p["qty"]}
                 for r in latest for p in json.loads(r["positions"])
                 if p.get("currency", "KRW") == "KRW"]
+    symbols = {p["symbol"] for r in recent for p in json.loads(r["positions"])
+               if p.get("currency", "KRW") == "KRW"}
     events = []
     until = now.date() + timedelta(days=DIVIDEND_LOOKAHEAD_DAYS)
-    for symbol in sorted({h["symbol"] for h in holdings}):
+    for symbol in sorted(symbols):
         try:
-            events += [dict(e, symbol=symbol) for e in kis_client.dividend_schedule(
-                client, symbol, from_date=now.date(), to_date=until)]
+            fetched = kis_client.dividend_schedule(
+                client, symbol, from_date=now.date() - timedelta(days=DIVIDEND_LOOKBACK_DAYS),
+                to_date=until)
         except KisApiError as e:
             log.error("%s: dividend schedule failed: %s", symbol, e)
+            continue
+        with storage.connect() as conn:
+            storage.save_dividend_schedule(conn, symbol, fetched, now.isoformat())
+        events += [dict(e, symbol=symbol) for e in fetched]
     for d in schedule.upcoming_dividends(events, holdings, today):
         when = f" · 지급 {d['pay_date']}" if d["pay_date"] else ""
         per = f"주당 {d['per_share']:,}원" if d["per_share"] else "금액 미정"

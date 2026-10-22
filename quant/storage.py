@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from quant import transfers
+
 DB_PATH = Path(__file__).parent.parent / "data" / "quant.db"
 
 log = logging.getLogger(__name__)
@@ -142,6 +144,30 @@ CREATE TABLE IF NOT EXISTS rebalance_preview (
     account     TEXT PRIMARY KEY,
     payload     TEXT NOT NULL,      -- JSON, Decimals as strings
     computed_at TEXT NOT NULL
+);
+
+-- Announced dividends on held symbols, with pay dates (kis_client.
+-- dividend_schedule). Unlike dividend_events (payout history for the
+-- signal's old yield term) this keeps unset amounts and pay dates: the
+-- tracker lists upcoming ones and quant/transfers.py expects paid ones.
+CREATE TABLE IF NOT EXISTS dividend_schedule (
+    symbol      TEXT NOT NULL,
+    record_date TEXT NOT NULL,
+    amount      TEXT NOT NULL,      -- per share, "0" until announced
+    pay_date    TEXT,
+    fetched_at  TEXT NOT NULL,
+    PRIMARY KEY (symbol, record_date)
+);
+
+-- The user's answer to a suspected transfer (quant/transfers.py) that was
+-- not a transfer, so the tracker stops asking. Recording one as a deposit
+-- needs no row here: the cashflow itself explains the change away.
+CREATE TABLE IF NOT EXISTS transfer_reviews (
+    account     TEXT NOT NULL,
+    date        TEXT NOT NULL,
+    amount      TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL,
+    PRIMARY KEY (account, date)
 );
 
 CREATE INDEX IF NOT EXISTS idx_cashflows_date ON cashflows(trade_date);
@@ -496,6 +522,58 @@ def save_preview(conn: sqlite3.Connection, account: str, payload: dict | None,
             "INSERT INTO rebalance_preview (account, payload, computed_at) "
             "VALUES (?, ?, ?)",
             (account, json.dumps(payload, ensure_ascii=False), computed_at))
+
+
+def transfer_suspects(conn: sqlite3.Connection, account: str) -> list[dict]:
+    """quant/transfers.py's labels for one account's whole snapshot history,
+    minus the ones the user already said weren't transfers.
+
+    A foreign-cash account (positions priced in another currency, as
+    kis-main-overseas is) is compared in that currency, so a rate move
+    alone is not flagged.
+    """
+    snaps = [{"date": r["trade_date"], "cash": Decimal(r["cash"]),
+              "total": Decimal(r["total"]), "positions": json.loads(r["positions"])}
+             for r in conn.execute(
+                 "SELECT trade_date, cash, total, positions FROM portfolio "
+                 "WHERE account = ? ORDER BY trade_date", (account,))]
+    if len(snaps) < 2:
+        return []
+    deposits = [(r["trade_date"], Decimal(r["amount"])) for r in conn.execute(
+        "SELECT trade_date, amount FROM cashflows WHERE account = ? "
+        "AND kind = 'deposit'", (account,))]
+    foreign = any(p.get("currency", "KRW") != "KRW" for p in snaps[-1]["positions"])
+    paid = transfers.expected_dividends(snaps, load_dividend_schedule(conn))
+    reviewed = {r["date"] for r in conn.execute(
+        "SELECT date FROM transfer_reviews WHERE account = ?", (account,))}
+    return [dict(c, account=account)
+            for c in transfers.classify(transfers.steps(snaps, deposits, paid, foreign))
+            if c["date"] not in reviewed]
+
+
+def save_transfer_review(conn: sqlite3.Connection, account: str, date: str,
+                         amount: Decimal, reviewed_at: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO transfer_reviews (account, date, amount, reviewed_at) "
+        "VALUES (?, ?, ?, ?)", (account, date, str(amount), reviewed_at))
+
+
+def save_dividend_schedule(conn: sqlite3.Connection, symbol: str,
+                           events: list[dict], fetched_at: str) -> None:
+    """events: [{"record_date", "amount" (Decimal), "pay_date"}]. Upserts:
+    an amount or pay date announced later replaces the earlier row."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO dividend_schedule "
+        "(symbol, record_date, amount, pay_date, fetched_at) VALUES (?, ?, ?, ?, ?)",
+        [(symbol, e["record_date"], str(e["amount"]), e.get("pay_date"), fetched_at)
+         for e in events],
+    )
+
+
+def load_dividend_schedule(conn: sqlite3.Connection) -> list[dict]:
+    return [{"symbol": r["symbol"], "record_date": r["record_date"],
+             "amount": Decimal(r["amount"]), "pay_date": r["pay_date"]}
+            for r in conn.execute("SELECT * FROM dividend_schedule")]
 
 
 if __name__ == "__main__":

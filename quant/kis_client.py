@@ -870,7 +870,8 @@ def dividend_schedule(client: "KisClient", symbol: str, *,
     Same endpoint as dividend_events(), which drops zero-amount rows since
     it feeds payout history; an upcoming record date is announced first
     and gets its per_sto_divi_amt later (verified live 2026-10-23: future
-    record dates come back with "0"). Returns [{"record_date", "amount"
+    record dates come back with "0"; divi_pay_dt is slash-separated, unlike
+    record_date). Returns [{"record_date", "amount"
     (Decimal, 0 = not set yet), "pay_date" ("YYYY-MM-DD" or None)}].
     """
     resp = client.get(
@@ -887,7 +888,9 @@ def dividend_schedule(client: "KisClient", symbol: str, *,
     )
 
     def iso(raw: str | None) -> str | None:
-        return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}" if raw else None
+        # record_date comes as "20260930", divi_pay_dt as "2026/09/30"
+        digits = "".join(ch for ch in raw or "" if ch.isdigit())
+        return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}" if len(digits) == 8 else None
 
     return [{"record_date": iso(row["record_date"]),
              "amount": Decimal(row.get("per_sto_divi_amt") or "0"),
