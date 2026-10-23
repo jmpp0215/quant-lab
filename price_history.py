@@ -1,7 +1,7 @@
 """Long daily price history for whatever the accounts hold today, plus the
 proxy indices and USD/KRW - the input to the tracker's crisis replay and
-holding-based return range (quant/stress.py) - and the US fear & greed
-inputs (quant/sentiment.py), refetched daily.
+holding-based return range (quant/stress.py) - and the US and Korean fear &
+greed inputs (quant/sentiment.py), refetched daily.
 
     python price_history.py      fetch what's missing or stale (daily.py does this after the close)
 
@@ -28,7 +28,7 @@ from quant import market, sentiment, storage, stress
 
 DIR = storage.DB_PATH.parent / "price_history"
 TICKERS = DIR / "tickers.json"
-START = "2007-01-01"
+START = "2004-01-01"   # the Korean fear & greed index reaches back through 2008
 MAX_AGE_DAYS = 7
 PAUSE = 1.0
 
@@ -64,7 +64,7 @@ def load_all() -> tuple[dict, dict]:
     """(series by ticker, holding symbol -> ticker or None) from the cache."""
     tickers = json.loads(TICKERS.read_text())["map"] if TICKERS.exists() else {}
     series = {}
-    for t in set(stress.PROXIES) | set(sentiment.TICKERS) | {t for t in tickers.values() if t}:
+    for t in set(stress.PROXIES) | set(sentiment.TICKERS) | set(sentiment.KR_TICKERS) | {t for t in tickers.values() if t}:
         s = load(t)
         if s and s[0]:
             series[t] = s
@@ -98,8 +98,8 @@ def run(today: date) -> None:
         held = held_symbols(conn)
     # The fear & greed inputs are refetched every day; the crisis replay's
     # weekly refresh is enough for everything else.
-    daily = set(sentiment.TICKERS)
-    for t in dict.fromkeys(stress.PROXIES + sentiment.TICKERS):
+    daily = set(sentiment.TICKERS) | set(sentiment.KR_TICKERS)
+    for t in dict.fromkeys(stress.PROXIES + sentiment.TICKERS + sentiment.KR_TICKERS):
         if not _fresh(DIR / f"{t}.csv", today, 1 if t in daily else MAX_AGE_DAYS):
             close = _fetch(t)
             if close is not None:

@@ -624,7 +624,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         + _holding_expected(exp_rows, value_by_account, series, tickers, today.isoformat()),
         "stress": _stress(exp_rows, series, tickers),
         "news": _news(),
-        "fear_greed": sentiment.fear_greed(series),
+        "fear_greed": {"kr": sentiment.kr_fear_greed(series), "us": sentiment.fear_greed(series)},
         "liquidity": _liquidity(conn, latest.get(LIQUIDITY_ACCOUNT)),
     }
     risk["grade"] = _grade(risk, top_w, exp_rows)

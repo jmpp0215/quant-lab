@@ -52,3 +52,36 @@ class TestFearGreed:
         n = 200
         out = sentiment.fear_greed(make(n, *([[100.0] * n] * 5)))
         assert out == {}
+
+
+def kr(n, ks, fx, bond=None):
+    ds = days(n)
+    out = {"^KS11": (ds, ks), "KRW=X": (ds, fx)}
+    if bond is not None:
+        out["114260.KS"] = (ds, bond)
+    return out
+
+
+class TestKorea:
+    def test_crash_with_won_selloff_reads_fear(self):
+        n = 800
+        ks = [2000 * 1.0003 ** i * (1 + 0.003 * (-1) ** i) for i in range(n)]
+        ks[-20:] = [ks[-21] * 0.97 ** k * (1 + 0.02 * (-1) ** k) for k in range(1, 21)]
+        fx = [1200.0] * (n - 20) + [1200 * 1.006 ** k for k in range(1, 21)]
+        out = sentiment.kr_fear_greed(kr(n, ks, fx, [100.0] * n))
+        assert out["score"] < 10 and len(out["components"]) == 4
+
+    def test_three_components_without_bond_series(self):
+        n = 800
+        ks = [2000 * 1.0003 ** i * (1 + 0.003 * (-1) ** i) for i in range(n)]
+        out = sentiment.kr_fear_greed(kr(n, ks, [1200.0 + i * 0.01 for i in range(n)]))
+        assert out and out["components"][3]["score"] is None
+
+    def test_history_spans_every_computable_day(self):
+        n = 800
+        ks = [2000 * 1.0003 ** i * (1 + 0.003 * (-1) ** i) for i in range(n)]
+        h = sentiment.kr_history(kr(n, ks, [1200.0 + i * 0.01 for i in range(n)]))
+        assert len(h) > sentiment.HISTORY and all(0 <= s <= 100 for _, s in h)
+
+    def test_missing_input_is_empty(self):
+        assert sentiment.kr_fear_greed({}) == {} and sentiment.kr_history({}) == []
