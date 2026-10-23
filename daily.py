@@ -17,6 +17,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import backups
+import news_risk
 import price_history
 from quant import (
     accounts,
@@ -457,6 +458,12 @@ def main() -> int:
         except Exception as e:
             log.exception("price history fetch failed")
             problem_accounts.append(f"[price history] {e}")
+        try:
+            # Display only; a no-op without ANTHROPIC_API_KEY.
+            news_risk.run(datetime.now(market.KST).date().isoformat())
+        except Exception as e:
+            log.exception("news risk failed")
+            problem_accounts.append(f"[news risk] {e}")
         try:
             backups.run(datetime.now(market.KST).date().isoformat())
         except Exception as e:

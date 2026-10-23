@@ -105,6 +105,9 @@ CASHFLOW_ACCOUNTS = ("kis-isa", "kis-main", "kis-main-overseas", "toss-bot")
 # holdings' own history over this many years (price_history.py's cache).
 HOLDING_YEARS = 10
 
+# news_risk.py's daily picks (Claude + web search); the newest file is shown.
+NEWS_DIR = storage.DB_PATH.parent / "news_risk"
+
 LABELS = {"kis-isa": "ISA (KIS)", "kis-main": "KIS 국내",
           "kis-main-overseas": "KIS 해외", "toss-bot": "토스"}
 
@@ -224,6 +227,11 @@ def _holding_expected(exp_rows: list[dict], values: dict, series: dict, tickers:
                     "y1_p5": h[250]["p5"], "y1_p50": h[250]["p50"], "y1_p5_krw": v * h[250]["p5"],
                     "p_y1_below_20": h[250]["p_below_20"] * 100, "proxied": h["proxied"]})
     return out
+
+
+def _news() -> dict | None:
+    files = sorted(NEWS_DIR.glob("*.json")) if NEWS_DIR.exists() else []
+    return json.loads(files[-1].read_text()) if files else None
 
 
 def _stress(exp_rows: list[dict], series: dict, tickers: dict) -> list[dict]:
@@ -588,6 +596,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
             "expected": _expected(value_by_account)
             + _holding_expected(exp_rows, value_by_account, series, tickers, today.isoformat()),
             "stress": _stress(exp_rows, series, tickers),
+            "news": _news(),
             "liquidity": _liquidity(conn, latest.get(LIQUIDITY_ACCOUNT)),
         },
         "goal": goal,
