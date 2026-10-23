@@ -326,6 +326,9 @@ section[hidden] { display: none; }
     <div class="card"><h2>노출 지도</h2><div class="sub">전 계좌 합산 · ETF는 추종 대상 기준 · (H) 환헤지는 원화</div>
       <div id="exposure"></div></div>
     <div class="card"><h2>집중도</h2><div id="concentration"></div></div>
+    <div class="card"><h2>예상 범위</h2><div class="sub">전략별 백테스트 분포 기준 · 지금 계좌 금액에 대입</div>
+      <div id="expected"></div></div>
+    <div class="card"><h2>유동성</h2><div id="liquidity"></div></div>
     <div class="card"><h2>계좌별 리스크</h2><div class="sub" id="acctRiskSub"></div><div id="acctRisk"></div></div>
     <div class="card"><h2>고점 대비 낙폭</h2><div class="chart" id="chartDD"></div></div>
     <div class="card"><h2>보유 비중</h2><div class="sub">전 계좌 합산, 해외는 원화 환산</div>
@@ -787,6 +790,8 @@ function render() {
   renderBars($("holdings"), r.holdings);
   renderExposure(r.exposure);
   renderAccountRisk(r.accounts);
+  renderExpected(r.expected);
+  renderLiquidity(r.liquidity);
 
   renderSuspects(d);
   renderDividends(d);
@@ -943,6 +948,56 @@ function renderAccountRisk(ar) {
     w.textContent = `표본이 ${ar.days}일이라 참고용이에요. 백테스트(2021~2026 월간)에서는 PBR·모멘텀 상관이 +0.12였어요.`;
     host.append(w);
   }
+}
+
+function renderExpected(rows) {
+  const host = $("expected"); host.textContent = "";
+  if (!rows.length) { emptyState(host, "백테스트 분포 파일이 없어요."); return; }
+  const table = document.createElement("table"); table.className = "fx";
+  const th = table.createTHead().insertRow();
+  for (const h of ["계좌", "1개월 최악 5%", "1년 범위 (5%~중앙)", "1년 뒤 −20% 이하"]) {
+    const c = document.createElement("th"); c.textContent = h; th.append(c);
+  }
+  const body = table.createTBody();
+  for (const e of rows) {
+    const tr = body.insertRow();
+    tr.insertCell().textContent = e.account;
+    const m = tr.insertCell(); m.textContent = signedPct(e.m1_p5, 1);
+    const sm = document.createElement("small"); sm.className = "muted"; sm.style.display = "block";
+    sm.textContent = `${e.m1_p5_krw < 0 ? "−" : ""}${man(Math.abs(e.m1_p5_krw))}원`; m.append(sm);
+    tr.insertCell().textContent = `${signedPct(e.y1_p5, 0)} ~ ${signedPct(e.y1_p50, 0)}`;
+    tr.insertCell().textContent = e.p_y1_below_20 == null ? "—"
+      : e.p_y1_below_20 < 5 ? "5% 미만" : `약 ${Math.round(e.p_y1_below_20)}%`;
+  }
+  host.append(table);
+  const note = document.createElement("p"); note.className = "fx-note";
+  note.textContent = `${rows.map(e => `${e.account}: ${e.label}`).join(" · ")}. 과거 분포라 실제 위기는 이보다 클 수 있어요. 해외 계좌는 백테스트가 없어 빠졌어요.`;
+  host.append(note);
+}
+
+function renderLiquidity(l) {
+  const host = $("liquidity"); host.textContent = "";
+  if (!l) { emptyState(host, "거래대금 데이터가 없어요."); return; }
+  const p = document.createElement("p"); p.className = "fx-note"; p.style.marginTop = "0";
+  p.textContent = `${l.account} ${l.n}종목을 하루 거래대금의 ${pct(l.participation, 0)}까지만 판다고 가정하면, `
+    + (l.slow_share ? `${pct(l.slow_share, 0)}가 하루를 넘겨요.` : `모두 하루 안에 팔 수 있어요 (가장 느린 종목 ${l.max_days.toFixed(2)}일).`);
+  host.append(p);
+  if (l.one_day_at) {
+    const q = document.createElement("p"); q.className = "fx-note";
+    q.textContent = `계좌가 약 ${man(l.one_day_at)}원이 되면 가장 느린 종목도 하루가 걸리기 시작해요 (최근 ${l.adv_days}일 평균 거래대금 기준).`;
+    host.append(q);
+  }
+  const bars = document.createElement("div"); bars.className = "bars"; bars.style.marginTop = "6px";
+  const maxD = Math.max(...l.rows.map(r => r.days || 0), 1e-9);
+  for (const r of l.rows.slice(0, 5)) {
+    const b = document.createElement("div"); b.className = "bar";
+    const n = document.createElement("div"); n.className = "n"; n.textContent = r.name;
+    const t = document.createElement("div"); t.className = "track";
+    const f = document.createElement("div"); f.className = "fill"; f.style.width = ((r.days || 0) / maxD * 100) + "%"; t.append(f);
+    const v = document.createElement("div"); v.className = "pct"; v.textContent = r.days == null ? "—" : r.days.toFixed(2) + "일";
+    b.append(n, t, v); bars.append(b);
+  }
+  host.append(bars);
 }
 
 const SLOT = ["var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)", "var(--c5)", "var(--text-3)"];

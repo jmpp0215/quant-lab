@@ -387,3 +387,13 @@ class TestAccountRisk:
     def test_too_little_history(self):
         r = tracker.account_risk({"a": self.idx(1, 1.1)}, {"a": D(1)})
         assert r["accounts"] == {} and r["portfolio_vol"] is None
+
+
+class TestDaysToExit:
+    def test_days_at_ten_percent_of_daily_value_slowest_first(self):
+        rows = tracker.days_to_exit(
+            [{"symbol": "A", "name": "에이", "value": D(1_000_000)},
+             {"symbol": "B", "name": "비", "value": D(500_000)},
+             {"symbol": "C", "name": "씨", "value": D(1)}],
+            {"A": D(100_000_000), "B": D(1_000_000)})
+        assert [(r["symbol"], r["days"]) for r in rows] == [("C", None), ("B", D(5)), ("A", D("0.1"))]

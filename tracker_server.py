@@ -142,6 +142,62 @@ def _account_risk(own: dict, values: dict) -> dict:
                      if all(r["accounts"][x]["vol"] >= 0.01 for x in k.split("|"))]}
 
 
+LIQUIDITY_ACCOUNT = "toss-bot"     # small-cap PBR names; ETFs and US large caps aren't the issue
+PARTICIPATION = Decimal("0.10")
+ADV_DAYS = 20
+
+
+def _liquidity(conn: sqlite3.Connection, row) -> dict | None:
+    """Days to exit the PBR account at 10% of each name's 20-day average
+    traded value (pead_price_raw, refreshed daily)."""
+    if row is None:
+        return None
+    dates = [r[0] for r in conn.execute(
+        "SELECT DISTINCT date FROM pead_price_raw ORDER BY date DESC LIMIT ?", (ADV_DAYS,))]
+    if not dates:
+        return None
+    adv = {sym: Decimal(str(v)) for sym, v in conn.execute(
+        "SELECT symbol, AVG(trading_value) FROM pead_price_raw WHERE date >= ? "
+        "AND trading_value > 0 GROUP BY symbol", (min(dates),))}
+    positions = [{"symbol": p["symbol"], "name": p.get("name") or p["symbol"],
+                  "value": Decimal(p["price"]) * p["qty"]} for p in json.loads(row["positions"])]
+    rows = tracker.days_to_exit(positions, adv, PARTICIPATION)
+    total = sum((r["value"] for r in rows), Decimal("0"))
+    slow = sum((r["value"] for r in rows if r["days"] is None or r["days"] > 1), Decimal("0"))
+    return {"account": LABELS.get(row["account"]), "participation": _num(PARTICIPATION),
+            "adv_days": len(dates), "n": len(rows),
+            "slow_share": _num(slow / total) if total else None,
+            "max_days": _num(max((r["days"] for r in rows if r["days"] is not None), default=None)),
+            # Days scale linearly with position size: the account value at which
+            # the slowest name would need a full trading day to exit.
+            "one_day_at": _num(total / max(r["days"] for r in rows if r["days"])) if any(
+                r["days"] for r in rows) else None,
+            "rows": [{"name": r["name"], "value": _num(r["value"]), "adv": _num(r["adv"]),
+                      "days": _num(r["days"])} for r in rows[:8]]}
+
+
+def _expected(values: dict) -> list[dict]:
+    """1-month and 1-year downside from each strategy's backtest fan, in % and
+    at the account's current value."""
+    out = []
+    for account, (name, _start) in FANS.items():
+        path = FAN_DIR / f"{name}.json"
+        if not path.exists() or account not in values:
+            continue
+        fan = json.loads(path.read_text())
+        i21 = fan["days"].index(21) if 21 in fan["days"] else None
+        i250 = fan["days"].index(250) if 250 in fan["days"] else None
+        if i21 is None or i250 is None:
+            continue
+        v = float(values[account])
+        out.append({"account": LABELS.get(account), "label": fan["label"], "value": v,
+                    "m1_p5": fan["p5"][i21], "m1_p5_krw": v * fan["p5"][i21],
+                    "y1_p5": fan["p5"][i250], "y1_p50": fan["p50"][i250],
+                    "y1_p5_krw": v * fan["p5"][i250],
+                    "p_y1_below_20": tracker.fan_percentile(fan, 250, -0.20)})
+    return out
+
+
 def _benchmarks(dates: list[str]) -> list[dict]:
     out = []
     for symbol, label in BENCHMARKS:
@@ -481,6 +537,8 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
             "holdings": [{"name": n, "weight": _num(w)} for n, w in weights],
             "exposure": exposure,
             "accounts": _account_risk(own_by_account, value_by_account),
+            "expected": _expected(value_by_account),
+            "liquidity": _liquidity(conn, latest.get(LIQUIDITY_ACCOUNT)),
         },
         "goal": goal,
         "isa": isa,

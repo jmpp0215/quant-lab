@@ -472,6 +472,23 @@ def account_risk(index: dict[str, list[tuple[str, Decimal]]],
     return out
 
 
+def days_to_exit(positions: list[dict], avg_value: dict[str, Decimal],
+                 participation: Decimal = Decimal("0.10")) -> list[dict]:
+    """Trading days to sell each position without exceeding `participation`
+    of its average daily traded value, slowest first.
+
+    positions: {"symbol", "name", "value"} in KRW; avg_value: symbol -> mean
+    daily traded value (KRW). A symbol with no trading history gets None.
+    """
+    out = []
+    for p in positions:
+        adv = avg_value.get(p["symbol"])
+        days = p["value"] / (adv * participation) if adv else None
+        out.append({"symbol": p["symbol"], "name": p["name"], "value": p["value"],
+                    "adv": adv, "days": days})
+    return sorted(out, key=lambda r: -(r["days"] if r["days"] is not None else Decimal("1e9")))
+
+
 def hhi(weights: list[Decimal]) -> Decimal:
     """Herfindahl index of weights summing to 1: 1/N if equal, 1 if all in one."""
     return sum((w * w for w in weights), Decimal("0"))
