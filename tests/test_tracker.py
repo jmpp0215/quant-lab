@@ -361,3 +361,29 @@ class TestExposures:
         b = dict(tracker.breakdown(tracker.exposures(self.ROWS), "currency"))
         assert sum(b.values()) == 1
         assert b["USD"] == (D(1000) + D(13000) + D(6500)) / (D(3000) + D(19500))
+
+
+class TestAccountRisk:
+    def idx(self, *vals):
+        return [(f"d{i}", D(v)) for i, v in enumerate(vals)]
+
+    def test_risk_shares_sum_to_one_and_cash_account_adds_nothing(self):
+        index = {"a": self.idx(1, 1.02, 0.99, 1.03, 1.0),
+                 "b": self.idx(1, 0.99, 1.01, 0.98, 1.0),
+                 "cash": self.idx(1, 1, 1, 1, 1)}
+        r = tracker.account_risk(index, {"a": D(600), "b": D(300), "cash": D(100)})
+
+        assert set(r["accounts"]) == {"a", "b"}
+        assert sum(x["risk_share"] for x in r["accounts"].values()) == pytest.approx(1.0)
+        assert r["corr"]["a|b"] < 0          # they move opposite here
+        assert r["accounts"]["a"]["weight"] == pytest.approx(0.6)
+
+    def test_only_common_dates_are_used(self):
+        index = {"a": [("d0", D(1)), ("d1", D(1.1)), ("d2", D(1.21)), ("d3", D(1.1))],
+                 "b": [("d0", D(1)), ("d2", D(1.05)), ("d3", D(1.0))]}
+        r = tracker.account_risk(index, {"a": D(1), "b": D(1)})
+        assert r["days"] == 2
+
+    def test_too_little_history(self):
+        r = tracker.account_risk({"a": self.idx(1, 1.1)}, {"a": D(1)})
+        assert r["accounts"] == {} and r["portfolio_vol"] is None

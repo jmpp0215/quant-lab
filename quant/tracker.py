@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from quant import momentum
+from quant import allocation, momentum
 
 TRADING_DAYS = 252
 
@@ -431,6 +431,45 @@ def breakdown(rows: list[dict], key: str) -> list[tuple[str, Decimal]]:
     for r in rows:
         acc[r[key]] = acc.get(r[key], Decimal("0")) + r["value"]
     return sorted(((k, v / total) for k, v in acc.items()), key=lambda kv: -kv[1]) if total else []
+
+
+def account_risk(index: dict[str, list[tuple[str, Decimal]]],
+                 values: dict[str, Decimal]) -> dict:
+    """Per-account volatility, drawdown, correlation and share of portfolio risk.
+
+    index: account -> its own deposit-neutral growth index (growth_index for
+    that account alone); values: account -> current KRW value (the weights).
+    Returns are taken between dates every account with variance has a
+    snapshot on, so a missed day becomes one longer step for all of them.
+    Accounts that never moved (cash only) are kept in the weights but left
+    out of the covariance, adding nothing to risk.
+    """
+    moving = [a for a, s in index.items()
+              if len({v for _, v in s}) > 1 and values.get(a)]
+    common = sorted(set.intersection(*(set(d for d, _ in index[a]) for a in moving))) if moving else []
+    rets = {}
+    for a in moving:
+        by_date = dict(index[a])
+        series = [float(by_date[d]) for d in common]
+        rets[a] = [b / x - 1 for x, b in zip(series, series[1:], strict=False)]
+    total = sum((v for v in values.values()), Decimal("0"))
+    out = {"days": max(len(common) - 1, 0), "accounts": {}, "corr": {}, "portfolio_vol": None}
+    if len(common) < 3 or not total:
+        return out
+    cov = allocation.covariance_matrix(rets, moving)
+    w = [float(values[a] / total) for a in moving]
+    contrib = allocation.risk_contributions(w, cov)
+    port = allocation.portfolio_volatility(w, cov)
+    for i, a in enumerate(moving):
+        out["accounts"][a] = {"vol": cov[i][i] ** 0.5, "weight": w[i],
+                              "risk_share": contrib[i] / port if port else 0.0,
+                              "mdd": float(max_drawdown(index[a]) or 0)}
+        for j, b in enumerate(moving):
+            if j > i:
+                den = (cov[i][i] * cov[j][j]) ** 0.5
+                out["corr"][f"{a}|{b}"] = cov[i][j] / den if den else None
+    out["portfolio_vol"] = port
+    return out
 
 
 def hhi(weights: list[Decimal]) -> Decimal:

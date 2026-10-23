@@ -131,6 +131,17 @@ def _fan(account: str, own_index: list[tuple[str, Decimal]]) -> dict | None:
                   "percentile": tracker.fan_percentile(fan, last["k"], last["ret"])}
 
 
+def _account_risk(own: dict, values: dict) -> dict:
+    r = tracker.account_risk(own, values)
+    return {"days": r["days"], "portfolio_vol": r["portfolio_vol"],
+            "accounts": [{"account": a, "label": LABELS.get(a, a)} | v
+                         for a, v in sorted(r["accounts"].items(), key=lambda kv: -kv[1]["risk_share"])],
+            # Pairs with a near-motionless account (cash only) say nothing.
+            "corr": [{"a": LABELS.get(k.split("|")[0]), "b": LABELS.get(k.split("|")[1]), "corr": c}
+                     for k, c in r["corr"].items()
+                     if all(r["accounts"][x]["vol"] >= 0.01 for x in k.split("|"))]}
+
+
 def _benchmarks(dates: list[str]) -> list[dict]:
     out = []
     for symbol, label in BENCHMARKS:
@@ -250,6 +261,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                   for s_ in snaps for p in json.loads(s_["positions"])}
 
     account_rows = []
+    own_by_account, value_by_account = {}, {}
     for a in names:
         r = returns.compute(by_account[a], [
             (f["trade_date"], Decimal(f["amount"]), f["kind"]) for f in flows
@@ -257,6 +269,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         series = by_account[a]
         prev = series[-2][1] if len(series) > 1 else None
         own = tracker.growth_index({a: series}, {a: deposits[a]})
+        own_by_account[a], value_by_account[a] = own, series[-1][1]
         row = latest[a]
         total_a = Decimal(row["total"])
         held_a = tracker.holdings([{"total": total_a, "cash": Decimal(row["cash"]),
@@ -467,6 +480,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
             "hhi": _num(tracker.hhi([w for _, w in weights])) if weights else None,
             "holdings": [{"name": n, "weight": _num(w)} for n, w in weights],
             "exposure": exposure,
+            "accounts": _account_risk(own_by_account, value_by_account),
         },
         "goal": goal,
         "isa": isa,

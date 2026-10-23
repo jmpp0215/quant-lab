@@ -326,6 +326,7 @@ section[hidden] { display: none; }
     <div class="card"><h2>노출 지도</h2><div class="sub">전 계좌 합산 · ETF는 추종 대상 기준 · (H) 환헤지는 원화</div>
       <div id="exposure"></div></div>
     <div class="card"><h2>집중도</h2><div id="concentration"></div></div>
+    <div class="card"><h2>계좌별 리스크</h2><div class="sub" id="acctRiskSub"></div><div id="acctRisk"></div></div>
     <div class="card"><h2>고점 대비 낙폭</h2><div class="chart" id="chartDD"></div></div>
     <div class="card"><h2>보유 비중</h2><div class="sub">전 계좌 합산, 해외는 원화 환산</div>
       <div class="bars" id="holdings"></div></div>
@@ -785,6 +786,7 @@ function render() {
 
   renderBars($("holdings"), r.holdings);
   renderExposure(r.exposure);
+  renderAccountRisk(r.accounts);
 
   renderSuspects(d);
   renderDividends(d);
@@ -891,6 +893,55 @@ function divergingBars(host, items) {
     const v = document.createElement("div"); v.className = "v delta " + dir(Math.round(it.amount));
     v.textContent = `${arrow(Math.round(it.amount))}${man(Math.abs(it.amount))}`;
     row.append(n, t, v); host.append(row);
+  }
+}
+
+// Weight vs share of portfolio volatility per account, then the pairwise
+// correlations of their daily returns.
+function renderAccountRisk(ar) {
+  const host = $("acctRisk"); host.textContent = "";
+  $("acctRiskSub").textContent = `같은 날 기록이 있는 ${ar.days}거래일 기준 · 전체 연환산 변동성 ${pct(ar.portfolio_vol, 1)}`;
+  if (!ar.accounts.length) { emptyState(host, "기록이 더 쌓여야 계산할 수 있어요."); return; }
+  const table = document.createElement("table"); table.className = "fx";
+  const th = table.createTHead().insertRow();
+  for (const h of ["계좌", "금액 비중", "리스크 비중", "변동성", "MDD"]) {
+    const c = document.createElement("th"); c.textContent = h; th.append(c);
+  }
+  const body = table.createTBody();
+  for (const a of ar.accounts) {
+    const tr = body.insertRow();
+    tr.insertCell().textContent = a.label;
+    tr.insertCell().textContent = pct(a.weight, 0);
+    const rs = tr.insertCell(); rs.textContent = pct(a.risk_share, 0);
+    if (a.risk_share > a.weight + 0.05) rs.style.fontWeight = "700";
+    tr.insertCell().textContent = pct(a.vol, 0);
+    tr.insertCell().textContent = pct(a.mdd, 1);
+  }
+  host.append(table);
+  const note = document.createElement("p"); note.className = "fx-note";
+  const over = ar.accounts.filter(a => a.risk_share > a.weight + 0.05);
+  note.textContent = (over.length ? `${over.map(a => a.label).join(", ")}는 금액보다 리스크 비중이 커요(굵게). ` : "")
+    + "리스크 비중 = 전체 변동성 중 그 계좌 몫(상관관계 포함).";
+  host.append(note);
+  if (ar.corr.length) {
+    const h = document.createElement("h3"); h.className = "fx-note"; h.style.margin = "10px 0 4px";
+    h.textContent = "계좌 간 상관계수 (1 = 똑같이, 0 = 무관, −1 = 반대로)"; host.append(h);
+    const list = document.createElement("div");
+    for (const c of ar.corr) {
+      const row = document.createElement("div"); row.className = "cb";
+      const n = document.createElement("div"); n.className = "n"; n.textContent = `${c.a} · ${c.b}`;
+      const t = document.createElement("div"); t.className = "track";
+      const f = document.createElement("div"); f.className = "fill " + (c.corr >= 0 ? "up" : "down");
+      f.style.background = "var(--accent)"; f.style.width = (Math.min(Math.abs(c.corr), 1) * 50) + "%"; t.append(f);
+      const v = document.createElement("div"); v.className = "v"; v.textContent = c.corr.toFixed(2);
+      row.append(n, t, v); list.append(row);
+    }
+    host.append(list);
+  }
+  if (ar.days < 120) {
+    const w = document.createElement("p"); w.className = "fx-note";
+    w.textContent = `표본이 ${ar.days}일이라 참고용이에요. 백테스트(2021~2026 월간)에서는 PBR·모멘텀 상관이 +0.12였어요.`;
+    host.append(w);
   }
 }
 
