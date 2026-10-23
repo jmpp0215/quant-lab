@@ -28,7 +28,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import price_history
-from quant import config, returns, storage, stress, tracker, transfers
+from quant import config, returns, sentiment, storage, stress, tracker, transfers
 from quant.stock_factors.scripts import pbr_slippage, pbr_storage
 
 log = logging.getLogger("tracker")
@@ -624,6 +624,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         + _holding_expected(exp_rows, value_by_account, series, tickers, today.isoformat()),
         "stress": _stress(exp_rows, series, tickers),
         "news": _news(),
+        "fear_greed": sentiment.fear_greed(series),
         "liquidity": _liquidity(conn, latest.get(LIQUIDITY_ACCOUNT)),
     }
     risk["grade"] = _grade(risk, top_w, exp_rows)

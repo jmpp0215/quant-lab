@@ -1,6 +1,7 @@
 """Long daily price history for whatever the accounts hold today, plus the
 proxy indices and USD/KRW - the input to the tracker's crisis replay and
-holding-based return range (quant/stress.py).
+holding-based return range (quant/stress.py) - and the US fear & greed
+inputs (quant/sentiment.py), refetched daily.
 
     python price_history.py      fetch what's missing or stale (daily.py does this after the close)
 
@@ -23,7 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from quant import market, storage, stress
+from quant import market, sentiment, storage, stress
 
 DIR = storage.DB_PATH.parent / "price_history"
 TICKERS = DIR / "tickers.json"
@@ -63,15 +64,15 @@ def load_all() -> tuple[dict, dict]:
     """(series by ticker, holding symbol -> ticker or None) from the cache."""
     tickers = json.loads(TICKERS.read_text())["map"] if TICKERS.exists() else {}
     series = {}
-    for t in set(stress.PROXIES) | {t for t in tickers.values() if t}:
+    for t in set(stress.PROXIES) | set(sentiment.TICKERS) | {t for t in tickers.values() if t}:
         s = load(t)
         if s and s[0]:
             series[t] = s
     return series, tickers
 
 
-def _fresh(path: Path, today: date) -> bool:
-    return path.exists() and datetime.fromtimestamp(path.stat().st_mtime, market.KST).date() > today - timedelta(days=MAX_AGE_DAYS)
+def _fresh(path: Path, today: date, max_age: int = MAX_AGE_DAYS) -> bool:
+    return path.exists() and datetime.fromtimestamp(path.stat().st_mtime, market.KST).date() > today - timedelta(days=max_age)
 
 
 def _fetch(ticker: str) -> pd.Series | None:
@@ -95,8 +96,11 @@ def run(today: date) -> None:
     state = json.loads(TICKERS.read_text()) if TICKERS.exists() else {"map": {}, "checked": {}}
     with storage.connect() as conn:
         held = held_symbols(conn)
-    for t in stress.PROXIES:
-        if not _fresh(DIR / f"{t}.csv", today):
+    # The fear & greed inputs are refetched every day; the crisis replay's
+    # weekly refresh is enough for everything else.
+    daily = set(sentiment.TICKERS)
+    for t in dict.fromkeys(stress.PROXIES + sentiment.TICKERS):
+        if not _fresh(DIR / f"{t}.csv", today, 1 if t in daily else MAX_AGE_DAYS):
             close = _fetch(t)
             if close is not None:
                 _save(t, close)

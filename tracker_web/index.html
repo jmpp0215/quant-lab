@@ -170,6 +170,13 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .fx-sum .tot { border-top: 1px solid var(--grid); padding-top: 4px; }
 .stress-h { font-size: 15px; margin: 14px 0 4px; }
 .grade-head { display: flex; align-items: baseline; gap: 2px; margin-bottom: 10px; }
+.fg-label { font-size: 16px; font-weight: 600; margin-left: 10px; }
+.fg-gauge { position: relative; height: 8px; border-radius: 4px; margin: 4px 0 4px;
+  background: linear-gradient(90deg, var(--down) 0%, var(--grid) 50%, var(--up) 100%); }
+.fg-mark { position: absolute; top: -4px; width: 4px; height: 16px; margin-left: -2px; border-radius: 2px;
+  background: var(--text); box-shadow: 0 0 0 2px var(--surface); }
+.fg-ends { display: flex; justify-content: space-between; font-size: 11px; }
+.chart.chart-sm { height: 140px; margin-top: 8px; }
 .grade-gpa { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .grade-chip { display: inline-block; min-width: 28px; text-align: center; font-size: 12px; font-weight: 600;
   padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--text); }
@@ -338,6 +345,9 @@ section[hidden] { display: none; }
 
   <section id="tab-risk" hidden>
     <div class="card grade-card"><h2>리스크 관리 점수</h2><div id="grade"></div></div>
+    <div class="card"><h2>미국 시장 탐욕·공포 지수</h2><div class="sub">CNN 방식 근사 · 4개 지표의 최근 2년 내 위치 평균</div>
+      <div id="fearGreed"></div><div class="chart chart-sm" id="chartFG"></div>
+      <p class="fx-note" id="fgNote" hidden>CNN 원본 API는 자동 조회를 막아서 같은 방식으로 직접 계산해요. CNN이 쓰는 7개 중 무료 일별 시세로 되는 4개만 써서 CNN 숫자와 조금 다를 수 있어요. 시장 분위기 참고용이고 점수에는 넣지 않아요.</p></div>
     <div class="tiles">
       <div class="tile"><div class="label">최대 낙폭 (MDD)</div><div class="value" id="mdd">—</div></div>
       <div class="tile"><div class="label">현재 낙폭</div><div class="value" id="curdd">—</div></div>
@@ -822,6 +832,7 @@ function render() {
   renderStress(r.stress);
   renderNews(r.news);
   renderGrade(r.grade);
+  renderFearGreed(r.fear_greed);
 
   renderSuspects(d);
   renderDividends(d);
@@ -1003,6 +1014,38 @@ function renderExpected(rows) {
   const note = document.createElement("p"); note.className = "fx-note";
   note.textContent = `${rows.map(e => `${e.account}: ${e.label}`).join(" · ")}. 과거 분포라 실제 위기는 이보다 클 수 있어요.`;
   host.append(note);
+}
+
+function renderFearGreed(f) {
+  const host = $("fearGreed"); host.textContent = "";
+  const chart = $("chartFG");
+  if (!f || f.score == null) { chart.hidden = true; $("fgNote").hidden = true; emptyState(host, "지수 계산에 필요한 시세가 아직 없어요."); return; }
+  chart.hidden = false;
+  const head = document.createElement("div"); head.className = "grade-head";
+  const big = document.createElement("span"); big.className = "grade-gpa"; big.textContent = Math.round(f.score);
+  const lab = document.createElement("span"); lab.className = "fg-label"; lab.textContent = f.label;
+  head.append(big, lab);
+  const gauge = document.createElement("div"); gauge.className = "fg-gauge";
+  const mark = document.createElement("div"); mark.className = "fg-mark"; mark.style.left = f.score + "%";
+  gauge.append(mark);
+  const ends = document.createElement("div"); ends.className = "fg-ends muted";
+  ends.innerHTML = "<span>극단적 공포</span><span>중립</span><span>극단적 탐욕</span>";
+  const past = document.createElement("p"); past.className = "fx-note";
+  const r_ = v => v == null ? "—" : Math.round(v);
+  past.textContent = `1주 전 ${r_(f.week_ago)} · 1달 전 ${r_(f.month_ago)} · ${f.date} 미국 장 마감 기준`;
+  host.append(head, gauge, ends, past);
+  const list = document.createElement("div"); list.className = "grade-list";
+  for (const c of f.components) {
+    const row = document.createElement("div"); row.className = "grade-row";
+    const n = document.createElement("span"); n.textContent = c.label; n.title = c.note;
+    const v = document.createElement("span"); v.className = "muted"; v.textContent = c.score == null ? "—" : Math.round(c.score);
+    const t = document.createElement("span"); t.className = "grade-chip"; t.textContent = c.score == null ? "—" : (c.score < 45 ? "공포" : c.score < 55 ? "중립" : "탐욕");
+    row.append(n, v, t); list.append(row);
+  }
+  host.append(list);
+  lineChart(chart, f.history.map(([d_, y]) => ({ d: d_, y })),
+            { fmtY: v => Math.round(v), fmtTip: v => `${Math.round(v)}`, ref: { y: 50, label: "중립" } });
+  $("fgNote").hidden = false;
 }
 
 function renderGrade(g) {
