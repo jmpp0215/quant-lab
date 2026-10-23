@@ -168,6 +168,8 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .fx-sum { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 14px; }
 .fx-sum .v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .fx-sum .tot { border-top: 1px solid var(--grid); padding-top: 4px; }
+.stress-h { font-size: 15px; margin: 14px 0 4px; }
+.stress-h:first-child { margin-top: 0; }
 .fx-note { font-size: 12px; color: var(--text-2); margin: 6px 0 0; }
 table.fx { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.fx th { font-weight: 500; color: var(--text-3); font-size: 11px; text-align: right; padding: 0 0 4px; }
@@ -328,6 +330,8 @@ section[hidden] { display: none; }
     <div class="card"><h2>집중도</h2><div id="concentration"></div></div>
     <div class="card"><h2>예상 범위</h2><div class="sub">전략별 백테스트 분포 기준 · 지금 계좌 금액에 대입</div>
       <div id="expected"></div></div>
+    <div class="card"><h2>과거 위기 재생</h2><div class="sub">지금 보유 종목을 그때 그대로 들고 있었다면 · 실제 주가·환율 움직임</div>
+      <div id="stress"></div></div>
     <div class="card"><h2>유동성</h2><div id="liquidity"></div></div>
     <div class="card"><h2>계좌별 리스크</h2><div class="sub" id="acctRiskSub"></div><div id="acctRisk"></div></div>
     <div class="card"><h2>고점 대비 낙폭</h2><div class="chart" id="chartDD"></div></div>
@@ -792,6 +796,7 @@ function render() {
   renderAccountRisk(r.accounts);
   renderExpected(r.expected);
   renderLiquidity(r.liquidity);
+  renderStress(r.stress);
 
   renderSuspects(d);
   renderDividends(d);
@@ -971,8 +976,43 @@ function renderExpected(rows) {
   }
   host.append(table);
   const note = document.createElement("p"); note.className = "fx-note";
-  note.textContent = `${rows.map(e => `${e.account}: ${e.label}`).join(" · ")}. 과거 분포라 실제 위기는 이보다 클 수 있어요. 해외 계좌는 백테스트가 없어 빠졌어요.`;
+  note.textContent = `${rows.map(e => `${e.account}: ${e.label}`).join(" · ")}. 과거 분포라 실제 위기는 이보다 클 수 있어요.`;
   host.append(note);
+}
+
+function renderStress(list) {
+  const host = $("stress"); host.textContent = "";
+  if (!list || !list.length) { emptyState(host, "가격 이력이 아직 없어요 (장 마감 후 daily가 받아요)."); return; }
+  const md = s => s.slice(2).replace(/-/g, ".");
+  for (const c of list) {
+    const h = document.createElement("h3"); h.className = "stress-h";
+    h.textContent = `${c.name} `;
+    const sm = document.createElement("small"); sm.className = "muted";
+    sm.textContent = `${md(c.start)} ~ ${md(c.end)}`; h.append(sm);
+    const head = document.createElement("p"); head.className = "fx-note"; head.style.marginTop = "0";
+    head.textContent = `전체 최저점 ${signedPct(c.worst, 1)} (약 ${c.worst_krw < 0 ? "−" : ""}${man(Math.abs(c.worst_krw))}원, ${md(c.worst_date)}) · 기간 끝 ${signedPct(c.ret, 1)}`;
+    const table = document.createElement("table"); table.className = "fx";
+    const th = table.createTHead().insertRow();
+    for (const t of ["계좌", "최저점", "기간 끝"]) { const x = document.createElement("th"); x.textContent = t; th.append(x); }
+    const body = table.createTBody();
+    for (const a of c.accounts) {
+      const tr = body.insertRow();
+      tr.insertCell().textContent = a.account;
+      tr.insertCell().textContent = signedPct(a.worst, 1);
+      tr.insertCell().textContent = signedPct(a.ret, 1);
+    }
+    host.append(h, head, table);
+    const note = document.createElement("p"); note.className = "fx-note";
+    const parts = [];
+    if (c.losers.length) parts.push("가장 크게 잃은 종목: " + c.losers.map(l => `${l.name} ${l.krw < 0 ? "−" : ""}${man(Math.abs(l.krw))}원`).join(", "));
+    if (c.proxied.length) parts.push(`그때 상장 전이라 지수로 대신한 종목 ${c.proxied.length}개 (${c.proxied.slice(0, 3).join(", ")}${c.proxied.length > 3 ? " 등" : ""})`);
+    if (c.excluded_share > 0.001) parts.push(`대신할 지수가 없어 ${pct(c.excluded_share, 0)} 제외`);
+    note.textContent = parts.join(" · ");
+    if (parts.length) host.append(note);
+  }
+  const foot = document.createElement("p"); foot.className = "fx-note";
+  foot.textContent = "중간에 매매하지 않았다고 가정해요. 해외 종목은 그날 환율로 원화 환산, 환헤지(H) ETF는 환율 영향 없이 계산했어요. 야후 수정주가 기준.";
+  host.append(foot);
 }
 
 function renderLiquidity(l) {

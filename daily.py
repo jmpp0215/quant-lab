@@ -17,6 +17,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import backups
+import price_history
 from quant import (
     accounts,
     candles,
@@ -449,6 +450,13 @@ def main() -> int:
         except Exception as e:
             log.exception("overseas realized fetch failed")
             problem_accounts.append(f"[overseas realized] {e}")
+        try:
+            # Display only (the tracker's crisis replay); after the trading
+            # work so a slow or failing Yahoo fetch can't delay it.
+            price_history.run(datetime.now(market.KST).date())
+        except Exception as e:
+            log.exception("price history fetch failed")
+            problem_accounts.append(f"[price history] {e}")
         try:
             backups.run(datetime.now(market.KST).date().isoformat())
         except Exception as e:

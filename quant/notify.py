@@ -64,6 +64,8 @@ def _problem_ko(text: str) -> str:
         return "일정·미리보기 계산 실패"
     if who == "backup":
         return "DB 백업 실패"
+    if who == "price history":
+        return "위기 재생용 가격 이력 갱신 실패"
     if who == "overseas realized":
         return "해외 실현손익 조회 실패"
     lines = []

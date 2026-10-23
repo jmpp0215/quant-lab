@@ -27,7 +27,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from quant import config, returns, storage, tracker, transfers
+import price_history
+from quant import config, returns, storage, stress, tracker, transfers
 from quant.stock_factors.scripts import pbr_slippage, pbr_storage
 
 log = logging.getLogger("tracker")
@@ -100,6 +101,10 @@ MACRO_EVENTS = [
 
 ISA_ACCOUNT = "kis-isa"   # tax-free dividends, ISA limits
 CASHFLOW_ACCOUNTS = ("kis-isa", "kis-main", "kis-main-overseas", "toss-bot")
+# Accounts without a strategy backtest get a range from their current
+# holdings' own history over this many years (price_history.py's cache).
+HOLDING_YEARS = 10
+
 LABELS = {"kis-isa": "ISA (KIS)", "kis-main": "KIS 국내",
           "kis-main-overseas": "KIS 해외", "toss-bot": "토스"}
 
@@ -195,6 +200,48 @@ def _expected(values: dict) -> list[dict]:
                     "y1_p5": fan["p5"][i250], "y1_p50": fan["p50"][i250],
                     "y1_p5_krw": v * fan["p5"][i250],
                     "p_y1_below_20": tracker.fan_percentile(fan, 250, -0.20)})
+    return out
+
+
+def _holding_expected(exp_rows: list[dict], values: dict, series: dict, tickers: dict,
+                      today: str) -> list[dict]:
+    """Accounts with no strategy backtest (picked by hand): the 1-month and
+    1-year range today's holdings would have had over the last 10 years."""
+    out = []
+    start = f"{int(today[:4]) - HOLDING_YEARS}{today[4:]}"
+    for account in values:
+        if account in FANS:
+            continue
+        rows = [e for e in exp_rows if e["account"] == account]
+        if not any(e["asset"] != "현금" for e in rows):
+            continue
+        h = stress.holding_range(rows, tickers, series, start)
+        if 21 not in h or 250 not in h:
+            continue
+        v = float(values[account])
+        out.append({"account": LABELS.get(account), "label": f"지금 보유 종목 {HOLDING_YEARS}년 기준",
+                    "value": v, "m1_p5": h[21]["p5"], "m1_p5_krw": v * h[21]["p5"],
+                    "y1_p5": h[250]["p5"], "y1_p50": h[250]["p50"], "y1_p5_krw": v * h[250]["p5"],
+                    "p_y1_below_20": h[250]["p_below_20"] * 100, "proxied": h["proxied"]})
+    return out
+
+
+def _stress(exp_rows: list[dict], series: dict, tickers: dict) -> list[dict]:
+    """Each past crisis replayed on today's holdings (quant/stress.py)."""
+    total = float(sum((e["value"] for e in exp_rows), Decimal("0")))
+    invested = {e["account"] for e in exp_rows if e["asset"] != "현금"}
+    out = []
+    for name, start, end in stress.CRISES:
+        r = stress.replay(exp_rows, tickers, series, start, end)
+        if not r:
+            continue
+        out.append({"name": name, "start": start, "end": end, "ret": r["ret"],
+                    "worst": r["worst"], "worst_date": r["worst_date"],
+                    "worst_krw": total * r["worst"],
+                    "accounts": [{"account": LABELS.get(a, a), **v}
+                                 for a, v in r["accounts"].items() if a in invested],
+                    "losers": [{"name": n, "krw": v} for n, v in r["losers"]],
+                    "proxied": r["proxied"], "excluded_share": r["excluded_share"]})
     return out
 
 
@@ -388,6 +435,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                           Decimal("0")))
     total = totals[-1] if totals else Decimal("0")
 
+    series, tickers = price_history.load_all()
     exp_rows = tracker.exposures([
         {"account": r["account"], "total": Decimal(r["total"]), "cash": Decimal(r["cash"]),
          "positions": json.loads(r["positions"])} for r in latest.values()])
@@ -537,7 +585,9 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
             "holdings": [{"name": n, "weight": _num(w)} for n, w in weights],
             "exposure": exposure,
             "accounts": _account_risk(own_by_account, value_by_account),
-            "expected": _expected(value_by_account),
+            "expected": _expected(value_by_account)
+            + _holding_expected(exp_rows, value_by_account, series, tickers, today.isoformat()),
+            "stress": _stress(exp_rows, series, tickers),
             "liquidity": _liquidity(conn, latest.get(LIQUIDITY_ACCOUNT)),
         },
         "goal": goal,
