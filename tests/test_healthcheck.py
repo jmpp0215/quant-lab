@@ -50,7 +50,8 @@ class Env:
         self.python_bad = executable(tmp / "python_bad", "exit 9\n")
         executable(tmp / "launchctl",
                    'f="$FAKE_LC/${2##*/}"; [[ -f $f ]] || exit 113; cat "$f"\n')
-        executable(tmp / "notify", f'print -r -- "$1|$2" >> "{self.notes}"\n')
+        executable(tmp / "notify", f'print -r -- "$1|$2" >> "{self.notes}"\n'
+                                   f'print -r -- "$3" >> "{self.notes}.phone"\n')
         conn = sqlite3.connect(self.db)
         conn.executescript("""
             CREATE TABLE runs (trade_date TEXT PRIMARY KEY, updated_at TEXT, session TEXT, ok INTEGER);
@@ -297,3 +298,17 @@ class TestDefaultLabels:
             env.job(label)
         assert env.run(QL_LABELS=None) == 1
         assert "disclosureflag: plist missing" in env.notes_text()
+
+
+class TestPhoneText:
+    def test_spawn_failures_and_missing_daily_become_one_korean_summary(self, env):
+        for label in ("daily", "pricerefresh"):
+            env.job(label, last=None, extra=("\tlast exit reason = OS_REASON_CODESIGNING",
+                                             "\tjob state = spawn failed"))
+        (env.logs / "cron.log").write_text("")
+        assert env.run() == 1
+        phone = (env.tmp / "notes.txt.phone").read_text()
+        assert phone.startswith("헬스체크 이상")
+        assert "자동 작업 시작 실패: daily, pricerefresh" in phone
+        assert "오늘 daily 기록 없음" in phone
+        assert "OS_REASON" not in phone

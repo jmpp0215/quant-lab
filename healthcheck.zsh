@@ -51,9 +51,9 @@ HEARTBEAT=$STATE_DIR/healthcheck.heartbeat
 problems=()
 add() { problems+=("$1") }
 
-notify() {  # notify TITLE MESSAGE
+notify() {  # notify TITLE MESSAGE [PHONE_TEXT]
     if [[ -n ${QL_NOTIFY:-} ]]; then
-        "$QL_NOTIFY" "$1" "$2"
+        "$QL_NOTIFY" "$1" "$2" "${3:-}"
         return
     fi
     local t=${1//\\/\\\\} m=${2//\\/\\\\}
@@ -62,8 +62,38 @@ notify() {  # notify TITLE MESSAGE
     # Phone copy over iMessage, same as quant/notify.py (IMESSAGE_TO in .env).
     local to=$(/usr/bin/sed -n 's/^IMESSAGE_TO=//p' "$ROOT/.env" 2>/dev/null | /usr/bin/tr -d "\"'" | /usr/bin/head -1)
     if [[ -n $to ]]; then
-        /usr/bin/osascript -e "tell application \"Messages\" to send \"[$t] $m\" to participant \"$to\" of (1st account whose service type = iMessage)" >/dev/null 2>&1
+        local ph=${3:-$2}
+        ph=${ph//\\/\\\\}; ph=${ph//\"/\\\"}
+        /usr/bin/osascript -e "tell application \"Messages\" to send \"[$t] $ph\" to participant \"$to\" of (1st account whose service type = iMessage)" >/dev/null 2>&1
     fi
+}
+
+phone_text() {  # phone_text PROBLEM... -> short Korean lines for the iMessage copy
+    local -aU spawn failed hung unloaded other
+    local daily=0 prices=0 boot=0 p label
+    for p in "$@"; do
+        label=${p%%:*}
+        case $p in
+            *"spawn failed"*|*OS_REASON_CODESIGNING*|*"terminating signal"*) spawn+=($label) ;;
+            *"last exit code"*) failed+=($label) ;;
+            *"still running"*) hung+=($label) ;;
+            *"not loaded"*|*"plist missing"*) unloaded+=($label) ;;
+            "python boot failed"*) boot=1 ;;
+            "daily: no run recorded"*|"daily: ran but no runs row"*) daily=1 ;;
+            prices:*) prices=1 ;;
+            *) other+=("${p[1,50]}") ;;
+        esac
+    done
+    local out="헬스체크 이상"
+    (( boot )) && out+=$'\n'"• 파이썬 실행 실패 (모든 작업 영향)"
+    (( ${#spawn} )) && out+=$'\n'"• 자동 작업 시작 실패: ${(j:, :)spawn} (파이썬 업데이트 영향일 수 있음 → 작업 재등록)"
+    (( ${#failed} )) && out+=$'\n'"• 작업 오류 종료: ${(j:, :)failed}"
+    (( ${#hung} )) && out+=$'\n'"• 작업이 멈춘 듯: ${(j:, :)hung}"
+    (( ${#unloaded} )) && out+=$'\n'"• 작업 미등록: ${(j:, :)unloaded}"
+    (( daily )) && out+=$'\n'"• 오늘 daily 기록 없음"
+    (( prices )) && out+=$'\n'"• 가격 데이터 갱신 안 됨"
+    for p in $other; do out+=$'\n'"• $p"; done
+    print -r -- "$out"
 }
 
 etime_secs() {  # ps etime "[[dd-]hh:]mm:ss" -> seconds
@@ -174,7 +204,7 @@ for p in $problems; do
 done
 if (( ${#problems} )); then
     for p in $problems; do print -r -- "$stamp PROBLEM $p" >> "$HEALTH_LOG"; done
-    (( ${#new} )) && notify "quant-lab health" "${(j:; :)new}"
+    (( ${#new} )) && notify "quant-lab health" "${(j:; :)new}" "$(phone_text "${new[@]}")"
 else
     print -r -- "$stamp OK" >> "$HEALTH_LOG"
 fi

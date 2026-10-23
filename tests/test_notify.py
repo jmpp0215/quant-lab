@@ -58,3 +58,27 @@ class TestPhoneNotifications:
         n.ping()
         n.ping(ok=False)
         assert urls == ["https://hc-ping.com/abc/", "https://hc-ping.com/abc/fail"]
+
+
+class TestPhoneText:
+    def test_daily_problems_become_short_korean_lines(self):
+        from quant.notify import phone_text
+        msg = ("daily.py: [toss-bot] tranche books disagree with the account: {'025530': 74, "
+               "'363280': 46, '001380': -160}; unrecorded transfer? 2026-09-04 +1,104,887 KRW, "
+               "2026-10-16 +283,485 KRW - record or dismiss in the tracker / [kis-isa] api error: boom")
+        assert phone_text(msg) == ("daily 점검 결과\n"
+                                   "• 토스: 장부와 실제 잔고가 3종목 다름 (리밸런싱 전 정리 필요), "
+                                   "기록 안 된 입출금 의심 2건 → 트래커에서 확인\n"
+                                   "• ISA: 증권사 API 오류")
+
+    def test_side_jobs_and_fetch_failure(self):
+        from quant.notify import phone_text
+        assert phone_text("daily.py: [backup] disk full / [upcoming] x") == (
+            "daily 점검 결과\n• DB 백업 실패\n• 일정·미리보기 계산 실패")
+        assert phone_text("daily.py 실패 (candle/calendar fetch): ConnectionError(...)").startswith(
+            "daily 실패: 시세")
+
+    def test_other_messages_pass_through_truncated(self):
+        from quant.notify import PHONE_MAX, phone_text
+        assert phone_text("[kis-isa] 오늘 트랜치 1 리밸런싱 예정") == "[kis-isa] 오늘 트랜치 1 리밸런싱 예정"
+        assert len(phone_text("가" * 1000)) == PHONE_MAX

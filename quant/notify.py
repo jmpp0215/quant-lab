@@ -21,6 +21,7 @@ account data.
 
 import logging
 import os
+import re
 import subprocess
 
 import requests
@@ -49,6 +50,52 @@ def imessage_script(to: str, text: str) -> str:
             "end tell")
 
 
+ACCOUNT_KO = {"toss-bot": "토스", "kis-isa": "ISA", "kis-main": "KIS 국내",
+              "kis-main-overseas": "KIS 해외"}
+PHONE_MAX = 300
+
+
+def _problem_ko(text: str) -> str:
+    """One daily.py problem string -> a short Korean line."""
+    m = re.match(r"\[(?P<who>[^\]]+)\]\s*(?P<what>.*)", text)
+    who, what = (m["who"], m["what"]) if m else ("", text)
+    name = ACCOUNT_KO.get(who, who)
+    if who == "upcoming":
+        return "일정·미리보기 계산 실패"
+    if who == "backup":
+        return "DB 백업 실패"
+    if who == "overseas realized":
+        return "해외 실현손익 조회 실패"
+    lines = []
+    for part in what.split("; "):
+        if part.startswith("tranche books disagree"):
+            n = part.count(":") - 1
+            lines.append(f"장부와 실제 잔고가 {n}종목 다름 (리밸런싱 전 정리 필요)")
+        elif part.startswith("unrecorded transfer?"):
+            n = len(re.findall(r"\d{4}-\d{2}-\d{2}", part))
+            lines.append(f"기록 안 된 입출금 의심 {n}건 → 트래커에서 확인")
+        elif part.startswith("api error"):
+            lines.append("증권사 API 오류")
+        else:
+            lines.append(part[:60])
+    return f"{name}: " + ", ".join(lines) if name else ", ".join(lines)
+
+
+def phone_text(message: str) -> str:
+    """The iMessage version of a notification: short Korean lines, the full
+    text stays in the desktop notification and the logs."""
+    if message.startswith("daily.py 실패"):
+        body = "daily 실패: 시세·휴장일 조회 오류 (오늘 기록 없음)"
+    elif message.startswith("daily.py: "):
+        rest = message[len("daily.py: "):]
+        problems = rest.split(" / ") if rest.startswith("[") else [rest]
+        body = "\n".join("• " + (_problem_ko(p) if p.startswith("[") else p[:80]) for p in problems)
+        body = "daily 점검 결과\n" + body
+    else:
+        body = message
+    return body if len(body) <= PHONE_MAX else body[:PHONE_MAX - 1] + "…"
+
+
 def notify(title: str, message: str) -> None:
     """Best-effort notification; never the reason a run fails."""
     script = (f"display notification {_quote(message)} "
@@ -61,7 +108,7 @@ def notify(title: str, message: str) -> None:
     to = os.environ.get("IMESSAGE_TO")
     if to:
         try:
-            subprocess.run(["osascript", "-e", imessage_script(to, f"[{title}] {message}")],
+            subprocess.run(["osascript", "-e", imessage_script(to, f"[{title}] {phone_text(message)}")],
                            timeout=20, check=False)
         except Exception:
             log.warning("iMessage notification failed", exc_info=True)
