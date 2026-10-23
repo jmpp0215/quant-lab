@@ -32,7 +32,7 @@ from quant import (
     tranche,
 )
 from quant.kis_client import KisApiError, KisClient
-from quant.notify import notify
+from quant.notify import notify, ping
 from quant.stock_factors.scripts import pbr_storage
 from quant.toss_client import TossApiError
 from rebalance_run import plan_for_tranche
@@ -321,6 +321,8 @@ def main() -> int:
             holiday = market_data.holidays(datetime.now(market.KST).strftime("%Y%m%d"))
             if not market.is_business_day(holiday):
                 log.info("market closed today; nothing to record")
+                if slot == "close":
+                    ping()   # the dead man's switch expects a ping every weekday
                 return 0
             session = market.current_session()
             session_closed = session in (None, "afterMarket")
@@ -353,6 +355,8 @@ def main() -> int:
     except Exception as e:
         log.exception("daily run failed")
         notify("quant-lab", f"daily.py 실패 (candle/calendar fetch): {e}")
+        if slot == "close" and target is None:
+            ping(ok=False)
         return 1
 
     overall_ok = True
@@ -453,6 +457,8 @@ def main() -> int:
 
     if problem_accounts:
         notify("quant-lab", "daily.py: " + " / ".join(problem_accounts))
+    if slot == "close" and target is None:
+        ping(ok=overall_ok and not problem_accounts)
 
     # healthcheck.zsh greps today's log for "daily run done" to confirm the
     # 15:40 run happened; the morning run must not satisfy that check.

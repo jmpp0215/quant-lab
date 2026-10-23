@@ -59,6 +59,11 @@ notify() {  # notify TITLE MESSAGE
     local t=${1//\\/\\\\} m=${2//\\/\\\\}
     t=${t//\"/\\\"}; m=${m//\"/\\\"}
     /usr/bin/osascript -e "display notification \"$m\" with title \"$t\"" >/dev/null 2>&1
+    # Phone copy over iMessage, same as quant/notify.py (IMESSAGE_TO in .env).
+    local to=$(/usr/bin/sed -n 's/^IMESSAGE_TO=//p' "$ROOT/.env" 2>/dev/null | /usr/bin/tr -d "\"'" | /usr/bin/head -1)
+    if [[ -n $to ]]; then
+        /usr/bin/osascript -e "tell application \"Messages\" to send \"[$t] $m\" to participant \"$to\" of (1st account whose service type = iMessage)" >/dev/null 2>&1
+    fi
 }
 
 etime_secs() {  # ps etime "[[dd-]hh:]mm:ss" -> seconds

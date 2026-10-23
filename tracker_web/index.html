@@ -1252,18 +1252,36 @@ function renderIsa(d) {
   host.append(edit);
 }
 
+// With the Mac asleep, a request over Tailscale hangs rather than failing,
+// so give up after DATA_WAIT_MS and show the last copy kept on this device.
+const DATA_WAIT_MS = 4000;
+
 async function load() {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), DATA_WAIT_MS);
   try {
-    const res = await fetch("data.json", { cache: "no-store" });
+    const res = await fetch("data.json", { cache: "no-store", signal: abort.signal });
     if (!res.ok) throw new Error(res.status);
     DATA = await res.json();
     $("banner").hidden = true;
-    try { localStorage.setItem("tracker-data", JSON.stringify(DATA)); } catch {}
+    try {
+      localStorage.setItem("tracker-data", JSON.stringify(DATA));
+      localStorage.setItem("tracker-fetched", new Date().toISOString());
+    } catch {}
   } catch {
-    try { DATA = JSON.parse(localStorage.getItem("tracker-data")); } catch {}
+    let fetched = null;
+    try {
+      DATA = JSON.parse(localStorage.getItem("tracker-data"));
+      fetched = localStorage.getItem("tracker-fetched");
+    } catch {}
     const b = $("banner"); b.hidden = false;
-    b.textContent = DATA ? "서버(맥)에 연결할 수 없어요. 마지막으로 받은 데이터를 보여주고 있어요."
-                         : "서버(맥)에 연결할 수 없고 저장된 데이터도 없어요.";
+    const when = fetched ? new Date(fetched).toLocaleString("ko-KR", { month: "numeric", day: "numeric",
+                                                                       hour: "2-digit", minute: "2-digit" }) : null;
+    b.textContent = DATA
+      ? `맥에 연결할 수 없어요 (잠자기 중일 수 있어요). ${DATA.as_of} 기록을 보여주고 있어요${when ? ` · 이 기기에서 ${when}에 받음` : ""}.`
+      : "맥에 연결할 수 없고, 이 기기에 저장된 데이터도 아직 없어요. 맥이 깨어 있을 때 한 번 열어 두면 다음부터는 마지막 기록이 보여요.";
+  } finally {
+    clearTimeout(timer);
   }
   if (DATA) render();
 }

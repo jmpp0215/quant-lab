@@ -25,3 +25,36 @@ class TestQuote:
         quoted = _quote(msg)
         assert quoted.startswith('"') and quoted.endswith('"')
         assert "102110" in quoted
+
+
+class TestPhoneNotifications:
+    def test_imessage_script_quotes_text_and_recipient(self):
+        from quant.notify import imessage_script
+        s = imessage_script("me@example.com", 'drift "x"')
+        assert 'send "drift \\"x\\"" to participant "me@example.com" of s' in s
+        assert "service type = iMessage" in s
+
+    def test_notify_sends_imessage_only_when_configured(self, monkeypatch):
+        from quant import notify as n
+        calls = []
+        monkeypatch.setattr(n.subprocess, "run", lambda args, **kw: calls.append(args[-1]))
+        monkeypatch.delenv("IMESSAGE_TO", raising=False)
+        n.notify("t", "m")
+        assert len(calls) == 1
+
+        monkeypatch.setenv("IMESSAGE_TO", "+821000000000")
+        n.notify("t", "m")
+        assert len(calls) == 3 and "[t] m" in calls[-1]
+
+    def test_ping_success_and_fail_urls(self, monkeypatch):
+        from quant import notify as n
+        urls = []
+        monkeypatch.setattr(n.requests, "get", lambda url, timeout: urls.append(url))
+        monkeypatch.delenv("HEALTHCHECK_PING_URL", raising=False)
+        n.ping()
+        assert urls == []
+
+        monkeypatch.setenv("HEALTHCHECK_PING_URL", "https://hc-ping.com/abc/")
+        n.ping()
+        n.ping(ok=False)
+        assert urls == ["https://hc-ping.com/abc/", "https://hc-ping.com/abc/fail"]
