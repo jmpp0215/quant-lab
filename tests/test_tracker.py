@@ -397,3 +397,25 @@ class TestDaysToExit:
              {"symbol": "C", "name": "씨", "value": D(1)}],
             {"A": D(100_000_000), "B": D(1_000_000)})
         assert [(r["symbol"], r["days"]) for r in rows] == [("C", None), ("B", D(5)), ("A", D("0.1"))]
+
+
+class TestRiskGrade:
+    def test_boundaries_and_floor(self):
+        g = tracker.risk_grade({"single": 0.10, "liquidity": 25})
+        assert [i["grade"] for i in g["items"]] == ["A+", "D"]
+        assert g["gpa"] == pytest.approx((4.3 + 1.0) / 2)
+
+    def test_mean_maps_down_to_letter(self):
+        g = tracker.risk_grade({"single": 0.227, "top5": 0.573, "vol": 0.142,
+                                "crisis": 0.216, "currency": 0.56, "liquidity": 0.18})
+        assert [i["grade"] for i in g["items"]] == ["B", "B+", "B+", "B+", "A", "A+"]
+        assert g["gpa"] == pytest.approx(21.2 / 6)
+        assert g["letter"] == "B+"
+
+    def test_missing_measures_skipped(self):
+        assert tracker.risk_grade({"vol": None}) == {}
+        assert [i["key"] for i in tracker.risk_grade({"crisis": 0.6})["items"]] == ["crisis"]
+        assert tracker.risk_grade({"crisis": 0.6})["letter"] == "F"
+
+    def test_letter_exact_points(self):
+        assert tracker.letter(4.3) == "A+" and tracker.letter(3.69) == "B+" and tracker.letter(0.2) == "F"

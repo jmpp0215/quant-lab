@@ -28,7 +28,7 @@ from pathlib import Path
 from quant import market, storage, tracker
 
 DIR = storage.DB_PATH.parent / "news_risk"
-MODEL = "claude-opus-5-5"
+MODEL = "claude-sonnet-5-5"
 # launchd's PATH has no /opt/homebrew/bin.
 CLAUDE_BIN = shutil.which("claude") or "/opt/homebrew/bin/claude"
 TIMEOUT_SECS = 600

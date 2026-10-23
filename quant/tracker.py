@@ -512,3 +512,48 @@ def month_after(d: date, months: int) -> str:
     """"YYYY-MM" of the month `months` after d's month."""
     y, m = divmod(d.month - 1 + months, 12)
     return f"{d.year + y:04d}-{m + 1:02d}"
+
+
+# University-style 4.3 scale. Each rule maps a "lower is better" measure to
+# a letter by the first limit it doesn't exceed; past the last limit it is
+# the rule's floor grade. Thresholds are a judgment call, kept here in one
+# place so they can be argued with.
+GRADE_POINTS = {"A+": 4.3, "A": 4.0, "A-": 3.7, "B+": 3.3, "B": 3.0, "B-": 2.7,
+                "C+": 2.3, "C": 2.0, "C-": 1.7, "D+": 1.3, "D": 1.0, "D-": 0.7, "F": 0.0}
+RISK_RULES = (
+    ("single", "최대 단일 종목 비중",
+     ((0.10, "A+"), (0.15, "A"), (0.20, "B+"), (0.25, "B"), (0.30, "C+"), (0.40, "C"), (0.50, "D")), "F"),
+    ("top5", "상위 5종목 비중",
+     ((0.40, "A+"), (0.50, "A"), (0.60, "B+"), (0.70, "B"), (0.80, "C")), "D"),
+    ("vol", "연환산 변동성",
+     ((0.08, "A+"), (0.10, "A"), (0.12, "A-"), (0.15, "B+"), (0.18, "B"), (0.22, "C+"), (0.28, "C")), "D"),
+    ("crisis", "과거 위기 최악 낙폭",
+     ((0.10, "A+"), (0.15, "A"), (0.20, "A-"), (0.25, "B+"), (0.30, "B"), (0.35, "C+"), (0.40, "C"),
+      (0.50, "D")), "F"),
+    ("currency", "한 통화 최대 비중",
+     ((0.50, "A+"), (0.60, "A"), (0.70, "B+"), (0.80, "B"), (0.90, "C")), "D"),
+    ("liquidity", "전량 매도 최장 일수",
+     ((1, "A+"), (3, "A"), (5, "B+"), (10, "B"), (20, "C")), "D"),
+)
+
+
+def letter(points: float) -> str:
+    """The highest letter whose points `points` reaches."""
+    return next(g for g, p in GRADE_POINTS.items() if points >= p - 1e-9)
+
+
+def risk_grade(metrics: dict[str, float | None]) -> dict:
+    """GPA (equal-weight mean of each available measure's points) and the
+    per-measure grades. metrics: rule key -> value (crisis as a positive
+    loss); None or missing measures are left out of the mean."""
+    items = []
+    for key, label, steps, floor in RISK_RULES:
+        v = metrics.get(key)
+        if v is None:
+            continue
+        g = next((g for limit, g in steps if v <= limit), floor)
+        items.append({"key": key, "label": label, "value": v, "grade": g, "points": GRADE_POINTS[g]})
+    if not items:
+        return {}
+    gpa = sum(i["points"] for i in items) / len(items)
+    return {"gpa": gpa, "letter": letter(gpa), "max": 4.3, "items": items}

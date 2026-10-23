@@ -234,6 +234,22 @@ def _news() -> dict | None:
     return json.loads(files[-1].read_text()) if files else None
 
 
+def _grade(risk: dict, top_w: list) -> dict:
+    """The risk tab's 4.3-scale score from measures already on it
+    (tracker.RISK_RULES); news is left out - it isn't measured."""
+    currency = risk["exposure"]["currency"]
+    stress_ = risk["stress"]
+    liquidity = risk["liquidity"]
+    return tracker.risk_grade({
+        "single": float(top_w[0][1]) if top_w else None,
+        "top5": float(sum(w for _, w in top_w)) if top_w else None,
+        "vol": risk["volatility"],
+        "crisis": -min(c["worst"] for c in stress_) if stress_ else None,
+        "currency": currency[0][1] if currency else None,
+        "liquidity": liquidity["max_days"] if liquidity else None,
+    })
+
+
 def _stress(exp_rows: list[dict], series: dict, tickers: dict) -> list[dict]:
     """Each past crisis replayed on today's holdings (quant/stress.py)."""
     total = float(sum((e["value"] for e in exp_rows), Decimal("0")))
@@ -573,6 +589,24 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                         "WHERE kind = 'deposit' ORDER BY trade_date DESC, id DESC "
                         "LIMIT 10")]
 
+    risk = {
+        "days": len(index),
+        "max_drawdown": _num(tracker.max_drawdown(index)),
+        "drawdown": [{"date": d, "dd": _num(v)}
+                     for d, v in tracker.drawdown_series(index)],
+        "volatility": _num(tracker.volatility(index)),
+        "hhi": _num(tracker.hhi([w for _, w in weights])) if weights else None,
+        "holdings": [{"name": n, "weight": _num(w)} for n, w in weights],
+        "exposure": exposure,
+        "accounts": _account_risk(own_by_account, value_by_account),
+        "expected": _expected(value_by_account)
+        + _holding_expected(exp_rows, value_by_account, series, tickers, today.isoformat()),
+        "stress": _stress(exp_rows, series, tickers),
+        "news": _news(),
+        "liquidity": _liquidity(conn, latest.get(LIQUIDITY_ACCOUNT)),
+    }
+    risk["grade"] = _grade(risk, top_w)
+
     return {
         "generated": today.isoformat(),
         "as_of": dates[-1] if dates else None,
@@ -583,22 +617,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         "history": [{"date": d, "total": _num(t), "index": _num(i)}
                     for (d, i), t in zip(index, totals, strict=True)],
         "benchmarks": _benchmarks(dates),
-        "risk": {
-            "days": len(index),
-            "max_drawdown": _num(tracker.max_drawdown(index)),
-            "drawdown": [{"date": d, "dd": _num(v)}
-                         for d, v in tracker.drawdown_series(index)],
-            "volatility": _num(tracker.volatility(index)),
-            "hhi": _num(tracker.hhi([w for _, w in weights])) if weights else None,
-            "holdings": [{"name": n, "weight": _num(w)} for n, w in weights],
-            "exposure": exposure,
-            "accounts": _account_risk(own_by_account, value_by_account),
-            "expected": _expected(value_by_account)
-            + _holding_expected(exp_rows, value_by_account, series, tickers, today.isoformat()),
-            "stress": _stress(exp_rows, series, tickers),
-            "news": _news(),
-            "liquidity": _liquidity(conn, latest.get(LIQUIDITY_ACCOUNT)),
-        },
+        "risk": risk,
         "goal": goal,
         "isa": isa,
         "overseas_tax": overseas_tax,

@@ -169,6 +169,14 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .fx-sum .v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .fx-sum .tot { border-top: 1px solid var(--grid); padding-top: 4px; }
 .stress-h { font-size: 15px; margin: 14px 0 4px; }
+.grade-head { display: flex; align-items: baseline; gap: 2px; margin-bottom: 10px; }
+.grade-gpa { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.grade-chip { display: inline-block; min-width: 28px; text-align: center; font-size: 12px; font-weight: 600;
+  padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--text); }
+.grade-big { font-size: 16px; margin-left: 10px; padding: 2px 10px; align-self: center; }
+.grade-list { display: grid; gap: 6px; }
+.grade-row { display: grid; grid-template-columns: 1fr auto 40px; gap: 10px; align-items: center; font-size: 14px; }
+.grade-row .muted { font-variant-numeric: tabular-nums; }
 .news-item { padding: 10px 0; border-top: 1px solid var(--border); }
 .news-item:first-of-type { border-top: 0; padding-top: 0; }
 .news-top { display: flex; gap: 8px; align-items: baseline; }
@@ -329,6 +337,7 @@ section[hidden] { display: none; }
   </section>
 
   <section id="tab-risk" hidden>
+    <div class="card grade-card"><h2>리스크 관리 점수</h2><div id="grade"></div></div>
     <div class="tiles">
       <div class="tile"><div class="label">최대 낙폭 (MDD)</div><div class="value" id="mdd">—</div></div>
       <div class="tile"><div class="label">현재 낙폭</div><div class="value" id="curdd">—</div></div>
@@ -812,6 +821,7 @@ function render() {
   renderLiquidity(r.liquidity);
   renderStress(r.stress);
   renderNews(r.news);
+  renderGrade(r.grade);
 
   renderSuspects(d);
   renderDividends(d);
@@ -992,6 +1002,30 @@ function renderExpected(rows) {
   host.append(table);
   const note = document.createElement("p"); note.className = "fx-note";
   note.textContent = `${rows.map(e => `${e.account}: ${e.label}`).join(" · ")}. 과거 분포라 실제 위기는 이보다 클 수 있어요.`;
+  host.append(note);
+}
+
+function renderGrade(g) {
+  const host = $("grade"); host.textContent = "";
+  if (!g || !g.items) { emptyState(host, "점수를 낼 데이터가 아직 없어요."); return; }
+  const head = document.createElement("div"); head.className = "grade-head";
+  const big = document.createElement("span"); big.className = "grade-gpa"; big.textContent = g.gpa.toFixed(2);
+  const of = document.createElement("span"); of.className = "muted"; of.textContent = ` / ${g.max}`;
+  const let_ = document.createElement("span"); let_.className = "grade-chip grade-big"; let_.textContent = g.letter;
+  head.append(big, of, let_);
+  host.append(head);
+  const list = document.createElement("div"); list.className = "grade-list";
+  for (const i of g.items) {
+    const row = document.createElement("div"); row.className = "grade-row";
+    const n = document.createElement("span"); n.textContent = i.label;
+    const v = document.createElement("span"); v.className = "muted";
+    v.textContent = i.key === "liquidity" ? i.value.toFixed(2) + "일" : (i.key === "crisis" ? "−" : "") + pct(i.value, 1);
+    const c = document.createElement("span"); c.className = "grade-chip"; c.textContent = i.grade;
+    row.append(n, v, c); list.append(row);
+  }
+  host.append(list);
+  const note = document.createElement("p"); note.className = "fx-note";
+  note.textContent = "6개 항목을 각각 A+(4.3)~F(0)로 매겨 똑같은 비중으로 평균 냈어요. 기준은 규칙으로 정해져 있고, 위험 뉴스(AI 요약)는 점수에 넣지 않아요. 변동성은 아직 기록이 짧아 흔들릴 수 있어요. 유동성은 토스 PBR 계좌 기준이에요.";
   host.append(note);
 }
 
