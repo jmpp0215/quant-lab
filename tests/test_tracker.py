@@ -417,5 +417,9 @@ class TestRiskGrade:
         assert [i["key"] for i in tracker.risk_grade({"crisis": 0.6})["items"]] == ["crisis"]
         assert tracker.risk_grade({"crisis": 0.6})["letter"] == "F"
 
+    def test_cap_headroom(self):
+        grades = [tracker.risk_grade({"cap": v})["items"][0]["grade"] for v in (0.76, 0.95, 1.05, 1.2)]
+        assert grades == ["A+", "A-", "C", "F"]
+
     def test_letter_exact_points(self):
         assert tracker.letter(4.3) == "A+" and tracker.letter(3.69) == "B+" and tracker.letter(0.2) == "F"

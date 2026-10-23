@@ -105,6 +105,11 @@ CASHFLOW_ACCOUNTS = ("kis-isa", "kis-main", "kis-main-overseas", "toss-bot")
 # holdings' own history over this many years (price_history.py's cache).
 HOLDING_YEARS = 10
 
+# Holdings the user concentrates in on purpose, with the cap they set
+# (2026-10-23: Amazon may not exceed 30% of the whole portfolio). The risk
+# score grades staying under the cap instead of the size itself.
+INTENDED_CAPS = {"AMZN": 0.30}
+
 # news_risk.py's daily picks (Claude + web search); the newest file is shown.
 NEWS_DIR = storage.DB_PATH.parent / "news_risk"
 
@@ -234,20 +239,36 @@ def _news() -> dict | None:
     return json.loads(files[-1].read_text()) if files else None
 
 
-def _grade(risk: dict, top_w: list) -> dict:
+def _grade(risk: dict, top_w: list, exp_rows: list[dict]) -> dict:
     """The risk tab's 4.3-scale score from measures already on it
     (tracker.RISK_RULES); news is left out - it isn't measured."""
     currency = risk["exposure"]["currency"]
     stress_ = risk["stress"]
     liquidity = risk["liquidity"]
-    return tracker.risk_grade({
-        "single": float(top_w[0][1]) if top_w else None,
+    total = sum((e["value"] for e in exp_rows), Decimal("0"))
+    share: dict[str, Decimal] = {}
+    names: dict[str, str] = {}
+    for e in exp_rows:
+        if e["asset"] != "현금" and total:
+            share[e["symbol"]] = share.get(e["symbol"], Decimal("0")) + e["value"] / total
+            names[e["symbol"]] = e["name"]
+    free = [float(w) for s, w in share.items() if s not in INTENDED_CAPS]
+    capped = [(float(share[s]) / cap, s, cap) for s, cap in INTENDED_CAPS.items() if s in share]
+    worst_cap = max(capped) if capped else None
+    out = tracker.risk_grade({
+        "single": max(free) if free else None,
+        "cap": worst_cap[0] if worst_cap else None,
         "top5": float(sum(w for _, w in top_w)) if top_w else None,
         "vol": risk["volatility"],
         "crisis": -min(c["worst"] for c in stress_) if stress_ else None,
         "currency": currency[0][1] if currency else None,
         "liquidity": liquidity["max_days"] if liquidity else None,
     })
+    for item in out.get("items", []):
+        if item["key"] == "cap":
+            _, s, cap = worst_cap
+            item["display"] = f"{names[s]} {float(share[s]):.1%} / {cap:.0%}"
+    return out
 
 
 def _stress(exp_rows: list[dict], series: dict, tickers: dict) -> list[dict]:
@@ -605,7 +626,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         "news": _news(),
         "liquidity": _liquidity(conn, latest.get(LIQUIDITY_ACCOUNT)),
     }
-    risk["grade"] = _grade(risk, top_w)
+    risk["grade"] = _grade(risk, top_w, exp_rows)
 
     return {
         "generated": today.isoformat(),

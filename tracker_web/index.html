@@ -1019,13 +1019,13 @@ function renderGrade(g) {
     const row = document.createElement("div"); row.className = "grade-row";
     const n = document.createElement("span"); n.textContent = i.label;
     const v = document.createElement("span"); v.className = "muted";
-    v.textContent = i.key === "liquidity" ? i.value.toFixed(2) + "일" : (i.key === "crisis" ? "−" : "") + pct(i.value, 1);
+    v.textContent = i.display || (i.key === "liquidity" ? i.value.toFixed(2) + "일" : (i.key === "crisis" ? "−" : "") + pct(i.value, 1));
     const c = document.createElement("span"); c.className = "grade-chip"; c.textContent = i.grade;
     row.append(n, v, c); list.append(row);
   }
   host.append(list);
   const note = document.createElement("p"); note.className = "fx-note";
-  note.textContent = "6개 항목을 각각 A+(4.3)~F(0)로 매겨 똑같은 비중으로 평균 냈어요. 기준은 규칙으로 정해져 있고, 위험 뉴스(AI 요약)는 점수에 넣지 않아요. 변동성은 아직 기록이 짧아 흔들릴 수 있어요. 유동성은 토스 PBR 계좌 기준이에요.";
+  note.textContent = `${g.items.length}개 항목을 각각 A+(4.3)~F(0)로 매겨 똑같은 비중으로 평균 냈어요. 의도한 집중(아마존)은 크기 대신 스스로 정한 한도를 지키는지로 매겨요(한도의 90% 이하 A+, 한도까지 A-, 넘으면 C~F). 기준은 규칙으로 정해져 있고, 위험 뉴스(AI 요약)는 점수에 넣지 않아요. 변동성은 아직 기록이 짧아 흔들릴 수 있어요. 유동성은 토스 PBR 계좌 기준이에요.`;
   host.append(note);
 }
 
