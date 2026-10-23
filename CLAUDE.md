@@ -154,3 +154,35 @@ rather than trade through it.
   workflow's code path.
 - The universe is frozen until November 2026 per `RUNBOOK.md`; don't suggest adding or
   removing symbols from `config.UNIVERSE` casually.
+
+## Asset tracker and research side jobs
+
+A personal asset tracker runs beside the trading code. It is read-only toward the brokers and never
+places orders.
+
+- `tracker_server.py` + `tracker_web/` (PWA): a stdlib HTTP server bound to localhost
+  (launchd `com.jongminpark.quantlab.tracker`, phone access via Tailscale serve) serving
+  `/data.json` from a read-only DB connection. It imports no broker client. API work happens in
+  `daily.py` after the close. Bump `CACHE` in `tracker_web/sw.js` on every UI change.
+- Pure logic lives in `quant/tracker.py` (returns, FX split, exposure, account risk, 4.3-scale
+  `risk_grade`), `quant/stress.py` (crisis replay on current holdings, holdings-based return range),
+  `quant/sentiment.py` (US fear & greed approximation and our own Korean index), and
+  `quant/regime.py` (RESEARCH_LOG §47 narrow-market warning).
+- Side jobs `daily.py` runs after the close, each display-only and failure-isolated (a failure is
+  reported as a short Korean phone line through `quant/notify.py`, never fails the trading part):
+  - `price_history.py`: Yahoo history for current holdings and proxies (`data/price_history/`).
+  - `news_risk.py`: riskiest recent news, `claude -p` with Sonnet.
+  - `regime_check.py`: KOSPI PBR from KRX, breadth, and a weekly `claude -p` read logged to
+    `data/regime/log/` for later scoring.
+  - `backups.py`: daily database backups.
+- LLM features run through the Claude Code CLI (`claude -p`, the user's subscription). There is no
+  Anthropic API key. Follow `news_risk.py`: an empty temp dir, `--json-schema`, and
+  `structured_output` in the reply. Send names and shares only, never amounts.
+- Research history is `quant/pead/RESEARCH_LOG.md` (§30–§48 are from 2026-10-23/24). Every test is
+  pre-registered in the log and committed before it runs, and results are appended under the same
+  section. Research never changes live trading on its own; the user decides.
+- Research scripts live in `scratch/` (gitignored, local only), e.g. `scratch/market_map/`,
+  `scratch/fear_reversal/`, `scratch/momproxy/`, `scratch/pbr_oos/`. Cached KRX snapshots sit next
+  to them.
+- KRX via pykrx needs the login in `.env` and prints the login id: swallow its output (see
+  `regime_check.update_fund`) and throttle bulk fetches (3s pauses, resumable).
