@@ -78,6 +78,7 @@ class TestPhoneText:
         assert phone_text("daily.py: [price history] 403") == (
             "daily 점검 결과\n• 위기 재생용 가격 이력 갱신 실패")
         assert phone_text("daily.py: [news risk] refusal") == "daily 점검 결과\n• 위험 뉴스 요약 실패"
+        assert phone_text("daily.py: [regime] KRX 403") == "daily 점검 결과\n• 좁은 장세 경고 점검 실패"
         assert phone_text("daily.py 실패 (candle/calendar fetch): ConnectionError(...)").startswith(
             "daily 실패: 시세")
 

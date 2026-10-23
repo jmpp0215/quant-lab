@@ -19,6 +19,7 @@ from pathlib import Path
 import backups
 import news_risk
 import price_history
+import regime_check
 from quant import (
     accounts,
     candles,
@@ -464,6 +465,13 @@ def main() -> int:
         except Exception as e:
             log.exception("news risk failed")
             problem_accounts.append(f"[news risk] {e}")
+        try:
+            # Display only: the section 47 warning and, while it is on, a
+            # weekly claude -p read of the situation kept for later scoring.
+            regime_check.run(datetime.now(market.KST).date())
+        except Exception as e:
+            log.exception("regime check failed")
+            problem_accounts.append(f"[regime] {e}")
         try:
             backups.run(datetime.now(market.KST).date().isoformat())
         except Exception as e:

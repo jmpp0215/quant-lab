@@ -28,7 +28,16 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import price_history
-from quant import config, returns, sentiment, storage, stress, tracker, transfers
+from quant import (
+    config,
+    regime,
+    returns,
+    sentiment,
+    storage,
+    stress,
+    tracker,
+    transfers,
+)
 from quant.stock_factors.scripts import pbr_slippage, pbr_storage
 
 log = logging.getLogger("tracker")
@@ -109,6 +118,11 @@ HOLDING_YEARS = 10
 # (2026-10-23: Amazon may not exceed 30% of the whole portfolio). The risk
 # score grades staying under the cap instead of the size itself.
 INTENDED_CAPS = {"AMZN": 0.30}
+
+# regime_check.py's section 47 warning state and its classification log.
+REGIME_DIR = storage.DB_PATH.parent / "regime"
+KOSPI_FUND = storage.DB_PATH.parent / "market" / "kospi_fund.csv"
+REGIME_HORIZON = 120
 
 # news_risk.py's daily picks (Claude + web search); the newest file is shown.
 NEWS_DIR = storage.DB_PATH.parent / "news_risk"
@@ -232,6 +246,33 @@ def _holding_expected(exp_rows: list[dict], values: dict, series: dict, tickers:
                     "y1_p5": h[250]["p5"], "y1_p50": h[250]["p50"], "y1_p5_krw": v * h[250]["p5"],
                     "p_y1_below_20": h[250]["p_below_20"] * 100, "proxied": h["proxied"]})
     return out
+
+
+def _regime() -> dict | None:
+    """The warning's state, the four past cases, and every logged
+    classification with the KOSPI's return 120 trading days later once known."""
+    path = REGIME_DIR / "state.json"
+    if not path.exists():
+        return None
+    closes = []
+    if KOSPI_FUND.exists():
+        lines = KOSPI_FUND.read_text().splitlines()[1:]
+        closes = [(r.split(",")[0], float(r.split(",")[1])) for r in lines if r]
+    days = [d for d, _ in closes]
+    logs = []
+    for f in sorted((REGIME_DIR / "log").glob("*.json"), reverse=True) if (REGIME_DIR / "log").exists() else []:
+        e = json.loads(f.read_text())
+        start = e["state"]["date"]
+        outcome = None
+        if start in days:
+            i = days.index(start)
+            if i + REGIME_HORIZON < len(closes):
+                outcome = closes[i + REGIME_HORIZON][1] / closes[i][1] - 1
+        logs.append({"date": f.stem, **{k: e[k] for k in ("kind", "confidence", "closest_case", "summary",
+                                                          "reasons", "watch", "sources", "model")},
+                     "outcome_120d": outcome})
+    return {"state": json.loads(path.read_text()), "cases": list(regime.CASES), "logs": logs,
+            "horizon": REGIME_HORIZON}
 
 
 def _news() -> dict | None:
@@ -624,6 +665,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         + _holding_expected(exp_rows, value_by_account, series, tickers, today.isoformat()),
         "stress": _stress(exp_rows, series, tickers),
         "news": _news(),
+        "regime": _regime(),
         "fear_greed": {"kr": sentiment.kr_fear_greed(series), "us": sentiment.fear_greed(series)},
         "liquidity": _liquidity(conn, latest.get(LIQUIDITY_ACCOUNT)),
     }

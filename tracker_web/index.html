@@ -196,6 +196,9 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .news-why { font-size: 13px; line-height: 1.5; margin: 4px 0; }
 .news-src { display: flex; gap: 10px; font-size: 12px; }
 .news-src a { color: var(--accent); }
+.regime-reasons { margin: 4px 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
+.table-wrap { overflow-x: auto; margin: 8px 0 0; }
+.table-wrap th, .table-wrap td { white-space: nowrap; padding-inline: 5px; }
 .stress-h:first-child { margin-top: 0; }
 .fx-note { font-size: 12px; color: var(--text-2); margin: 6px 0 0; }
 table.fx { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -345,6 +348,8 @@ section[hidden] { display: none; }
 
   <section id="tab-risk" hidden>
     <div class="card grade-card"><h2>리스크 관리 점수</h2><div id="grade"></div></div>
+    <div class="card"><h2>좁은 장세 경고</h2><div class="sub">코스피가 비싼데(PBR 5년 상위 30%) 오른 종목은 적을 때(200일선 위 30% 이하) · 연구 §47, 사례 4건이라 판정 불가 · 매매 신호 아님</div>
+      <div id="regime"></div></div>
     <div class="card"><h2>탐욕·공포 지수</h2><div class="sub">지표마다 최근 2년 중 위치(0~100)를 매겨 평균 · 시장 분위기 참고용, 점수에는 안 넣음</div>
       <h3 class="stress-h">한국 (자체 지수)</h3>
       <div id="fearGreedKR"></div><div class="chart chart-sm" id="chartFGkr"></div>
@@ -836,6 +841,7 @@ function render() {
   renderStress(r.stress);
   renderNews(r.news);
   renderGrade(r.grade);
+  renderRegime(r.regime);
   renderFearGreed(r.fear_greed && r.fear_greed.kr, "fearGreedKR", "chartFGkr", "fgNoteKR", "코스피");
   renderFearGreed(r.fear_greed && r.fear_greed.us, "fearGreed", "chartFG", "fgNote", "미국 장");
 
@@ -1051,6 +1057,62 @@ function renderFearGreed(f, hostId, chartId, noteId, market) {
   lineChart(chart, f.history.map(([d_, y]) => ({ d: d_, y })),
             { fmtY: v => Math.round(v), fmtTip: v => `${Math.round(v)}`, ref: { y: 50, label: "중립" } });
   $(noteId).hidden = false;
+}
+
+function renderRegime(rg) {
+  const host = $("regime"); host.textContent = "";
+  if (!rg) { emptyState(host, "아직 없어요. 장 마감 후 daily가 매일 확인해요."); return; }
+  const s = rg.state;
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const top = el("div", "news-top");
+  top.append(el("span", "sev " + (s.triggered ? "sev-high" : "sev-low"), s.triggered ? "경고 중" : "해당 없음"),
+             el("strong", null, `PBR 백분위 ${Math.round(s.pbr_pct)} (기준 ≥ ${s.thresholds.pbr_pct_min}) · 200일선 위 ${Math.round(s.breadth)}% (기준 ≤ ${s.thresholds.breadth_max}%)`));
+  host.append(top, el("div", "muted news-meta", `${s.date} 기준 · 시장 폭은 ${s.breadth_date}`));
+  const SHORT = { "일시적 충격": "충격", "약세장 초입": "약세장", "엇갈림": "엇갈림" };
+  const rows = [...rg.cases.map(c => ({ ...c, label: `${c.date.slice(2, 7).replace("-", ".")} ${SHORT[c.kind] || c.kind}` })),
+                { label: "지금", dd_1y: s.dd_1y, r20: s.r20, r60: s.r60, fear: s.fear, breadth_3m_max: s.breadth_3m_max, after_120d: null, now: true }];
+  const wrap = el("div", "table-wrap");
+  const table = el("table", "fx");
+  const th = table.createTHead().insertRow();
+  for (const h of ["사례", "고점", "20일", "60일", "공포", "폭", "120일 후"]) th.append(el("th", null, h));
+  const body = table.createTBody();
+  for (const r of rows) {
+    const tr = body.insertRow();
+    if (r.now) tr.style.fontWeight = "600";
+    tr.insertCell().textContent = r.label;
+    for (const v of [r.dd_1y, r.r20, r.r60]) tr.insertCell().textContent = v == null ? "—" : signedPct(v, 0);
+    tr.insertCell().textContent = r.fear == null ? "—" : Math.round(r.fear);
+    tr.insertCell().textContent = r.breadth_3m_max == null ? "—" : Math.round(r.breadth_3m_max) + "%";
+    tr.insertCell().textContent = r.now ? "?" : signedPct(r.after_120d, 0);
+  }
+  wrap.append(table); host.append(wrap,
+    el("p", "fx-note", "고점 = 1년 고점 대비, 폭 = 직전 3개월 중 가장 넓었던 200일선 위 비율, 120일 후 = 이후 120거래일 코스피."));
+  const latest = rg.logs[0];
+  if (latest) {
+    const item = el("div", "news-item");
+    const t = el("div", "news-top");
+    t.append(el("span", "sev sev-mid", latest.kind), el("strong", null, `확신 ${latest.confidence} · 가장 가까운 사례 ${latest.closest_case}`));
+    item.append(t, el("div", "muted news-meta", `${latest.date} · ${latest.model} · 웹 검색 기반 판단`), el("p", "news-why", latest.summary));
+    const ul = el("ul", "regime-reasons");
+    for (const x of latest.reasons) ul.append(el("li", null, x));
+    item.append(ul, el("p", "news-why", "판단을 바꿀 신호: " + latest.watch));
+    if (latest.sources.length) {
+      const src = el("div", "news-src");
+      latest.sources.forEach((u, i) => {
+        const a = document.createElement("a"); a.href = u; a.target = "_blank"; a.rel = "noopener noreferrer";
+        try { a.textContent = new URL(u).hostname.replace(/^www\./, ""); } catch { a.textContent = "출처 " + (i + 1); }
+        src.append(a);
+      });
+      item.append(src);
+    }
+    host.append(item);
+  }
+  if (rg.logs.length > 1) {
+    const hist = el("p", "fx-note");
+    hist.textContent = "지난 판단: " + rg.logs.slice(1).map(l => `${l.date} ${l.kind} → ${l.outcome_120d == null ? "결과 대기" : "120일 " + signedPct(l.outcome_120d, 0)}`).join(" · ");
+    host.append(hist);
+  }
+  host.append(el("p", "fx-note", `경고가 켜져 있는 동안 일주일에 한 번 Claude가 뉴스를 보고 유형을 판단해 기록해요. 사례 분류는 결과를 본 뒤 붙인 거라 근거가 약하고, 기록이 쌓이면 판단과 ${rg.horizon}거래일 뒤 실제 결과를 맞춰 볼 수 있어요. 시장 폭은 추적 중인 코스피 종목의 일별 종가로 계산해 연구(상장폐지 포함, 10거래일 간격)와 조금 달라요.`));
 }
 
 function renderGrade(g) {
