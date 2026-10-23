@@ -375,6 +375,64 @@ def benchmark_series(candles: list[dict], dates: list[str]) -> list[Decimal | No
     return out
 
 
+# What each ETF the strategies trade or hold actually exposes the account to:
+# (asset class, region, currency). "(H)" funds are currency-hedged, so their
+# currency exposure is KRW. Anything not listed falls back to the position's
+# own currency: a foreign-priced position is a foreign stock, a KRW one a
+# Korean stock.
+EXPOSURE = {
+    "102110": ("주식", "한국", "KRW"), "466920": ("주식", "한국", "KRW"),
+    "091170": ("주식", "한국", "KRW"), "487240": ("주식", "한국", "KRW"),
+    "0074K0": ("주식", "한국", "KRW"),
+    "133690": ("주식", "미국", "USD"), "0167Z0": ("주식", "미국", "USD"),
+    "379790": ("주식", "유럽", "KRW"), "195930": ("주식", "유럽", "KRW"),
+    "371160": ("주식", "중국·홍콩", "기타 외화"), "241180": ("주식", "일본", "기타 외화"),
+    "484790": ("채권", "미국", "KRW"),
+    "497880": ("현금성", "한국", "KRW"), "459580": ("현금성", "한국", "KRW"),
+}
+FOREIGN_REGION = {"USD": "미국"}
+
+
+def exposures(latest: list[dict]) -> list[dict]:
+    """Every holding and cash balance across accounts with its KRW value and
+    (asset, region, currency) exposure.
+
+    latest: {"account", "total", "cash", "positions"} per account. Foreign
+    positions are valued at the account's implied rate (as holdings() does);
+    an account holding foreign positions holds its cash in that currency.
+    """
+    out = []
+    for row in latest:
+        rate = implied_rate(row)
+        foreign_ccy = None
+        for p in row["positions"]:
+            ccy = p.get("currency", "KRW")
+            value = Decimal(p["price"]) * p["qty"]
+            if ccy != "KRW":
+                foreign_ccy = ccy
+                value = value * rate if rate else Decimal("0")
+            asset, region, cur = EXPOSURE.get(
+                p["symbol"], ("주식", FOREIGN_REGION.get(ccy, "기타") if ccy != "KRW" else "한국", ccy))
+            out.append({"account": row["account"], "symbol": p["symbol"],
+                        "name": p.get("name") or p["symbol"], "value": value,
+                        "asset": asset, "region": region, "currency": cur})
+        if row["cash"]:
+            out.append({"account": row["account"], "symbol": "", "name": "현금",
+                        "value": row["cash"], "asset": "현금",
+                        "region": FOREIGN_REGION.get(foreign_ccy, "기타") if foreign_ccy else "한국",
+                        "currency": foreign_ccy or "KRW"})
+    return out
+
+
+def breakdown(rows: list[dict], key: str) -> list[tuple[str, Decimal]]:
+    """Share of total value by `key` ("asset", "region", "currency"), largest first."""
+    total = sum((r["value"] for r in rows), Decimal("0"))
+    acc: dict[str, Decimal] = {}
+    for r in rows:
+        acc[r[key]] = acc.get(r[key], Decimal("0")) + r["value"]
+    return sorted(((k, v / total) for k, v in acc.items()), key=lambda kv: -kv[1]) if total else []
+
+
 def hhi(weights: list[Decimal]) -> Decimal:
     """Herfindahl index of weights summing to 1: 1/N if equal, 1 if all in one."""
     return sum((w * w for w in weights), Decimal("0"))

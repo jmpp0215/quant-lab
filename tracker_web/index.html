@@ -32,6 +32,7 @@
   --m-pbr: #1baf7a;
   --b-1: #6250d6;
   --b-2: #eda100;
+  --c1: #2a78d6; --c2: #eb6834; --c3: #1baf7a; --c4: #eda100; --c5: #e87ba4;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -52,6 +53,7 @@
     --m-pbr: #199e70;
     --b-1: #9085e9;
     --b-2: #c98500;
+    --c1: #3987e5; --c2: #d95926; --c3: #199e70; --c4: #c98500; --c5: #d55181;
   }
 }
 :root[data-theme="dark"] {
@@ -62,6 +64,7 @@
   --up: #e66767; --down: #5598e7; --warn: #fab219;
   --m-isa: #d95926; --m-pbr: #199e70;
   --b-1: #9085e9; --b-2: #c98500;
+  --c1: #3987e5; --c2: #d95926; --c3: #199e70; --c4: #c98500; --c5: #d55181;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -127,6 +130,14 @@ header h1 { font-size: 17px; margin: 0; font-weight: 600; }
 .suspect .acts button { flex: 1; font: inherit; font-size: 13px; padding: 8px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; }
 .suspect .acts button.rec { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.stack-row { margin: 10px 0 2px; }
+.stack-row .lbl { font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+.stack { display: flex; gap: 2px; height: 14px; border-radius: 4px; overflow: hidden; }
+.stack > div { height: 100%; min-width: 2px; }
+.keys { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 5px; font-size: 12px; color: var(--text-2); }
+.keys i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+.keys b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; margin-left: 3px; }
+.warn-line { font-size: 13px; color: var(--text); margin: 4px 0; }
 .cb { display: grid; grid-template-columns: minmax(0, 7em) 1fr 5.4em; gap: 8px; align-items: center;
       font-size: 13px; padding: 3px 0; }
 .cb .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
@@ -312,6 +323,9 @@ section[hidden] { display: none; }
         <div class="note">1 / HHI, 현금 포함</div></div>
     </div>
     <div class="banner" id="sampleNote" hidden></div>
+    <div class="card"><h2>노출 지도</h2><div class="sub">전 계좌 합산 · ETF는 추종 대상 기준 · (H) 환헤지는 원화</div>
+      <div id="exposure"></div></div>
+    <div class="card"><h2>집중도</h2><div id="concentration"></div></div>
     <div class="card"><h2>고점 대비 낙폭</h2><div class="chart" id="chartDD"></div></div>
     <div class="card"><h2>보유 비중</h2><div class="sub">전 계좌 합산, 해외는 원화 환산</div>
       <div class="bars" id="holdings"></div></div>
@@ -770,6 +784,7 @@ function render() {
             { fmtY: v => pct(v, 1), fmtTip: v => pct(v), area: true, zero: true });
 
   renderBars($("holdings"), r.holdings);
+  renderExposure(r.exposure);
 
   renderSuspects(d);
   renderDividends(d);
@@ -877,6 +892,43 @@ function divergingBars(host, items) {
     v.textContent = `${arrow(Math.round(it.amount))}${man(Math.abs(it.amount))}`;
     row.append(n, t, v); host.append(row);
   }
+}
+
+const SLOT = ["var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)", "var(--c5)", "var(--text-3)"];
+
+// One 100% stacked bar per breakdown; categories beyond five fold into 기타.
+function renderExposure(e) {
+  const host = $("exposure"); host.textContent = "";
+  for (const [key, label] of [["asset", "자산군"], ["region", "지역"], ["currency", "통화"]]) {
+    let parts = e[key];
+    if (parts.length > 6) parts = parts.slice(0, 5).concat([["기타", parts.slice(5).reduce((s, p) => s + p[1], 0)]]);
+    const row = document.createElement("div"); row.className = "stack-row";
+    const l = document.createElement("div"); l.className = "lbl"; l.textContent = label;
+    const bar = document.createElement("div"); bar.className = "stack";
+    const keys = document.createElement("div"); keys.className = "keys";
+    parts.forEach(([name, w], i) => {
+      const seg = document.createElement("div");
+      seg.style.width = (w * 100) + "%"; seg.style.background = SLOT[i] || SLOT[5];
+      seg.title = `${name} ${pct(w, 1)}`;
+      bar.append(seg);
+      const k = document.createElement("span"); const dot = document.createElement("i");
+      dot.style.background = SLOT[i] || SLOT[5];
+      const b = document.createElement("b"); b.textContent = pct(w, 0);
+      k.append(dot, name, b); keys.append(k);
+    });
+    row.append(l, bar, keys); host.append(row);
+  }
+  const c = $("concentration"); c.textContent = "";
+  for (const w of e.warnings) {
+    const p = document.createElement("div"); p.className = "warn-line"; p.textContent = "⚠️ " + w;
+    c.append(p);
+  }
+  const note = document.createElement("p"); note.className = "fx-note";
+  note.textContent = `경고 기준: 한 종목 ${pct(e.single_warn, 0)} 초과, 상위 5개 ${pct(e.top5_warn, 0)} 초과 (현금 제외).`
+    + (e.warnings.length ? "" : " 지금은 기준 안이에요.");
+  const bars = document.createElement("div"); bars.className = "bars"; bars.style.marginTop = "8px";
+  renderBars(bars, e.top5.map(([name, weight]) => ({ name, weight })));
+  c.append(bars, note);
 }
 
 function renderContrib(d) {

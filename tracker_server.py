@@ -77,6 +77,11 @@ FANS = {"kis-isa": ("momentum", "2026-08-28"),   # momentum principal date
 # The `prediction` skill's journal, read only.
 JOURNAL_DIR = Path(__file__).parent / "journal" / "predictions"
 
+# Concentration warnings on the risk tab (shares of total value, cash excluded
+# from the single-holding check).
+SINGLE_WARN = Decimal("0.20")
+TOP5_WARN = Decimal("0.60")
+
 # The upcoming list only looks this far ahead.
 UPCOMING_DAYS = 30
 
@@ -314,6 +319,24 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                           Decimal("0")))
     total = totals[-1] if totals else Decimal("0")
 
+    exp_rows = tracker.exposures([
+        {"account": r["account"], "total": Decimal(r["total"]), "cash": Decimal(r["cash"]),
+         "positions": json.loads(r["positions"])} for r in latest.values()])
+    by_name: dict[str, Decimal] = {}
+    for e in exp_rows:
+        if e["asset"] != "현금":
+            by_name[e["name"]] = by_name.get(e["name"], Decimal("0")) + e["value"]
+    exp_total = sum((e["value"] for e in exp_rows), Decimal("0"))
+    top = sorted(by_name.items(), key=lambda kv: -kv[1])[:5]
+    top_w = [(n, v / exp_total) for n, v in top] if exp_total else []
+    warnings = [f"{n} 한 종목이 {float(w):.0%}" for n, w in top_w if w > SINGLE_WARN]
+    if top_w and sum(w for _, w in top_w) > TOP5_WARN:
+        warnings.append(f"상위 5개가 {float(sum(w for _, w in top_w)):.0%}")
+    exposure = {k: [[n, _num(w)] for n, w in tracker.breakdown(exp_rows, k)]
+                for k in ("asset", "region", "currency")}
+    exposure |= {"top5": [[n, _num(w)] for n, w in top_w], "warnings": warnings,
+                 "single_warn": _num(SINGLE_WARN), "top5_warn": _num(TOP5_WARN)}
+
     held = tracker.holdings([
         {"total": Decimal(r["total"]), "cash": Decimal(r["cash"]),
          "positions": json.loads(r["positions"])} for r in latest.values()])
@@ -443,6 +466,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
             "volatility": _num(tracker.volatility(index)),
             "hhi": _num(tracker.hhi([w for _, w in weights])) if weights else None,
             "holdings": [{"name": n, "weight": _num(w)} for n, w in weights],
+            "exposure": exposure,
         },
         "goal": goal,
         "isa": isa,

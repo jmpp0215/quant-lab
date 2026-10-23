@@ -337,3 +337,27 @@ class TestIsaPaid:
     def test_unknown_this_year_stays_unknown_in_the_entry_year(self):
         p = tracker.isa_paid(D(100), None, "2026-10-23", [], date(2026, 12, 1))
         assert (p["total"], p["this_year"]) == (D(100), None)
+
+
+class TestExposures:
+    ROWS = [
+        {"account": "isa", "total": D(3000), "cash": D(500), "positions": [
+            {"symbol": "102110", "name": "TIGER 200", "qty": 10, "price": "100"},
+            {"symbol": "379790", "name": "유로(H)", "qty": 5, "price": "100"},
+            {"symbol": "133690", "name": "나스닥", "qty": 10, "price": "100"}]},
+        {"account": "ovs", "total": D(1300 * 15), "cash": D(1300 * 5), "positions": [
+            {"symbol": "AMZN", "name": "아마존", "qty": 1, "price": "10", "currency": "USD"}]},
+    ]
+
+    def test_etfs_by_table_stocks_by_currency_cash_by_account(self):
+        rows = {(r["account"], r["name"]): r for r in tracker.exposures(self.ROWS)}
+        assert (rows[("isa", "유로(H)")]["region"], rows[("isa", "유로(H)")]["currency"]) == ("유럽", "KRW")
+        assert rows[("isa", "나스닥")]["currency"] == "USD"
+        assert rows[("ovs", "아마존")]["value"] == D(13000)
+        assert (rows[("ovs", "현금")]["currency"], rows[("ovs", "현금")]["value"]) == ("USD", D(6500))
+        assert rows[("isa", "현금")]["currency"] == "KRW"
+
+    def test_breakdown_shares_sum_to_one(self):
+        b = dict(tracker.breakdown(tracker.exposures(self.ROWS), "currency"))
+        assert sum(b.values()) == 1
+        assert b["USD"] == (D(1000) + D(13000) + D(6500)) / (D(3000) + D(19500))

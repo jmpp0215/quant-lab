@@ -1,6 +1,6 @@
 // App shell is cached so the page opens while the Mac is asleep; data.json is
 // never cached here - index.html keeps the last good copy in localStorage.
-const CACHE = "tracker-v10";
+const CACHE = "tracker-v11";
 const SHELL = ["./", "index.html", "manifest.json", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", e => {
