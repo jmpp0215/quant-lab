@@ -459,7 +459,7 @@ def main() -> int:
             log.exception("price history fetch failed")
             problem_accounts.append(f"[price history] {e}")
         try:
-            # Display only; a no-op without ANTHROPIC_API_KEY.
+            # Display only (claude -p on the subscription, like flag_disclosures).
             news_risk.run(datetime.now(market.KST).date().isoformat())
         except Exception as e:
             log.exception("news risk failed")

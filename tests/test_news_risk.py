@@ -26,8 +26,3 @@ class TestPrompt:
         brief = [{"name": "아마존닷컴", "symbol": "AMZN", "kind": "미국 개별주 직접투자", "share": 22.7}]
         text = news_risk.prompt(brief, "2026-10-23")
         assert "아마존닷컴 (AMZN)" in text and "22.7%" in text and "원" not in text.replace("전체의", "")
-
-
-def test_skips_without_key(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    assert news_risk.run("2026-10-23") is None

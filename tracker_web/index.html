@@ -997,7 +997,7 @@ function renderExpected(rows) {
 
 function renderNews(n) {
   const host = $("news"); host.textContent = "";
-  if (!n) { emptyState(host, "아직 없어요. .env에 ANTHROPIC_API_KEY를 넣으면 장 마감 후 daily가 매일 만들어요."); return; }
+  if (!n) { emptyState(host, "아직 없어요. 장 마감 후 daily가 매일 만들어요."); return; }
   const SEV = { high: ["높음", "sev-high"], medium: ["중간", "sev-mid"], low: ["낮음", "sev-low"] };
   if (n.summary) { const p = document.createElement("p"); p.className = "fx-note"; p.style.margin = "0 0 8px"; p.textContent = n.summary; host.append(p); }
   if (!n.risks.length) { emptyState(host, "눈에 띄는 위험 뉴스가 없었어요."); }
