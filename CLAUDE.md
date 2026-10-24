@@ -174,6 +174,8 @@ places orders.
   - `news_risk.py`: riskiest recent news, `claude -p` with Sonnet.
   - `regime_check.py`: KOSPI PBR from KRX, breadth, and a weekly `claude -p` read logged to
     `data/regime/log/` for later scoring.
+  - `fear_losers_log.py`: RESEARCH_LOG §50 forward record of fear-time losers (`quant/fear_losers.py`),
+    logged to `data/fear_losers/log/`; `report` hides results until the pre-registered sample is reached.
   - `backups.py`: daily database backups.
 - LLM features run through the Claude Code CLI (`claude -p`, the user's subscription). There is no
   Anthropic API key. Follow `news_risk.py`: an empty temp dir, `--json-schema`, and
