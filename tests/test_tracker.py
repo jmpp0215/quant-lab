@@ -251,6 +251,51 @@ class TestOverseasGainsTax:
         t = tracker.overseas_gains_tax([{"pnl": "1000", "rate": "1400"}])
         assert (t["taxable"], t["tax"]) == (0, 0)
 
+    def test_buy_rate_converts_cost_at_the_buy_date_rate(self):
+        # bought $1000 at 1500, sold for $1200 less $2 fee at 1300:
+        # (1198 * 1300) - (1000 * 1500) = 57,400, not 198 * 1300 = 257,400
+        row = {"pnl": "198", "rate": "1300", "cost": "1000", "proceeds": "1200",
+               "fee": "2", "buy_rate": "1500"}
+        assert tracker.overseas_gains_tax([row])["pnl_krw"] == D(57400)
+
+    def test_dollar_gain_can_be_a_won_loss(self):
+        row = {"pnl": "50", "rate": "1300", "cost": "1000", "proceeds": "1050",
+               "fee": "0", "buy_rate": "1400"}
+        assert tracker.sell_pnl_krw(row) == D(1365000 - 1400000)
+
+    def test_missing_buy_rate_falls_back_to_sell_rate(self):
+        row = {"pnl": "198", "rate": "1300", "cost": "1000", "proceeds": "1200",
+               "fee": "2", "buy_rate": None}
+        assert tracker.sell_pnl_krw(row) == D(257400)
+
+
+class TestBuyRate:
+    @staticmethod
+    def pos(qty, cost="1000", cost_krw="1500000", symbol="A"):
+        return {"symbol": symbol, "qty": qty, "cost": cost, "cost_krw": cost_krw}
+
+    def test_rate_is_krw_cost_over_usd_cost(self):
+        snaps = [("2026-10-20", [self.pos(5)])]
+        assert tracker.buy_rate(snaps, "A", "2026-10-23", 5) == D(1500)
+
+    def test_takes_the_latest_snapshot_two_days_before(self):
+        snaps = [("2026-10-19", [self.pos(5, cost_krw="1400000")]),
+                 ("2026-10-21", [self.pos(5)]),
+                 # labeled the day before the sale but taken after it
+                 ("2026-10-22", [self.pos(5, cost_krw="9999999")])]
+        assert tracker.buy_rate(snaps, "A", "2026-10-23", 5) == D(1500)
+
+    def test_skips_a_snapshot_holding_fewer_than_were_sold(self):
+        # ON 2026-10-23: 1 share left, cost_krw still the 5-share figure
+        snaps = [("2026-10-19", [self.pos(5)]),
+                 ("2026-10-21", [self.pos(1, cost="200", cost_krw="1500000")])]
+        assert tracker.buy_rate(snaps, "A", "2026-10-23", 4) == D(1500)
+
+    def test_none_without_cost_krw(self):
+        snaps = [("2026-03-01", [{"symbol": "A", "qty": 5}]),
+                 ("2026-03-02", [self.pos(5, symbol="B")])]
+        assert tracker.buy_rate(snaps, "A", "2026-03-17", 5) is None
+
 
 class TestRollingFan:
     def test_quantiles_over_every_start(self):

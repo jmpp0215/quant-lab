@@ -586,12 +586,18 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
     sells = [dict(r) for r in conn.execute(
         "SELECT * FROM overseas_realized WHERE date LIKE ? ORDER BY date",
         (f"{today.year}-%",))]
+    overseas_snaps = [(s["trade_date"], json.loads(s["positions"])) for s in snaps
+                      if s["account"] == "kis-main-overseas"]
+    for r in sells:
+        r["buy_rate"] = tracker.buy_rate(overseas_snaps, r["symbol"], r["date"], r["qty"])
     gains = tracker.overseas_gains_tax(sells)
     overseas_tax = {k: _num(v) for k, v in gains.items()} | {
         "year": today.year,
         "sells": [{"date": r["date"], "name": r["name"], "qty": r["qty"],
                    "pnl_usd": _num(Decimal(r["pnl"])),
-                   "pnl_krw": _num(Decimal(r["pnl"]) * Decimal(r["rate"]))} for r in sells],
+                   "pnl_krw": _num(tracker.sell_pnl_krw(r)),
+                   "buy_rate": _num(r["buy_rate"])}
+                  for r in sells],
         # Held at a KRW loss: selling would offset gains (judgement is the user's).
         "losers": [{"name": h["name"], "loss": h["price_effect"] + h["fx_effect"],
                     "krw_return": h["krw_return"]}

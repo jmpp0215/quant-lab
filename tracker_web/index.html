@@ -1539,7 +1539,7 @@ function kv(host, label, value, cls) {
 function renderTax(d) {
   const t = d.overseas_tax, host = $("tax"); host.textContent = "";
   $("taxTitle").textContent = `해외주식 양도세 (${t.year}년)`;
-  $("taxSub").textContent = "KIS 해외 기간손익 기준 추정이에요. KIS는 매수·매도 모두 매도일 환율로 환산하지만, 실제 세금은 매수일 환율로 원가를 계산해서 달라질 수 있어요.";
+  $("taxSub").textContent = "KIS 해외 기간손익 기준 추정이에요. 세법처럼 원가는 매수일 환율(KIS 평균 매입환율), 매도금액은 매도일 환율로 환산해요. 매입환율 기록이 없는 매도(* 표시, 2026-10-21 이전 보유분)는 KIS처럼 손익 전체를 매도일 환율로 환산한 값이라 실제 세금과 다를 수 있어요.";
   const sum = document.createElement("div"); sum.className = "fx-sum";
   kv(sum, `실현 손익 (매도 ${t.sells.length}건)`, `${t.pnl_krw >= 0 ? "+" : "−"}${won(Math.abs(t.pnl_krw))}원`);
   kv(sum, "기본공제", `${won(t.deduction)}원`);
@@ -1567,7 +1567,7 @@ function renderTax(d) {
   const body = table.createTBody();
   for (const r of t.sells.slice().reverse()) {
     const tr = body.insertRow();
-    for (const v of [shortDate(r.date), r.name, `${r.qty}주`, `${r.pnl_krw >= 0 ? "+" : "−"}${man(Math.abs(r.pnl_krw))}`])
+    for (const v of [shortDate(r.date), r.name, `${r.qty}주`, `${r.pnl_krw >= 0 ? "+" : "−"}${man(Math.abs(r.pnl_krw))}${r.buy_rate == null ? "*" : ""}`])
       tr.insertCell().textContent = v;
   }
   if (t.sells.length) host.append(table);

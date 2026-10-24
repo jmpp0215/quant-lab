@@ -9,7 +9,7 @@ later), holdings weights, and a goal projection.
 
 import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from quant import allocation, momentum
@@ -236,16 +236,51 @@ OVERSEAS_GAINS_DEDUCTION = Decimal("2500000")   # KRW per person per year
 OVERSEAS_GAINS_RATE = Decimal("0.22")           # 20% + 2% local income tax
 
 
+def buy_rate(snaps: list[tuple[str, list[dict]]], symbol: str, sell_date: str,
+             sold_qty: int) -> Decimal | None:
+    """The average KRW/USD rate a sold position was bought at, or None.
+
+    snaps: (trade_date, positions) of the overseas account, oldest first.
+    The rate is cost_krw / cost (KIS's pchs_rmnd_wcrc_amt / frcr_pchs_amt,
+    verified 2026-10-24 to be at the buy-date rates, not today's) from the
+    latest snapshot holding at least sold_qty, dated two or more days
+    before the sale: the 08:30 snapshot labeled the day before a night
+    sell is already taken after it, and right after a partial sell KIS
+    still reports the pre-sale cost_krw against the reduced USD cost (ON
+    2026-10-23: 924,633 KRW for 1 share). Snapshots only carry cost_krw
+    from 2026-10-21, so earlier sells get None.
+    """
+    cutoff = (date.fromisoformat(sell_date) - timedelta(days=2)).isoformat()
+    for trade_date, positions in reversed(snaps):
+        if trade_date > cutoff:
+            continue
+        for p in positions:
+            if (p["symbol"] == symbol and p["qty"] >= sold_qty
+                    and p.get("cost") and p.get("cost_krw") and Decimal(p["cost"])):
+                return Decimal(p["cost_krw"]) / Decimal(p["cost"])
+    return None
+
+
+def sell_pnl_krw(row: dict) -> Decimal:
+    """One sell's KRW gain. With row["buy_rate"] the cost converts at that
+    rate and proceeds less fee at the sell-day rate, as the tax law does;
+    without it, the whole USD P&L at the sell-day rate, as KIS does."""
+    rate = Decimal(row["rate"])
+    if row.get("buy_rate") is None:
+        return Decimal(row["pnl"]) * rate
+    return ((Decimal(row["proceeds"]) - Decimal(row["fee"])) * rate
+            - Decimal(row["cost"]) * Decimal(row["buy_rate"]))
+
+
 def overseas_gains_tax(rows: list[dict]) -> dict:
     """Estimated tax on a year's realized overseas gains.
 
     rows: kis_client.overseas_realized output (USD pnl and the rate KIS
-    converts at). Gains and losses net within the year; the 2.5M deduction
-    applies to the net. The KRW figure converts each sell's P&L at that
-    sell day's rate, as KIS does - the tax law converts the cost at the
-    buy-date rate instead, so this is an estimate, not the filing figure.
+    converts at), each optionally with "buy_rate" (see sell_pnl_krw).
+    Gains and losses net within the year; the 2.5M deduction applies to
+    the net. Rows without a buy rate are an estimate, not the filing figure.
     """
-    pnl_krw = sum((Decimal(r["pnl"]) * Decimal(r["rate"]) for r in rows), Decimal("0"))
+    pnl_krw = sum((sell_pnl_krw(r) for r in rows), Decimal("0"))
     taxable = max(pnl_krw - OVERSEAS_GAINS_DEDUCTION, Decimal("0"))
     return {"pnl_usd": sum((Decimal(r["pnl"]) for r in rows), Decimal("0")),
             "pnl_krw": pnl_krw, "deduction": OVERSEAS_GAINS_DEDUCTION,
