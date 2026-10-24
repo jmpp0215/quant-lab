@@ -17,6 +17,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import backups
+import fear_losers_log
 import news_risk
 import price_history
 import regime_check
@@ -476,6 +477,12 @@ def main() -> int:
         except Exception as e:
             log.exception("regime check failed")
             problem_accounts.append(f"[regime] {e}")
+        try:
+            # Record only: section 50's forward test of fear-time losers.
+            fear_losers_log.run(datetime.now(market.KST).date())
+        except Exception as e:
+            log.exception("fear losers log failed")
+            problem_accounts.append(f"[fear losers] {e}")
         try:
             backups.run(datetime.now(market.KST).date().isoformat())
         except Exception as e:
