@@ -438,10 +438,12 @@ def main() -> int:
             log.exception("upcoming schedule failed")
             problem_accounts.append(f"[upcoming] {e}")
 
-    if slot == "close" and target is None:
+    if target is None:
         # Realized overseas sells this year, for the tracker's capital gains
         # tax estimate. Overseas orders are placed by hand, not by this
-        # system, so the broker's record is the only one.
+        # system, so the broker's record is the only one. Both slots: the
+        # morning run picks up sells from the US session that just closed,
+        # the close run any made in KIS's US daytime session.
         try:
             factory = accounts.ACCOUNTS["kis-main-overseas"]["client"]
             overseas = client_cache.get(factory) or factory()
@@ -452,6 +454,8 @@ def main() -> int:
         except Exception as e:
             log.exception("overseas realized fetch failed")
             problem_accounts.append(f"[overseas realized] {e}")
+
+    if slot == "close" and target is None:
         try:
             # Display only (the tracker's crisis replay); after the trading
             # work so a slow or failing Yahoo fetch can't delay it.

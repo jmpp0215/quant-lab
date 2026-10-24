@@ -40,11 +40,16 @@ ACCOUNTS = {
     # authenticating twice for one account. No broker: overseas ordering
     # is a different KIS endpoint family that kis_client does not
     # implement, so this account can be snapshotted but never traded.
+    # Snapshotted by the 08:30 run, after the US close: at 15:40 the US
+    # session hasn't opened yet, so the snapshot held the previous night's
+    # close and missed overnight sells until the next afternoon. 08:30
+    # records US day D's close under KR trade date D.
     "kis-main-overseas": {"client": _kis_main_client,
                           "snapshot": kis_client.snapshot_overseas,
                           "price": kis_client.batch_price, "broker": None,
                           "buying_power": None,
-                          "strategy": False, "tradable": False},
+                          "strategy": False, "tradable": False,
+                          "snapshot_slot": "morning"},
     "kis-isa": {"client": lambda: KisClient("isa"), "snapshot": kis_client.snapshot,
                 "price": kis_client.batch_price, "broker": kis_client,
                 "buying_power": kis_client.available_cash,

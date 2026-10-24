@@ -158,8 +158,12 @@ class TestHealthcheckProblem:
 
 class TestAccountsInSlot:
     def test_toss_bot_is_snapshotted_in_the_morning_only(self):
-        assert daily.accounts_in_slot(accounts.ACCOUNTS, "morning") == ["toss-bot"]
+        assert "toss-bot" in daily.accounts_in_slot(accounts.ACCOUNTS, "morning")
         assert "toss-bot" not in daily.accounts_in_slot(accounts.ACCOUNTS, "close")
+
+    def test_overseas_is_snapshotted_after_the_us_close(self):
+        assert "kis-main-overseas" in daily.accounts_in_slot(accounts.ACCOUNTS, "morning")
+        assert "kis-main-overseas" not in daily.accounts_in_slot(accounts.ACCOUNTS, "close")
 
     def test_every_account_belongs_to_exactly_one_slot(self):
         morning = daily.accounts_in_slot(accounts.ACCOUNTS, "morning")
