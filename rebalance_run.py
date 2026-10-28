@@ -206,11 +206,17 @@ def main() -> int:
     sells = [o for o in orders if o.side == "SELL"]
     buys = [o for o in orders if o.side == "BUY"]
     results: dict[str, dict] = {}
+    halted: executor.ExecutionHalted | None = None
 
     if sells:
-        results |= executor.execute(cfg["broker"], client, sells, prices)
+        try:
+            results |= executor.execute(cfg["broker"], client, sells, prices)
+        except executor.ExecutionHalted as e:
+            results |= e.results
+            halted = e
 
-    if buys:
+    # Buys are sized from what the sells raised - not knowable after a halt.
+    if buys and halted is None:
         # Recompute against the cash the sells actually raised, via each
         # broker's own buying-power/order-possible-cash figure rather than
         # a settled-cash balance that hasn't caught up with today's sells.
@@ -228,18 +234,32 @@ def main() -> int:
 
         log.info("\nrevised buy plan:\n%s", rebalance.format_plan(buys))
         if buys and confirm("Proceed with buys?"):
-            results |= executor.execute(cfg["broker"], client, buys, prices)
+            try:
+                results |= executor.execute(cfg["broker"], client, buys,
+                                            prices)
+            except executor.ExecutionHalted as e:
+                results |= e.results
+                halted = e
 
     # sells + buys, not the original `orders`: buys was reassigned above to
     # the post-sell revised plan, and record() must log what was actually
     # sent to the broker, not the stale pre-resize quantities/prices.
     executed_orders = sells + buys
+    if halted is not None:
+        # Orders after the halt were never sent; record only those that were.
+        executed_orders = [o for o in executed_orders if o.symbol in results]
     final_book = apply_fills(book, executed_orders, results)
 
     if not client.dry_run:
         record(account, trade_date, which, executed_orders, results, final_book)
 
     log.info("tranche %d now holds: %s", which, final_book)
+    if halted is not None:
+        log.error("execution halted: %s - recorded only confirmed fills; "
+                  "check the order in the broker app, then expect "
+                  "reconcile to flag the difference on the next run",
+                  halted)
+        return 1
     return 0
 
 

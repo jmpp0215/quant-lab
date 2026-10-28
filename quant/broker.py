@@ -10,8 +10,8 @@ functions, the same shape as the `snapshot()` adapters:
     orderbook(client, symbol)        -> Touch
     place_order(client, order, price) -> OrderHandle | None   (None = dry run)
     open_orders(client)              -> list[OpenOrder]
-    cancel(client, handle)           -> None
-    execution_for(client, handle)    -> dict                  (see Execution)
+    cancel(client, handle)           -> None    (request sent, not confirmed)
+    order_status(client, handle)     -> OrderStatus | None    (None = no record)
 
 `executor` is handed one of those modules and never touches a broker's
 response shape itself.
@@ -55,3 +55,23 @@ class OpenOrder:
     symbol: str
     quantity: int
     filled_quantity: int
+
+
+@dataclass(frozen=True)
+class OrderStatus:
+    """What the broker reports about one order right now.
+
+    open is the broker's own word that some quantity can still fill - an
+    accepted cancel request does not clear it, only the broker confirming
+    the order closed does. filled_quantity is cumulative across every
+    partial fill. execution is the block storage.save_order wants
+    (filledQuantity, averageFilledPrice, commission, tax).
+
+    An adapter that cannot read a field it needs returns None for the whole
+    status rather than defaulting it: a guessed quantity is exactly what
+    the retry loop must never size a reorder from.
+    """
+    quantity: int
+    filled_quantity: int
+    open: bool
+    execution: dict

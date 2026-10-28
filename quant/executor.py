@@ -12,6 +12,7 @@ import logging
 import time
 from dataclasses import replace
 from decimal import Decimal
+from enum import Enum
 
 from quant import config, market
 from quant.broker import OrderHandle, Touch
@@ -33,6 +34,10 @@ MAX_DEVIATION = Decimal("0.02")
 FILL_TIMEOUT = 180
 POLL_INTERVAL = 10
 MAX_ATTEMPTS = 3
+
+# How long a cancelled order may take to be confirmed closed before the
+# run halts. KRX confirms in seconds; this is generous on purpose.
+CANCEL_TIMEOUT = 60
 
 # No new orders once the closing auction begins.
 AUCTION_START = "15:20"
@@ -93,11 +98,102 @@ def auction_imminent(now_hhmm: str) -> bool:
     return now_hhmm >= AUCTION_START
 
 
+class OrderState(Enum):
+    OPEN = "open"
+    PARTIALLY_FILLED = "partially filled"
+    CANCEL_PENDING = "cancel pending"
+    CANCELED = "canceled"            # closed short of full; may hold fills
+    FILLED = "filled"
+    UNKNOWN = "unknown"
+
+
+# Only these states carry a filled quantity the broker will not revise.
+# Everything the retry loop sizes from must come from one of them.
+TERMINAL = (OrderState.FILLED, OrderState.CANCELED)
+
+
+class ExecutionHalted(ExecutionError):
+    """An order's final state could not be confirmed.
+
+    results holds every symbol settled before the halt, plus the halted
+    symbol's fills from earlier attempts that were confirmed - what the
+    caller should record. The unconfirmed attempt is left for
+    tranche.reconcile to surface on the next run.
+    """
+
+    def __init__(self, message: str, results: dict[str, dict]):
+        super().__init__(message)
+        self.results = results
+
+
+def classify(status, placed: int, cancel_sent: bool) -> OrderState:
+    """The state of one order from what the broker reported about it.
+
+    placed is the quantity we sent. A status that disagrees with it, or
+    reports more filled than ordered, is a response we do not understand
+    and reads as UNKNOWN.
+    """
+    if (status is None or status.quantity != placed
+            or not 0 <= status.filled_quantity <= placed):
+        return OrderState.UNKNOWN
+    if status.open:
+        if cancel_sent:
+            return OrderState.CANCEL_PENDING
+        return (OrderState.PARTIALLY_FILLED if status.filled_quantity
+                else OrderState.OPEN)
+    if status.filled_quantity == placed:
+        return OrderState.FILLED
+    return OrderState.CANCELED
+
+
+def await_terminal(broker, client, handle: OrderHandle, placed: int,
+                   timeout: int, cancel_sent: bool):
+    """Poll the order until it reaches a terminal state or time runs out.
+
+    Returns (state, status) as last read. A failed read counts as UNKNOWN
+    and is retried until the deadline, since the order may simply not be
+    visible yet.
+    """
+    deadline = time.time() + timeout
+    while True:
+        try:
+            status = broker.order_status(client, handle)
+        except ApiError as e:
+            log.warning("could not read order %s: %s", handle.order_id, e)
+            status = None
+
+        state = classify(status, placed, cancel_sent)
+        if state in TERMINAL:
+            log.info("order %s %s: %d/%d", handle.order_id, state.value,
+                     status.filled_quantity, placed)
+            return state, status
+        if state is OrderState.PARTIALLY_FILLED:
+            log.info("order %s partially filled: %d/%d", handle.order_id,
+                     status.filled_quantity, placed)
+
+        if time.time() >= deadline:
+            log.warning("order %s still %s after %ds", handle.order_id,
+                        state.value, timeout)
+            return state, status
+        time.sleep(POLL_INTERVAL)
+
+
+def request_cancel(broker, client, handle: OrderHandle) -> None:
+    """Send a cancel. A refusal is logged, not raised: the usual reason is
+    that the order already filled, and the status read that follows is
+    what decides."""
+    try:
+        broker.cancel(client, handle)
+    except ApiError as e:
+        log.warning("cancel of %s refused: %s", handle.order_id, e)
+
+
 def cancel_open_orders(broker, client) -> int:
     """Clear the book of our own resting orders before planning.
 
     Recomputing from current holdings is only correct if nothing of ours
-    is still working. broker is None for an account that can be
+    is still working, so each cancel must be confirmed closed by the
+    broker, not just accepted. broker is None for an account that can be
     snapshotted but never traded (e.g. kis-main-overseas) - nothing to
     clear there.
     """
@@ -106,43 +202,18 @@ def cancel_open_orders(broker, client) -> int:
 
     resting = broker.open_orders(client)
     for entry in resting:
-        broker.cancel(client, entry.handle)
-        log.info("cancelled resting order %s", entry.handle.order_id)
+        request_cancel(broker, client, entry.handle)
+        log.info("cancel sent for resting order %s", entry.handle.order_id)
+    for entry in resting:
+        state, _ = await_terminal(broker, client, entry.handle,
+                                  entry.quantity, CANCEL_TIMEOUT,
+                                  cancel_sent=True)
+        if state not in TERMINAL:
+            raise ExecutionError(
+                f"resting order {entry.handle.order_id} is still "
+                f"{state.value} after cancelling; holdings are not final"
+            )
     return len(resting)
-
-
-def wait_for_fill(broker, client, handle: OrderHandle,
-                  timeout: int | None = None) -> tuple[bool, dict]:
-    """Poll until the order leaves the open list, or time runs out.
-
-    Returns (filled, execution). The execution block carries the average
-    fill price plus commission and tax where the broker computes them for
-    us - worth capturing at the time rather than reconstructing later.
-    """
-
-    timeout = FILL_TIMEOUT if timeout is None else timeout
-    deadline = time.time() + timeout
-    last_execution: dict = {}
-
-    while time.time() < deadline:
-        resting = broker.open_orders(client)
-        match = next(
-            (o for o in resting if o.handle.order_id == handle.order_id), None
-        )
-
-        if match is None:
-            log.info("order %s no longer open", handle.order_id)
-            return True, last_execution
-
-        if match.filled_quantity:
-            last_execution = {"filledQuantity": str(match.filled_quantity)}
-            log.info("order %s partially filled: %s/%s",
-                     handle.order_id, match.filled_quantity, match.quantity)
-
-        time.sleep(POLL_INTERVAL)
-
-    log.warning("order %s still open after %ds", handle.order_id, timeout)
-    return False, last_execution
 
 
 def place(broker, client, order: Order, last: Decimal) -> OrderHandle | None:
@@ -155,15 +226,6 @@ def place(broker, client, order: Order, last: Decimal) -> OrderHandle | None:
              order.side, order.quantity, order.symbol, price, last)
 
     return broker.place_order(client, replace(order, limit_price=price), price)
-
-
-def fetch_execution(broker, client, handle: OrderHandle) -> dict:
-    """Read the final execution block once the order has left the book."""
-    try:
-        return broker.execution_for(client, handle)
-    except ApiError as e:
-        log.warning("could not read execution for %s: %s", handle.order_id, e)
-        return {}
 
 
 def combine_executions(fills: list[tuple[int, dict]]) -> dict:
@@ -204,6 +266,13 @@ def execute(broker, client, orders: list[Order],
     already filled, and partial fills are the normal case rather than the
     exception: the touch frequently holds a small fraction of what the
     order needs.
+
+    The remainder is sized only from a terminal state the broker
+    confirmed - FILLED, or CANCELED with its cumulative fill. An accepted
+    cancel request is not that: fills can land until the broker closes
+    the order. If no terminal state can be read, ExecutionHalted stops
+    the whole run, since later orders (buys after sells) are sized from
+    these results.
     """
     results: dict[str, dict] = {}
 
@@ -231,43 +300,52 @@ def execute(broker, client, orders: list[Order],
                 remaining = 0
                 break
 
-            filled, last_execution = wait_for_fill(broker, client, handle)
+            placed = remaining
+            state, status = await_terminal(broker, client, handle, placed,
+                                           FILL_TIMEOUT, cancel_sent=False)
 
-            if filled:
-                execution = (fetch_execution(broker, client, handle)
-                             or last_execution)
-                got = int(execution.get("filledQuantity") or remaining)
-                total_filled += got
-                remaining -= got
-                last_execution = execution
-                fills.append((got, execution))
-                if remaining > 0:
-                    log.info("%s: %d of %d filled, retrying the rest",
-                             order.symbol, total_filled, order.quantity)
-                continue
+            if state not in TERMINAL:
+                # Timed out. Cancel, then wait for the broker to confirm the
+                # order closed - only its final fill sizes the reprice.
+                request_cancel(broker, client, handle)
+                state, status = await_terminal(broker, client, handle, placed,
+                                               CANCEL_TIMEOUT,
+                                               cancel_sent=True)
 
-            # Timed out. Cancel, read what actually filled, and reprice the
-            # remainder against a fresh book.
-            broker.cancel(client, handle)
-            execution = fetch_execution(broker, client, handle)
-            got = int(execution.get("filledQuantity") or 0)
+            if state not in TERMINAL:
+                results[order.symbol] = _result(remaining, handle, fills,
+                                                last_execution, total_filled)
+                raise ExecutionHalted(
+                    f"{order.symbol}: order {handle.order_id} is "
+                    f"{state.value} after cancelling; its fill is not "
+                    "known, so nothing more can be sized safely",
+                    results,
+                )
+
+            got = status.filled_quantity
             total_filled += got
             remaining -= got
-            if execution:
-                last_execution = execution
+            last_execution = status.execution
             if got:
-                fills.append((got, execution))
+                fills.append((got, status.execution))
 
             log.info("%s: %d of %d filled after attempt %d, %d remaining",
                      order.symbol, total_filled, order.quantity, attempt,
                      remaining)
 
-        results[order.symbol] = {
-            "filled": remaining <= 0,
-            "order_id": handle.order_id if handle else None,
-            "execution": combine_executions(fills) if len(fills) > 1
-                         else last_execution,
-            "filled_quantity": total_filled,
-        }
+        results[order.symbol] = _result(remaining, handle, fills,
+                                        last_execution, total_filled)
 
     return results
+
+
+def _result(remaining: int, handle: OrderHandle | None,
+            fills: list[tuple[int, dict]], last_execution: dict,
+            total_filled: int) -> dict:
+    return {
+        "filled": remaining <= 0,
+        "order_id": handle.order_id if handle else None,
+        "execution": combine_executions(fills) if len(fills) > 1
+                     else last_execution,
+        "filled_quantity": total_filled,
+    }

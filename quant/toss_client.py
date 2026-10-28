@@ -311,8 +311,41 @@ def cancel(client: "TossClient", handle: broker.OrderHandle) -> None:
     client.cancel_order(handle.order_id)
 
 
-def execution_for(client: "TossClient", handle: broker.OrderHandle) -> dict:
-    """Final execution block, read from the closed order list."""
-    entries = client.list_orders("CLOSED")["result"]["orders"]
-    match = next((o for o in entries if o["orderId"] == handle.order_id), None)
-    return (match or {}).get("execution") or {}
+def order_status(client: "TossClient", handle: broker.OrderHandle
+                 ) -> broker.OrderStatus | None:
+    """One order's state from Toss's OPEN and CLOSED order lists.
+
+    An order in the CLOSED list is one Toss itself has finished, so
+    whatever did not fill there never will. A closed order without a
+    filledQuantity, or an order in neither list, returns None rather than
+    being assumed filled or empty.
+
+    NOT YET VERIFIED LIVE: whether a zero-fill cancelled order carries an
+    execution block at all. If it does not, every timeout cancel halts the
+    run - the safe failure, to be relaxed only on seeing the real payload.
+    """
+    for status in ("OPEN", "CLOSED"):
+        entries = client.list_orders(status)["result"]["orders"]
+        match = next((o for o in entries if o["orderId"] == handle.order_id),
+                     None)
+        if match is not None:
+            break
+    else:
+        return None
+
+    execution = match.get("execution") or {}
+    if status == "OPEN":
+        filled = int(execution.get("filledQuantity") or 0)
+    elif execution.get("filledQuantity") is None:
+        log.warning("Toss order %s closed without a filledQuantity: %s",
+                    handle.order_id, match)
+        return None
+    else:
+        filled = int(execution["filledQuantity"])
+
+    return broker.OrderStatus(
+        quantity=int(match["quantity"]),
+        filled_quantity=filled,
+        open=status == "OPEN",
+        execution=execution,
+    )

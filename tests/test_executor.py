@@ -5,8 +5,9 @@ from decimal import Decimal
 import pytest
 
 from quant import executor, kis_client, toss_client
-from quant.broker import OpenOrder, OrderHandle, Touch
-from quant.executor import ExecutionError
+from quant.broker import OpenOrder, OrderHandle, OrderStatus, Touch
+from quant.executor import ExecutionError, ExecutionHalted, OrderState
+from quant.kis_client import KisApiError
 from quant.rebalance import Order
 
 
@@ -71,18 +72,25 @@ class FakeBroker:
     each scenario script when a fill happens. Substituting this for a real
     broker module is the whole point of the interface: executor never sees
     a broker's response shape.
+
+    Each order is tracked as quantity / filled / open. The attempt named by
+    fill_on_attempt fills in full at once; every other attempt rests until
+    cancelled, holding whatever `executions` scripts as already filled, and
+    a cancel closes it with that fill.
     """
 
     def __init__(self, fill_on_attempt: int | None = 1,
-                 touch: Touch | None = None):
+                 touch: Touch | None = None,
+                 executions: dict[str, dict] | None = None):
         self.fill_on_attempt = fill_on_attempt
         self.touch = touch or Touch(
             bid=Decimal("109615"), ask=Decimal("109620"),
             bid_volume=1000, ask_volume=1000,
         )
+        self.executions = executions or {}
         self.placed: list[dict] = []
         self.cancelled: list[str] = []
-        self._open: list[OpenOrder] = []
+        self.orders: dict[str, dict] = {}
 
     def orderbook(self, client, symbol):
         return self.touch
@@ -94,24 +102,35 @@ class FakeBroker:
                             "quantity": order.quantity, "price": price,
                             "order_id": handle.order_id})
 
-        # An order rests on the book unless this attempt is the one
-        # scripted to fill.
-        if attempt != self.fill_on_attempt:
-            self._open.append(OpenOrder(handle=handle, symbol=order.symbol,
-                                        quantity=order.quantity,
-                                        filled_quantity=0))
+        fills = attempt == self.fill_on_attempt
+        scripted = self.executions.get(handle.order_id)
+        if scripted:
+            filled = int(scripted["filledQuantity"])
+        else:
+            filled = order.quantity if fills else 0
+        self.orders[handle.order_id] = {"symbol": order.symbol,
+                                        "quantity": order.quantity,
+                                        "filled": filled, "open": not fills}
         return handle
 
     def open_orders(self, client):
-        return list(self._open)
+        return [OpenOrder(handle=OrderHandle(order_id=oid),
+                          symbol=o["symbol"], quantity=o["quantity"],
+                          filled_quantity=o["filled"])
+                for oid, o in self.orders.items() if o["open"]]
 
     def cancel(self, client, handle):
         self.cancelled.append(handle.order_id)
-        self._open = [o for o in self._open
-                      if o.handle.order_id != handle.order_id]
+        self.orders[handle.order_id]["open"] = False
 
-    def execution_for(self, client, handle):
-        return {}
+    def order_status(self, client, handle):
+        o = self.orders.get(handle.order_id)
+        if o is None:
+            return None
+        execution = self.executions.get(
+            handle.order_id, {"filledQuantity": str(o["filled"])})
+        return OrderStatus(quantity=o["quantity"], filled_quantity=o["filled"],
+                           open=o["open"], execution=execution)
 
 
 class FakeClient:
@@ -119,18 +138,32 @@ class FakeClient:
     dry_run = False
 
 
+class FakeTime:
+    """A clock that only moves when the executor sleeps, so polling
+    deadlines run their full course instantly and deterministically."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
 @pytest.fixture(autouse=True)
-def no_sleep(monkeypatch):
-    """Collapse the polling waits so tests run instantly."""
-    monkeypatch.setattr(executor.time, "sleep", lambda _: None)
-    monkeypatch.setattr(executor, "FILL_TIMEOUT", 1)
+def fake_clock(monkeypatch):
+    monkeypatch.setattr(executor, "time", FakeTime())
+
+
+PRICES = {"102110": Decimal("109615"), "379790": Decimal("109615")}
 
 
 class TestExecuteRetry:
     def test_fills_on_first_attempt(self):
         b, c = FakeBroker(fill_on_attempt=1), FakeClient()
-        results = executor.execute(b, c, [order("BUY")],
-                                   {"102110": Decimal("109615")})
+        results = executor.execute(b, c, [order("BUY")], PRICES)
 
         assert results["102110"]["filled"]
         assert len(b.placed) == 1
@@ -140,8 +173,7 @@ class TestExecuteRetry:
         # The first order rests unfilled; the executor must cancel it
         # before placing another, or the account ends up with both.
         b, c = FakeBroker(fill_on_attempt=2), FakeClient()
-        results = executor.execute(b, c, [order("BUY")],
-                                   {"102110": Decimal("109615")})
+        results = executor.execute(b, c, [order("BUY")], PRICES)
 
         assert results["102110"]["filled"]
         assert len(b.placed) == 2
@@ -149,8 +181,7 @@ class TestExecuteRetry:
 
     def test_gives_up_after_max_attempts(self):
         b, c = FakeBroker(fill_on_attempt=None), FakeClient()
-        results = executor.execute(b, c, [order("BUY")],
-                                   {"102110": Decimal("109615")})
+        results = executor.execute(b, c, [order("BUY")], PRICES)
 
         assert not results["102110"]["filled"]
         assert len(b.placed) == executor.MAX_ATTEMPTS
@@ -161,15 +192,34 @@ class TestExecuteRetry:
         # A leftover resting order would be re-counted as a holding on the
         # next run and skew the entire plan.
         b, c = FakeBroker(fill_on_attempt=None), FakeClient()
-        executor.execute(b, c, [order("BUY")], {"102110": Decimal("109615")})
+        executor.execute(b, c, [order("BUY")], PRICES)
 
-        assert b._open == []
+        assert b.open_orders(c) == []
+
+    def test_reissues_only_the_remainder_of_a_broker_closed_order(self):
+        # The broker closes the first order itself (no cancel from us)
+        # with 4 of 10 filled: the retry must be for 6, not 10.
+        b = FakeBroker(fill_on_attempt=2,
+                       executions={"order-1": {"filledQuantity": "4"}})
+        place = b.place_order
+
+        def place_and_close_first(client, o, price):
+            handle = place(client, o, price)
+            if handle.order_id == "order-1":
+                b.orders["order-1"]["open"] = False
+            return handle
+
+        b.place_order = place_and_close_first
+        results = executor.execute(b, FakeClient(), [order("BUY")], PRICES)
+
+        assert b.cancelled == []
+        assert [p["quantity"] for p in b.placed] == [10, 6]
+        assert results["102110"]["filled_quantity"] == 10
 
     def test_skips_symbol_when_book_is_abnormal(self):
         b = FakeBroker(touch=Touch(bid=Decimal("60000"), ask=Decimal("60000"),
                                    bid_volume=1, ask_volume=1))
-        results = executor.execute(b, FakeClient(), [order("SELL")],
-                                   {"102110": Decimal("109615")})
+        results = executor.execute(b, FakeClient(), [order("SELL")], PRICES)
 
         assert not results["102110"]["filled"]
         assert b.placed == []
@@ -180,24 +230,154 @@ class TestExecuteRetry:
         # that will never arrive.
         b = FakeBroker()
         b.place_order = lambda client, order, price: None
-        results = executor.execute(b, FakeClient(), [order("BUY")],
-                                   {"102110": Decimal("109615")})
+        results = executor.execute(b, FakeClient(), [order("BUY")], PRICES)
 
         assert results["102110"]["filled"]
         assert results["102110"]["order_id"] is None
         assert b.cancelled == []
 
 
-class ScriptedExecutionBroker(FakeBroker):
-    """FakeBroker whose execution_for returns a scripted block per order,
-    for orders that fill across several attempts."""
+class TestClassify:
+    """The order state is derived from quantities the broker reported,
+    never from the bare fact that an order left the open list."""
 
-    def __init__(self, executions: dict[str, dict], **kwargs):
-        super().__init__(**kwargs)
-        self.executions = executions
+    def status(self, filled=0, open=True, quantity=10):
+        return OrderStatus(quantity=quantity, filled_quantity=filled,
+                           open=open, execution={})
 
-    def execution_for(self, client, handle):
-        return self.executions.get(handle.order_id, {})
+    def test_resting_without_fills_is_open(self):
+        assert executor.classify(self.status(), 10, cancel_sent=False) \
+            is OrderState.OPEN
+
+    def test_resting_with_fills_is_partially_filled(self):
+        assert executor.classify(self.status(filled=4), 10, cancel_sent=False) \
+            is OrderState.PARTIALLY_FILLED
+
+    def test_still_open_after_a_cancel_is_cancel_pending(self):
+        # An accepted cancel request is not a closed order.
+        assert executor.classify(self.status(filled=4), 10, cancel_sent=True) \
+            is OrderState.CANCEL_PENDING
+
+    def test_closed_in_full_is_filled(self):
+        assert executor.classify(self.status(filled=10, open=False), 10,
+                                 cancel_sent=True) is OrderState.FILLED
+
+    def test_closed_short_is_canceled(self):
+        for filled in (0, 4):
+            assert executor.classify(self.status(filled=filled, open=False),
+                                     10, cancel_sent=True) \
+                is OrderState.CANCELED
+
+    def test_no_record_is_unknown(self):
+        assert executor.classify(None, 10, cancel_sent=False) \
+            is OrderState.UNKNOWN
+
+    def test_quantity_other_than_placed_is_unknown(self):
+        assert executor.classify(self.status(quantity=7, open=False), 10,
+                                 cancel_sent=False) is OrderState.UNKNOWN
+
+    def test_more_filled_than_ordered_is_unknown(self):
+        assert executor.classify(self.status(filled=11, open=False), 10,
+                                 cancel_sent=False) is OrderState.UNKNOWN
+
+
+class TestUnconfirmedFills:
+    """The retry loop sizes the remainder only from a terminal state the
+    broker confirmed. Before this, an order that left the open list with no
+    readable fill was assumed filled in full, and one whose fill could not
+    be read after a cancel was assumed empty and reordered in full."""
+
+    def test_unreadable_fill_halts_instead_of_assuming_a_full_fill(self):
+        b = FakeBroker(fill_on_attempt=1)
+        b.order_status = lambda client, handle: None
+
+        with pytest.raises(ExecutionHalted) as e:
+            executor.execute(b, FakeClient(), [order("BUY")], PRICES)
+
+        assert len(b.placed) == 1
+        assert e.value.results["102110"]["filled_quantity"] == 0
+        assert not e.value.results["102110"]["filled"]
+
+    def test_unreadable_fill_after_cancel_is_not_reordered(self):
+        b = FakeBroker(fill_on_attempt=None)
+        status = b.order_status
+        b.order_status = lambda client, handle: (
+            None if handle.order_id in b.cancelled
+            else status(client, handle))
+
+        with pytest.raises(ExecutionHalted):
+            executor.execute(b, FakeClient(), [order("BUY")], PRICES)
+
+        assert len(b.placed) == 1
+        assert b.cancelled == ["order-1"]
+
+    def test_fill_landing_after_the_cancel_request_is_counted(self):
+        # The cancel is accepted, but the whole order fills before the
+        # exchange confirms it. Reading the fill right after the cancel
+        # call would see 0 and buy another 10.
+        b = FakeBroker(fill_on_attempt=None)
+
+        def cancel_pending(client, handle):
+            b.cancelled.append(handle.order_id)
+            b.orders[handle.order_id]["pending"] = True
+
+        def status(client, handle):
+            o = b.orders[handle.order_id]
+            if o.get("pending"):
+                # Pending for one read, then the late fill and the close.
+                o["pending"] = False
+                return OrderStatus(quantity=10, filled_quantity=0, open=True,
+                                   execution={})
+            if handle.order_id in b.cancelled:
+                o.update(filled=10, open=False)
+            return OrderStatus(quantity=10, filled_quantity=o["filled"],
+                               open=o["open"],
+                               execution={"filledQuantity": str(o["filled"])})
+
+        b.cancel, b.order_status = cancel_pending, status
+        results = executor.execute(b, FakeClient(), [order("BUY")], PRICES)
+
+        assert len(b.placed) == 1
+        assert results["102110"]["filled"]
+        assert results["102110"]["filled_quantity"] == 10
+
+    def test_cancel_never_confirmed_halts(self):
+        b = FakeBroker(fill_on_attempt=None)
+        b.cancel = lambda client, handle: b.cancelled.append(handle.order_id)
+
+        with pytest.raises(ExecutionHalted, match="cancel pending"):
+            executor.execute(b, FakeClient(), [order("BUY")], PRICES)
+
+        assert len(b.placed) == 1
+
+    def test_refused_cancel_on_an_order_that_just_filled(self):
+        # KIS rejects a cancel when nothing is left to cancel. That
+        # refusal must not abort the run; the status read decides.
+        b = FakeBroker(fill_on_attempt=None)
+
+        def cancel_refused(client, handle):
+            b.orders[handle.order_id].update(filled=10, open=False)
+            raise KisApiError(500, "1", "TEST", "nothing left to cancel")
+
+        b.cancel = cancel_refused
+        results = executor.execute(b, FakeClient(), [order("BUY")], PRICES)
+
+        assert len(b.placed) == 1
+        assert results["102110"]["filled_quantity"] == 10
+
+    def test_halt_keeps_results_settled_before_it(self):
+        b = FakeBroker(fill_on_attempt=1)
+        status = b.order_status
+        b.order_status = lambda client, handle: (
+            None if handle.order_id == "order-2" else status(client, handle))
+        second = Order(symbol="379790", name="KODEX 미국S&P500", side="BUY",
+                       quantity=5, limit_price=Decimal("109620"))
+
+        with pytest.raises(ExecutionHalted) as e:
+            executor.execute(b, FakeClient(), [order("BUY"), second], PRICES)
+
+        assert e.value.results["102110"]["filled_quantity"] == 10
+        assert e.value.results["379790"]["filled_quantity"] == 0
 
 
 class TestExecutionAcrossAttempts:
@@ -208,9 +388,9 @@ class TestExecutionAcrossAttempts:
     379790 buy filled 74 + 2 and was recorded as 2 shares @ 16,957."""
 
     def _run(self, executions, qty=76, fill_on_attempt=2):
-        b = ScriptedExecutionBroker(executions, fill_on_attempt=fill_on_attempt)
+        b = FakeBroker(fill_on_attempt=fill_on_attempt, executions=executions)
         results = executor.execute(b, FakeClient(), [order("BUY", qty)],
-                                   {"102110": Decimal("109615")})
+                                   PRICES)
         return results["102110"]
 
     def test_combines_a_fill_split_across_attempts(self):
@@ -271,13 +451,24 @@ class TestCancelOpenOrders:
 
         assert executor.cancel_open_orders(b, c) == 2
         assert b.cancelled == ["order-1", "order-2"]
-        assert b._open == []
+        assert b.open_orders(c) == []
+
+    def test_refuses_to_plan_while_a_cancel_is_unconfirmed(self):
+        # Planning from holdings while our own order can still fill would
+        # size the run against a position that is about to change.
+        b, c = FakeBroker(fill_on_attempt=None), FakeClient()
+        b.place_order(c, order("BUY"), Decimal("109620"))
+        b.cancel = lambda client, handle: None
+
+        with pytest.raises(ExecutionError, match="cancel pending"):
+            executor.cancel_open_orders(b, c)
 
 class FakeKisClient:
     """Returns KIS-shaped payloads, so the adapter's translation is what
     is under test rather than a hand-written Touch."""
 
-    def __init__(self, book: dict | None = None, dry_run: bool = False):
+    def __init__(self, book: dict | None = None, dry_run: bool = False,
+                 row: dict | None = None):
         # Real payload captured from ISA/102110 on 2026-08-21, trimmed to
         # the fields the adapter reads. KIS pads absent levels with "0".
         self.book = book if book is not None else {
@@ -287,6 +478,15 @@ class FakeKisClient:
         }
         self.dry_run = dry_run
         self.cancelled: list[dict] = []
+        # A TTTC8001R row for a fully filled order. ord_qty/rmn_qty/
+        # cnc_cfrm_qty/rjct_qty are from KIS's documentation, not yet a
+        # captured payload.
+        self.row = row if row is not None else {
+            "odno": "0024989600", "ord_qty": "10", "tot_ccld_qty": "10",
+            "rmn_qty": "0", "cnc_cfrm_qty": "0", "rjct_qty": "0",
+            "avg_prvs": "109510",
+        }
+        self.queried_odno: str | None = None
 
     def orderbook(self, symbol):
         return {"output1": self.book}
@@ -307,9 +507,9 @@ class FakeKisClient:
                             "pdno": "102110", "ord_qty": "10",
                             "tot_ccld_qty": "4"}]}
 
-    def daily_orders(self, start, end):
-        return {"output1": [{"odno": "0024989600", "tot_ccld_qty": "10",
-                             "avg_prvs": "109510"}]}
+    def daily_orders(self, start, end, odno=""):
+        self.queried_odno = odno
+        return {"output1": [self.row]}
 
     def buying_power(self, symbol, price):
         # ord_psbl_cash left deliberately different from nrcvb_buy_amt,
@@ -374,14 +574,56 @@ class TestKisAdapters:
         assert resting[0].quantity == 10
         assert resting[0].filled_quantity == 4
 
-    def test_execution_has_no_fees(self):
+    def _status(self, **row):
+        base = {"odno": "0024989600", "ord_qty": "10", "tot_ccld_qty": "0",
+                "rmn_qty": "0", "cnc_cfrm_qty": "0", "rjct_qty": "0",
+                "avg_prvs": "0"}
+        return kis_client.order_status(FakeKisClient(row=base | row),
+                                       OrderHandle(order_id="0024989600"))
+
+    def test_status_of_a_filled_order_has_no_fees(self):
         # KIS's order inquiry carries no commission or tax. They stay None
         # so storage records NULL rather than an invented figure.
-        ex = kis_client.execution_for(FakeKisClient(),
-                                      OrderHandle(order_id="0024989600"))
+        status = kis_client.order_status(FakeKisClient(),
+                                         OrderHandle(order_id="0024989600"))
+        assert (status.quantity, status.filled_quantity) == (10, 10)
+        assert not status.open
+        ex = status.execution
         assert ex["filledQuantity"] == "10"
         assert ex["averageFilledPrice"] == "109510"
         assert ex["commission"] is None and ex["tax"] is None
+
+    def test_status_queries_the_one_order(self):
+        # Filtering by ODNO keeps the row on the first page; this client
+        # does not follow pagination.
+        client = FakeKisClient()
+        kis_client.order_status(client, OrderHandle(order_id="0024989600"))
+        assert client.queried_odno == "0024989600"
+
+    def test_unconfirmed_cancel_reads_open(self):
+        status = self._status(tot_ccld_qty="4", rmn_qty="6")
+        assert status.open and status.filled_quantity == 4
+
+    def test_confirmed_cancel_closes_with_its_fill(self):
+        status = self._status(tot_ccld_qty="4", cnc_cfrm_qty="6")
+        assert not status.open and status.filled_quantity == 4
+
+    def test_rejected_order_closes_unfilled(self):
+        status = self._status(rjct_qty="10")
+        assert not status.open and status.filled_quantity == 0
+
+    def test_quantities_that_do_not_add_up_are_unknown(self):
+        # 4 filled, nothing remaining or cancelled: 6 shares unaccounted.
+        assert self._status(tot_ccld_qty="4") is None
+
+    def test_missing_field_is_unknown_not_zero(self):
+        client = FakeKisClient()
+        del client.row["cnc_cfrm_qty"]
+        assert kis_client.order_status(
+            client, OrderHandle(order_id="0024989600")) is None
+
+    def test_no_row_is_unknown(self):
+        assert self._status(odno="0000000001") is None
 
     def test_available_cash_reads_nrcvb_buy_amt(self):
         # Not ord_psbl_cash (confirmed live to equal dnca_tot_amt, ignoring
@@ -400,6 +642,9 @@ class ScriptedKisClient:
     checks that executor.execute()'s cancel/reprice/poll loop still works
     once wired to kis_client's actual functions end to end - the piece
     RUNBOOK.md flags as unverified against KIS.
+
+    Each order is one TTTC8001R-shaped row. A cancel moves the remaining
+    quantity to cnc_cfrm_qty, as a confirmed exchange cancel would.
     """
 
     def __init__(self, fill_on_attempt: int | None = 2):
@@ -408,9 +653,8 @@ class ScriptedKisClient:
         self._next_odno = 0
         self.created: list[str] = []
         self.cancelled: list[str] = []
-        self._resting_odno: str | None = None
         self.fill_on_attempt = fill_on_attempt
-        self.fills: dict[str, dict] = {}
+        self.rows: dict[str, dict] = {}
 
     def orderbook(self, symbol):
         return {"output1": {
@@ -422,29 +666,30 @@ class ScriptedKisClient:
         self._next_odno += 1
         odno = f"{self._next_odno:010d}"
         self.created.append(odno)
-        if self._next_odno == self.fill_on_attempt:
-            self.fills[odno] = {"tot_ccld_qty": str(quantity),
-                                "avg_prvs": str(price)}
-        else:
-            self._resting_odno = odno
+        fills = self._next_odno == self.fill_on_attempt
+        self.rows[odno] = {
+            "odno": odno, "ord_gno_brno": "91252", "pdno": symbol,
+            "ord_qty": str(quantity),
+            "tot_ccld_qty": str(quantity if fills else 0),
+            "rmn_qty": str(0 if fills else quantity),
+            "cnc_cfrm_qty": "0", "rjct_qty": "0",
+            "avg_prvs": str(price) if fills else "0",
+        }
         return {"output": {"ODNO": odno, "KRX_FWDG_ORD_ORGNO": "91252"}}
 
     def cancel_order(self, orgn_odno, quantity=0, branch_id=""):
         self.cancelled.append(orgn_odno)
-        if self._resting_odno == orgn_odno:
-            self._resting_odno = None
+        row = self.rows[orgn_odno]
+        row["cnc_cfrm_qty"], row["rmn_qty"] = row["rmn_qty"], "0"
         return {"output": {}}
 
     def list_orders(self):
-        if self._resting_odno is None:
-            return {"output": []}
-        return {"output": [{"odno": self._resting_odno,
-                            "ord_gno_brno": "91252", "pdno": "102110",
-                            "ord_qty": "10", "tot_ccld_qty": "0"}]}
+        return {"output": [r for r in self.rows.values()
+                           if int(r["rmn_qty"]) > 0]}
 
-    def daily_orders(self, start, end):
-        return {"output1": [{"odno": odno, **fill}
-                            for odno, fill in self.fills.items()]}
+    def daily_orders(self, start, end, odno=""):
+        return {"output1": [r for r in self.rows.values()
+                            if not odno or r["odno"] == odno]}
 
 
 class TestExecuteAgainstKis:
@@ -526,3 +771,40 @@ class TestTossAdaptersUnchanged:
         # the prices dict is only there so kis_client's adapter can match.
         assert toss_client.available_cash(self.Client(), {}) == \
             Decimal("5000000")
+
+
+class TestTossOrderStatus:
+    class Client:
+        def __init__(self, open_orders=(), closed_orders=()):
+            self.lists = {"OPEN": list(open_orders),
+                          "CLOSED": list(closed_orders)}
+
+        def list_orders(self, status="OPEN"):
+            return {"result": {"orders": self.lists[status]}}
+
+    handle = OrderHandle(order_id="toss-1")
+
+    def test_open_order_reports_its_partial_fill(self):
+        client = self.Client(open_orders=[{
+            "orderId": "toss-1", "quantity": "10",
+            "execution": {"filledQuantity": "4"}}])
+        status = toss_client.order_status(client, self.handle)
+        assert status.open and status.filled_quantity == 4
+
+    def test_closed_order_is_final(self):
+        execution = {"filledQuantity": "10", "averageFilledPrice": "109620",
+                     "commission": "16"}
+        client = self.Client(closed_orders=[{
+            "orderId": "toss-1", "quantity": "10", "execution": execution}])
+        status = toss_client.order_status(client, self.handle)
+        assert not status.open and status.filled_quantity == 10
+        assert status.execution == execution
+
+    def test_closed_without_a_fill_figure_is_unknown(self):
+        # The old path read this as "filled in full".
+        client = self.Client(closed_orders=[{
+            "orderId": "toss-1", "quantity": "10", "execution": None}])
+        assert toss_client.order_status(client, self.handle) is None
+
+    def test_order_in_neither_list_is_unknown(self):
+        assert toss_client.order_status(self.Client(), self.handle) is None

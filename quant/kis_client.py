@@ -643,11 +643,13 @@ class KisClient:
             },
         )
 
-    def daily_orders(self, start: str, end: str) -> dict:
+    def daily_orders(self, start: str, end: str, odno: str = "") -> dict:
         """Orders and their fills over a date range (tr_id: TTTC8001R).
 
         Dates are YYYYMMDD. Rows carry tot_ccld_qty and avg_prvs but no
-        commission or tax - KIS does not return per-order fees here.
+        commission or tax - KIS does not return per-order fees here. odno
+        narrows the result to one order, which keeps it on the first page
+        (this client does not follow tr_cont pagination).
         """
         return self.get(
             "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
@@ -662,7 +664,7 @@ class KisClient:
                 "PDNO": "",
                 "CCLD_DVSN": "00",
                 "ORD_GNO_BRNO": "",
-                "ODNO": "",
+                "ODNO": odno,
                 "INQR_DVSN_3": "00",
                 "INQR_DVSN_1": "",
                 "CTX_AREA_FK100": "",
@@ -1047,22 +1049,59 @@ def cancel(client: "KisClient", handle: broker.OrderHandle) -> None:
                         branch_id=handle.org_no)
 
 
-def execution_for(client: "KisClient", handle: broker.OrderHandle) -> dict:
-    """Fills for one order, normalised to the shape storage.save_order wants.
+def order_status(client: "KisClient", handle: broker.OrderHandle
+                 ) -> broker.OrderStatus | None:
+    """One order's quantities from today's order inquiry.
+
+    The order is closed only when nothing remains (rmn_qty 0) and every
+    share is accounted for as filled, cancel-confirmed or rejected. A
+    cancel request KIS has accepted but the exchange has not confirmed
+    still shows as remaining, so it reads as open. Rows whose quantities
+    do not add up, or that lack any of these fields, return None - an
+    order we cannot account for must stop the run, not be guessed at.
+
+    NOT YET VERIFIED LIVE: ord_qty/rmn_qty/cnc_cfrm_qty/rjct_qty come from
+    KIS's TTTC8001R documentation, unlike tot_ccld_qty/avg_prvs which the
+    2026-08-31 run exercised. If any is wrong this returns None and the
+    executor halts rather than trading on it.
 
     commission and tax stay None: KIS's order inquiry does not return
     per-order fees, and a rate-based estimate would be recorded as though
     it were the broker's own figure.
     """
     today = datetime.now(KST).strftime("%Y%m%d")
-    rows = client.daily_orders(today, today).get("output1") or []
-    match = next((r for r in rows if r["odno"] == handle.order_id), None)
+    rows = client.daily_orders(today, today,
+                               odno=handle.order_id).get("output1") or []
+    match = next((r for r in rows if r.get("odno") == handle.order_id), None)
     if match is None:
-        return {}
+        return None
 
-    return {
-        "filledQuantity": match["tot_ccld_qty"],
-        "averageFilledPrice": match["avg_prvs"],
-        "commission": None,
-        "tax": None,
-    }
+    try:
+        ordered = int(match["ord_qty"])
+        filled = int(match["tot_ccld_qty"])
+        remaining = int(match["rmn_qty"])
+        closed = int(match["cnc_cfrm_qty"]) + int(match["rjct_qty"])
+        average = match["avg_prvs"]
+    except (KeyError, ValueError) as e:
+        log.warning("KIS order %s: unreadable row (%s): %s",
+                    handle.order_id, e, match)
+        return None
+
+    if filled + closed + remaining != ordered:
+        log.warning("KIS order %s: quantities do not add up "
+                    "(filled %d + cancelled/rejected %d + remaining %d "
+                    "!= ordered %d)", handle.order_id, filled, closed,
+                    remaining, ordered)
+        return None
+
+    return broker.OrderStatus(
+        quantity=ordered,
+        filled_quantity=filled,
+        open=remaining > 0,
+        execution={
+            "filledQuantity": str(filled),
+            "averageFilledPrice": average,
+            "commission": None,
+            "tax": None,
+        },
+    )
