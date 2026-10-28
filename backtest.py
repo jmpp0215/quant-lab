@@ -82,7 +82,8 @@ def summarise(history: list[Rebalance], label: str = "") -> str:
     else:
         vol = Decimal("0")
 
-    sharpe = annualised / vol if vol else Decimal("0")
+    sharpe = sharpe_ratio(history, periods_per_year)
+    sharpe_text = f"{sharpe:>5.2f}" if sharpe is not None else "  n/a"
 
     peak = start
     max_dd = Decimal("0")
@@ -92,8 +93,41 @@ def summarise(history: list[Rebalance], label: str = "") -> str:
 
     return (
         f"{label:<16} return={total:>7.2%}  ann={annualised:>7.2%}  "
-        f"vol={vol:>6.2%}  sharpe={sharpe:>5.2f}  mdd={max_dd:>7.2%}"
+        f"vol={vol:>6.2%}  sharpe={sharpe_text}  mdd={max_dd:>7.2%}"
     )
+
+
+def sharpe_ratio(history: list[Rebalance],
+                 periods_per_year: Decimal) -> Decimal | None:
+    """Annualised Sharpe ratio of per-step returns in excess of cash.
+
+    Each step's risk-free return is the cash proxy's own return over the
+    same interval - the hurdle strategy.evaluate() already holds every
+    pick to - so a run that merely tracks cash scores ~0 rather than the
+    cash yield over a near-zero volatility. Mean and standard deviation
+    are both of the arithmetic per-step excess, scaled by
+    sqrt(periods_per_year). (This used to be CAGR / vol: a geometric
+    numerator over an arithmetic denominator, with no risk-free rate.)
+
+    None when the cash proxy lacks a price at any point (e.g. before it
+    listed) or the excess never varies, rather than falling back to a 0%
+    rate that would overstate the ratio.
+    """
+    cash = [r.prices.get(config.CASH_SYMBOL) for r in history]
+    if len(history) < 3 or any(p is None for p in cash):
+        return None
+
+    excess = [
+        (history[i + 1].value - history[i].value) / history[i].value
+        - (cash[i + 1] - cash[i]) / cash[i]
+        for i in range(len(history) - 1)
+    ]
+    mean = sum(excess) / len(excess)
+    variance = sum((e - mean) ** 2 for e in excess) / (len(excess) - 1)
+    if variance == 0:
+        return None
+    sd = Decimal(str(float(variance) ** 0.5))
+    return mean / sd * Decimal(str(float(periods_per_year) ** 0.5))
 
 def _spread_cost(symbol: str, notional: Decimal) -> Decimal:
     """One-way cost of crossing the spread."""

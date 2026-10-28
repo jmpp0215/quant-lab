@@ -187,3 +187,45 @@ class TestRunTranchedOverlay:
                                         overlay="correction_half")
 
         assert all(r.value == Decimal("10000000") for r in history)
+
+
+def history(values: list[str], cash: list[str | None]) -> list[backtest.Rebalance]:
+    """One point per quarter of 2025, value and cash-proxy price as given."""
+    dates = ["2025-01-01", "2025-04-01", "2025-07-01", "2025-10-01",
+             "2026-01-01"]
+    return [
+        backtest.Rebalance(
+            date=d, weights={}, value=Decimal(v),
+            prices={} if c is None else {config.CASH_SYMBOL: Decimal(c)})
+        for d, v, c in zip(dates, values, cash, strict=False)
+    ]
+
+
+class TestSharpeRatio:
+    def test_excess_over_cash_known_value(self):
+        # Cash flat, so excess = the steps themselves: +2%, 0, +2%, 0.
+        # mean 1%, sample sd 1.1547%, x sqrt(4) = 1.732.
+        h = history(["100", "102", "102", "104.04", "104.04"],
+                    ["10000"] * 5)
+        assert abs(backtest.sharpe_ratio(h, Decimal(4))
+                   - Decimal("1.7320508")) < Decimal("0.0001")
+
+    def test_tracking_cash_scores_zero(self):
+        # The run earns exactly what cash earns plus noise that nets out.
+        # The old CAGR/vol read this as strongly positive.
+        cash = ["10000", "10100", "10201", "10303.01", "10406.0401"]
+        cash_steps = [Decimal(cash[i + 1]) / Decimal(cash[i]) - 1
+                      for i in range(4)]
+        noise = [Decimal("0.01"), Decimal("-0.01")] * 2
+        v = [Decimal("100")]
+        for c, n in zip(cash_steps, noise, strict=True):
+            v.append(v[-1] * (1 + c + n))
+        values = [str(x) for x in v]
+        sharpe = backtest.sharpe_ratio(history(values, cash), Decimal(4))
+        assert abs(sharpe) < Decimal("0.0001")
+
+    def test_no_cash_price_is_not_a_zero_rate(self):
+        h = history(["100", "102", "102", "104.04", "104.04"],
+                    [None, "10000", "10000", "10000", "10000"])
+        assert backtest.sharpe_ratio(h, Decimal(4)) is None
+        assert "sharpe=  n/a" in backtest.summarise(h)
