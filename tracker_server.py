@@ -108,6 +108,16 @@ MACRO_EVENTS = [
     ("2026-12-10", "FOMC 금리 결정 (04:00, 경제전망 포함)"),
 ]
 
+# Earnings of the few names that move the indices, by KST date. Hand-
+# maintained; the overseas account's own holdings come from daily.py.
+# Samsung: samsung.com/sec/ir IR 행사 (read 2026-10-28).
+# NVIDIA: Nasdaq's algorithmic estimate (read 2026-10-28) - replace with
+#   the date NVIDIA announces, usually ~3 weeks ahead.
+EARNINGS_EVENTS = [
+    ("2026-10-29", "삼성전자 3분기 확정실적 컨퍼런스콜 (10:00)"),
+    ("2026-11-19", "엔비디아 실적 발표 · 06:05경 (미 장 마감 후) · 날짜 추정"),
+]
+
 ISA_ACCOUNT = "kis-isa"   # tax-free dividends, ISA limits
 CASHFLOW_ACCOUNTS = ("kis-isa", "kis-main", "kis-main-overseas", "toss-bot")
 # Accounts without a strategy backtest get a range from their current
@@ -629,6 +639,9 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
     upcoming += [{"kind": "macro", "date": d, "account": None, "label": label,
                   "amount": None}
                  for d, label in MACRO_EVENTS if today.isoformat() <= d <= until]
+    upcoming += [{"kind": "earnings", "date": d, "account": None, "label": label,
+                  "amount": None}
+                 for d, label in EARNINGS_EVENTS if today.isoformat() <= d <= until]
     predictions = [tracker.parse_prediction(f.read_text(encoding="utf-8")) | {"file": f.name}
                    for f in sorted(JOURNAL_DIR.glob("*.md"))] if JOURNAL_DIR.exists() else []
     upcoming += [{"kind": "prediction", "date": e["resolve_by"], "account": None,

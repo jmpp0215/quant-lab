@@ -177,6 +177,10 @@ places orders.
   - `fear_losers_log.py`: RESEARCH_LOG §50 forward record of fear-time losers (`quant/fear_losers.py`),
     logged to `data/fear_losers/log/`; `report` hides results until the pre-registered sample is reached.
   - `backups.py`: daily database backups.
+  - Earnings dates (`daily.upcoming_earnings`): `kis-main-overseas` holdings from Nasdaq's
+    earnings-date page, cached in `data/earnings.json` since Nasdaq blanks a date around the
+    report day. Index movers (Samsung, NVIDIA) are hand-maintained in
+    `tracker_server.EARNINGS_EVENTS`, like `MACRO_EVENTS`.
 - LLM features run through the Claude Code CLI (`claude -p`, the user's subscription). There is no
   Anthropic API key. Follow `news_risk.py`: an empty temp dir, `--json-schema`, and
   `structured_output` in the reply. Send names and shares only, never amounts.

@@ -1,12 +1,18 @@
-"""Upcoming rebalances and dividends for the asset tracker (pure).
+"""Upcoming rebalances, dividends and earnings for the asset tracker (pure).
 
-daily.py fetches the calendar and dividend announcements and records what
+daily.py fetches the calendar, dividend announcements and earnings dates
+and records what
 these functions return; the tracker only reads the result. Nothing here
 decides whether to trade - tranche.due_today and check_pbr_due stay the
 authority on that; this only projects their rules forward to show dates.
 """
 
+import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from quant import config
+from quant.market import KST
 
 
 def open_days(holiday_responses: list[dict]) -> list[str]:
@@ -85,3 +91,54 @@ def upcoming_dividends(events: list[dict], holdings: list[dict],
             })
     return sorted(out, key=lambda r: (r["record_date"], r["account"], r["symbol"]))
 
+
+
+# Nasdaq's earnings-date reportText, e.g. "... is expected* to report
+# earnings on  11/02/2026 after market close." "estimated" means Nasdaq's
+# own guess from past report dates, not a date the vendor has.
+_EARNINGS_RE = re.compile(
+    r"is (expected\*?|estimated) to report earnings on\s+(\d{2})/(\d{2})/(\d{4})"
+    r"(\s+after market close|\s+before market open)?")
+NY = ZoneInfo("America/New_York")
+# Report times are only given as before open / after close; these are the
+# usual release hours, so the KST time shown is approximate.
+_REPORT_HOUR = {"amc": 16, "bmo": 8}
+
+
+def parse_earnings(report_text: str) -> dict | None:
+    """{"us_date", "timing" ("amc"/"bmo"/None), "estimated"} from Nasdaq's
+    reportText, or None when it has no upcoming date."""
+    m = _EARNINGS_RE.search(report_text or "")
+    if m is None:
+        return None
+    timing = m.group(5)
+    return {"us_date": f"{m.group(4)}-{m.group(2)}-{m.group(3)}",
+            "timing": None if timing is None
+            else "amc" if "after" in timing else "bmo",
+            "estimated": m.group(1) == "estimated"}
+
+
+def earnings_kst(us_date: str, timing: str | None) -> tuple[str, str | None]:
+    """(KST date, "HH:MM" or None) of a US report. An after-close report
+    lands early the next morning in Korea; DST is taken from the date."""
+    if timing is None:
+        return us_date, None
+    at = datetime.fromisoformat(us_date).replace(hour=_REPORT_HOUR[timing], tzinfo=NY)
+    kst = at.astimezone(KST)
+    return kst.date().isoformat(), kst.strftime("%H:%M")
+
+
+def merge_earnings(cached: dict, fetched: dict, held: set[str],
+                   today: str) -> dict:
+    """Earnings dates by symbol for the held symbols: this run's fetch, or
+    the cached date when the fetch has none and the KST date isn't past.
+
+    Nasdaq drops a date around the day itself (MSFT and GOOGL came back
+    empty on their 2026-10-28 report day), which is exactly when it matters.
+    """
+    out = {}
+    for symbol in held:
+        e = fetched.get(symbol) or cached.get(symbol)
+        if e is not None and earnings_kst(e["us_date"], e["timing"])[0] >= today:
+            out[symbol] = e
+    return out

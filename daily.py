@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import requests
+
 import backups
 import fear_losers_log
 import news_risk
@@ -162,6 +164,48 @@ DIVIDEND_LOOKAHEAD_DAYS = 120
 # up to ~a month, and a symbol sold since may still pay.
 DIVIDEND_LOOKBACK_DAYS = 60
 
+# Earnings dates for the overseas account's holdings, from Nasdaq's
+# per-symbol page (Zacks dates, no login). Cached because Nasdaq blanks a
+# date around the report day itself - see schedule.merge_earnings.
+EARNINGS_ACCOUNT = "kis-main-overseas"
+EARNINGS_URL = "https://api.nasdaq.com/api/analyst/{}/earnings-date"
+EARNINGS_CACHE = storage.DB_PATH.parent / "earnings.json"
+
+
+def fetch_earnings(symbol: str) -> dict | None:
+    """schedule.parse_earnings of Nasdaq's page for a US symbol ("BRK/B" as BRK.B)."""
+    r = requests.get(EARNINGS_URL.format(symbol.replace("/", ".")),
+                     headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+                     timeout=15)
+    r.raise_for_status()
+    return schedule.parse_earnings((r.json().get("data") or {}).get("reportText"))
+
+
+def upcoming_earnings(holdings: dict[str, str], today: str) -> list[dict]:
+    """Upcoming-list rows for the held symbols' next earnings ({symbol: name})."""
+    cached = json.loads(EARNINGS_CACHE.read_text()) if EARNINGS_CACHE.exists() else {}
+    fetched = {}
+    for symbol in sorted(holdings):
+        try:
+            e = fetch_earnings(symbol)
+        except (requests.RequestException, ValueError) as err:
+            log.error("%s: earnings date failed: %s", symbol, err)
+            continue
+        if e is not None:
+            fetched[symbol] = e
+        time.sleep(1)
+    dates = schedule.merge_earnings(cached, fetched, set(holdings), today)
+    EARNINGS_CACHE.write_text(json.dumps(dates, ensure_ascii=False, indent=1))
+    rows = []
+    for symbol, e in sorted(dates.items()):
+        day, at = schedule.earnings_kst(e["us_date"], e["timing"])
+        when = ("시간 미정" if at is None else
+                f"{at}경 (미 장 {'마감 후' if e['timing'] == 'amc' else '시작 전'})")
+        guess = " · 날짜 추정" if e["estimated"] else ""
+        rows.append({"kind": "earnings", "date": day, "account": EARNINGS_ACCOUNT,
+                     "label": f"{holdings[symbol]} 실적 발표 · {when}{guess}"})
+    return rows
+
 
 def tranche_preview(weights: dict[str, Decimal], books: dict[int, dict[str, int]],
                     which: int, prices: dict[str, Decimal], cash: Decimal,
@@ -269,6 +313,16 @@ def record_upcoming(client: KisClient, past_days: list[str],
                      "account": d["account"],
                      "label": f"{d['name']} 배당 기준일 · {d['qty']}주 · {per}{when}",
                      "amount": d["expected"]})
+
+    try:
+        rows += upcoming_earnings(
+            {p["symbol"]: p.get("name") or p["symbol"] for r in latest
+             if r["account"] == EARNINGS_ACCOUNT for p in json.loads(r["positions"])},
+            today)
+    except Exception:
+        # Display only, from a third-party page: losing it must not lose
+        # the tranche and dividend rows recorded with it.
+        log.exception("earnings dates failed")
 
     preview = None
     if signal is not None and closes and next_tranche:

@@ -872,7 +872,8 @@ function renderUpcoming(d) {
     what.append(u.label);
     const sm = document.createElement("small");
     sm.textContent = `${u.date} · ${u.account ? ACCOUNT_LABEL(u.account)
-                                          : u.kind === "prediction" ? "예측 저널" : "경제 일정"}`;
+                                          : u.kind === "prediction" ? "예측 저널"
+                                          : u.kind === "earnings" ? "실적 발표" : "경제 일정"}`;
     what.append(sm);
     const amt = document.createElement("span"); amt.className = "amt";
     amt.textContent = u.amount != null ? `약 ${won(u.amount)}원` : "";
