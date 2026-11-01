@@ -468,7 +468,7 @@ class FakeKisClient:
     is under test rather than a hand-written Touch."""
 
     def __init__(self, book: dict | None = None, dry_run: bool = False,
-                 row: dict | None = None):
+                 row: dict | None = None, rows: list[dict] | None = None):
         # Real payload captured from ISA/102110 on 2026-08-21, trimmed to
         # the fields the adapter reads. KIS pads absent levels with "0".
         self.book = book if book is not None else {
@@ -478,14 +478,15 @@ class FakeKisClient:
         }
         self.dry_run = dry_run
         self.cancelled: list[dict] = []
-        # A TTTC8001R row for a fully filled order. ord_qty/rmn_qty/
-        # cnc_cfrm_qty/rjct_qty are from KIS's documentation, not yet a
-        # captured payload.
+        # A TTTC8001R row for a fully filled order, in the shape of live
+        # kis-isa rows read 2026-11-01. rows, when given, replaces the
+        # one-row reply (an original plus its cancel rows).
         self.row = row if row is not None else {
             "odno": "0024989600", "ord_qty": "10", "tot_ccld_qty": "10",
-            "rmn_qty": "0", "cnc_cfrm_qty": "0", "rjct_qty": "0",
+            "rmn_qty": "0", "cncl_cfrm_qty": "0", "rjct_qty": "0",
             "avg_prvs": "109510",
         }
+        self.rows = rows
         self.queried_odno: str | None = None
 
     def orderbook(self, symbol):
@@ -509,7 +510,7 @@ class FakeKisClient:
 
     def daily_orders(self, start, end, odno=""):
         self.queried_odno = odno
-        return {"output1": [self.row]}
+        return {"output1": self.rows if self.rows is not None else [self.row]}
 
     def buying_power(self, symbol, price):
         # ord_psbl_cash left deliberately different from nrcvb_buy_amt,
@@ -576,7 +577,7 @@ class TestKisAdapters:
 
     def _status(self, **row):
         base = {"odno": "0024989600", "ord_qty": "10", "tot_ccld_qty": "0",
-                "rmn_qty": "0", "cnc_cfrm_qty": "0", "rjct_qty": "0",
+                "rmn_qty": "0", "cncl_cfrm_qty": "0", "rjct_qty": "0",
                 "avg_prvs": "0"}
         return kis_client.order_status(FakeKisClient(row=base | row),
                                        OrderHandle(order_id="0024989600"))
@@ -604,9 +605,34 @@ class TestKisAdapters:
         status = self._status(tot_ccld_qty="4", rmn_qty="6")
         assert status.open and status.filled_quantity == 4
 
+    def _status_with_cancel(self, cancel_qty="6", name="매수취소*", **row):
+        base = {"odno": "0024989600", "orgn_odno": "", "ord_qty": "10",
+                "tot_ccld_qty": "4", "rmn_qty": "0", "cncl_cfrm_qty": "0",
+                "rjct_qty": "0", "avg_prvs": "109510"}
+        cancel = {"odno": "0024999900", "orgn_odno": "0024989600",
+                  "sll_buy_dvsn_cd_name": name, "ord_qty": cancel_qty,
+                  "tot_ccld_qty": "0", "rmn_qty": "0", "cncl_cfrm_qty": "0",
+                  "rjct_qty": "0", "avg_prvs": "0"}
+        return kis_client.order_status(
+            FakeKisClient(rows=[cancel, base | row]),
+            OrderHandle(order_id="0024989600"))
+
     def test_confirmed_cancel_closes_with_its_fill(self):
-        status = self._status(tot_ccld_qty="4", cnc_cfrm_qty="6")
+        # Live shape (2026-10-01 0020682800): original 76 ordered, 74
+        # filled, rmn 0, cncl_cfrm_qty 0; the 2 cancelled are on a
+        # separate 매수취소* row pointing back via orgn_odno.
+        status = self._status_with_cancel()
         assert not status.open and status.filled_quantity == 4
+
+    def test_cancel_accepted_but_not_confirmed_reads_open(self):
+        status = self._status_with_cancel(rmn_qty="6")
+        assert status.open and status.filled_quantity == 4
+
+    def test_cancel_row_that_does_not_cover_the_shortfall_is_unknown(self):
+        assert self._status_with_cancel(cancel_qty="5") is None
+
+    def test_child_row_that_is_not_a_cancel_is_unknown(self):
+        assert self._status_with_cancel(name="매수정정*") is None
 
     def test_rejected_order_closes_unfilled(self):
         status = self._status(rjct_qty="10")
@@ -618,7 +644,7 @@ class TestKisAdapters:
 
     def test_missing_field_is_unknown_not_zero(self):
         client = FakeKisClient()
-        del client.row["cnc_cfrm_qty"]
+        del client.row["cncl_cfrm_qty"]
         assert kis_client.order_status(
             client, OrderHandle(order_id="0024989600")) is None
 
@@ -643,8 +669,9 @@ class ScriptedKisClient:
     once wired to kis_client's actual functions end to end - the piece
     RUNBOOK.md flags as unverified against KIS.
 
-    Each order is one TTTC8001R-shaped row. A cancel moves the remaining
-    quantity to cnc_cfrm_qty, as a confirmed exchange cancel would.
+    Each order is one TTTC8001R-shaped row. A cancel zeroes the original's
+    rmn_qty and adds a separate 취소 row for the remainder pointing back via
+    orgn_odno - the shape live rows showed on 2026-11-01.
     """
 
     def __init__(self, fill_on_attempt: int | None = 2):
@@ -672,7 +699,7 @@ class ScriptedKisClient:
             "ord_qty": str(quantity),
             "tot_ccld_qty": str(quantity if fills else 0),
             "rmn_qty": str(0 if fills else quantity),
-            "cnc_cfrm_qty": "0", "rjct_qty": "0",
+            "orgn_odno": "", "cncl_cfrm_qty": "0", "rjct_qty": "0",
             "avg_prvs": str(price) if fills else "0",
         }
         return {"output": {"ODNO": odno, "KRX_FWDG_ORD_ORGNO": "91252"}}
@@ -680,7 +707,15 @@ class ScriptedKisClient:
     def cancel_order(self, orgn_odno, quantity=0, branch_id=""):
         self.cancelled.append(orgn_odno)
         row = self.rows[orgn_odno]
-        row["cnc_cfrm_qty"], row["rmn_qty"] = row["rmn_qty"], "0"
+        # Its own number space: fill_on_attempt counts orders, not cancels.
+        cancel_odno = "9" + orgn_odno[1:]
+        self.rows[cancel_odno] = {
+            "odno": cancel_odno, "orgn_odno": orgn_odno,
+            "sll_buy_dvsn_cd_name": "매수취소*", "ord_qty": row["rmn_qty"],
+            "tot_ccld_qty": "0", "rmn_qty": "0", "cncl_cfrm_qty": "0",
+            "rjct_qty": "0", "avg_prvs": "0",
+        }
+        row["rmn_qty"] = "0"
         return {"output": {}}
 
     def list_orders(self):
@@ -689,7 +724,7 @@ class ScriptedKisClient:
 
     def daily_orders(self, start, end, odno=""):
         return {"output1": [r for r in self.rows.values()
-                            if not odno or r["odno"] == odno]}
+                            if not odno or odno in (r["odno"], r["orgn_odno"])]}
 
 
 class TestExecuteAgainstKis:

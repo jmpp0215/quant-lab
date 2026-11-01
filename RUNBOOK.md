@@ -173,6 +173,29 @@ removing the entry needs updating those tests too, not just checking
 current holdings. Add to `HELD_ETFS` before trading any other outside
 holding.
 
+## Order-state executor: broker status fields (October 2026)
+
+The executor rewrite (faf3921) reorders only from a broker-confirmed final
+state, read by each broker's `order_status()`.
+
+**KIS (`kis_client.order_status`, TTTC8001R): checked 2026-11-01 against
+past kis-isa orders, read-only.** The documented fields were wrong. The
+cancel field is `cncl_cfrm_qty`, not `cnc_cfrm_qty`, and it stays 0 even
+on cancelled orders. Once a cancel is confirmed, the original row reads
+`rmn_qty` 0 with only its fill. The cancelled quantity is the `ord_qty` of
+a separate `매수취소*`/`매도취소*` row whose `orgn_odno` is the original's
+`odno`, and the ODNO-filtered query returns both rows. As committed, every
+KIS order would have halted the run. After the fix, all 21 orders from
+08-31 to 10-19 read correctly, including the three timeout cancels
+(e.g. 10-01 0020682800: 76 ordered, 74 filled, closed). Not seen live: a
+resting order (`rmn_qty` > 0) or a cancel accepted but not yet confirmed.
+If either reads differently, the status comes back None and the run halts
+rather than trading. Watch the first order of the next tranche.
+
+**Toss: not yet checked.** Before the next `toss-bot` run, confirm that a
+cancelled order with zero fills carries `execution.filledQuantity` in the
+CLOSED list. Without it, every timeout cancel halts the run.
+
 ## toss-bot (sandbox)
 
 `toss-bot` is no longer on the regular tranche schedule - it exists for

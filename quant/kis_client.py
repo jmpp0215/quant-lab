@@ -1053,17 +1053,21 @@ def order_status(client: "KisClient", handle: broker.OrderHandle
                  ) -> broker.OrderStatus | None:
     """One order's quantities from today's order inquiry.
 
-    The order is closed only when nothing remains (rmn_qty 0) and every
-    share is accounted for as filled, cancel-confirmed or rejected. A
-    cancel request KIS has accepted but the exchange has not confirmed
-    still shows as remaining, so it reads as open. Rows whose quantities
-    do not add up, or that lack any of these fields, return None - an
-    order we cannot account for must stop the run, not be guessed at.
+    Verified against live TTTC8001R rows (kis-isa, 2026-08-31, 10-01,
+    10-19) on 2026-11-01. A cancel does not show on the original order's
+    row: once confirmed, the original reads rmn_qty 0 with only its fill
+    in tot_ccld_qty, and its cncl_cfrm_qty stays 0. The cancelled
+    quantity is the ord_qty of a separate cancel row (sll_buy_dvsn_cd_name
+    '매수취소*'/'매도취소*') whose orgn_odno is the original's odno. The
+    ODNO-filtered query returns both rows.
 
-    NOT YET VERIFIED LIVE: ord_qty/rmn_qty/cnc_cfrm_qty/rjct_qty come from
-    KIS's TTTC8001R documentation, unlike tot_ccld_qty/avg_prvs which the
-    2026-08-31 run exercised. If any is wrong this returns None and the
-    executor halts rather than trading on it.
+    The order is open while rmn_qty > 0, even with a cancel row already
+    present (accepted, not yet confirmed). It is closed once nothing
+    remains and every share is accounted for as filled, cancelled (cancel
+    rows plus cncl_cfrm_qty) or rejected. Rows that do not add up, lack a
+    field, or have a child row that is not a cancel (we never amend an
+    order) return None. An order we cannot account for must stop the run,
+    not be guessed at.
 
     commission and tax stay None: KIS's order inquiry does not return
     per-order fees, and a rate-based estimate would be recorded as though
@@ -1075,22 +1079,32 @@ def order_status(client: "KisClient", handle: broker.OrderHandle
     match = next((r for r in rows if r.get("odno") == handle.order_id), None)
     if match is None:
         return None
+    children = [r for r in rows if r.get("orgn_odno") == handle.order_id]
+    if any("취소" not in r.get("sll_buy_dvsn_cd_name", "") for r in children):
+        log.warning("KIS order %s: a child row is not a cancel: %s",
+                    handle.order_id, children)
+        return None
 
     try:
         ordered = int(match["ord_qty"])
         filled = int(match["tot_ccld_qty"])
         remaining = int(match["rmn_qty"])
-        closed = int(match["cnc_cfrm_qty"]) + int(match["rjct_qty"])
+        closed = (int(match["cncl_cfrm_qty"]) + int(match["rjct_qty"])
+                  + sum(int(r["ord_qty"]) for r in children))
         average = match["avg_prvs"]
     except (KeyError, ValueError) as e:
         log.warning("KIS order %s: unreadable row (%s): %s",
                     handle.order_id, e, match)
         return None
 
-    if filled + closed + remaining != ordered:
+    if remaining > 0:
+        adds_up = filled + remaining <= ordered
+    else:
+        adds_up = filled + closed == ordered
+    if not adds_up:
         log.warning("KIS order %s: quantities do not add up "
                     "(filled %d + cancelled/rejected %d + remaining %d "
-                    "!= ordered %d)", handle.order_id, filled, closed,
+                    "vs ordered %d)", handle.order_id, filled, closed,
                     remaining, ordered)
         return None
 
