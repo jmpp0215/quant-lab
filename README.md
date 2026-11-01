@@ -182,7 +182,7 @@ State and signals are stored locally in a SQLite database at `data/quant.db`.
 - [x] Scheduled daily runs
 - [x] Order execution (sell → confirm fills → buy)
   - Toss and KIS domestic: live trading verified (KIS on 2026-08-31)
-  - Order-state executor (October 2026): unit-tested; broker status fields pending a live check
+  - Order-state executor (October 2026): KIS status fields checked against live order history; Toss pending
   - KIS overseas: read-only (snapshots, quotes); no overseas orders
 - [x] Multi-account support and tranche drift reconciliation
 - [x] Backtest and performance metrics (Sharpe on excess return over the cash proxy)
