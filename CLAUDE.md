@@ -181,6 +181,10 @@ places orders.
     earnings-date page, cached in `data/earnings.json` since Nasdaq blanks a date around the
     report day. Index movers (Samsung, NVIDIA) are hand-maintained in
     `tracker_server.EARNINGS_EVENTS`, like `MACRO_EVENTS`.
+- `us_live.py` (own launchd job `com.jongminpark.quantlab.uslive`, Tue–Sat 09:00/11:00 KST, not
+  `daily.py`): yt-dlp pulls the auto-captions of last night's '오선의 미국 증시 라이브' (@futuresnow)
+  stream, Haiku condenses each hour, Sonnet merges them into the tracker home tab's overnight recap
+  (`data/us_live/`) plus a phone line. Only the 11:00 run reports a miss.
 - LLM features run through the Claude Code CLI (`claude -p`, the user's subscription). There is no
   Anthropic API key. Follow `news_risk.py`: an empty temp dir, `--json-schema`, and
   `structured_output` in the reply. Send names and shares only, never amounts.
