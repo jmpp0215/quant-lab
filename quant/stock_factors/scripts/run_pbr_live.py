@@ -113,17 +113,31 @@ def equal_weight_shadow(target_weights: dict) -> dict[str, float]:
     return {sym: round(1 / n, 6) for sym in sorted(target_weights)} if n else {}
 
 
+def execute_until_halt(broker, client, orders, prices) -> tuple[dict, Exception | None]:
+    """executor.execute, but an ExecutionHalted comes back as a value.
+
+    A halt means one order's final state couldn't be confirmed. The
+    symbols settled before it (e.results) still have to be recorded, so
+    the caller gets them plus the halt instead of a crash that loses them.
+    """
+    try:
+        return executor.execute(broker, client, orders, prices), None
+    except executor.ExecutionHalted as e:
+        return e.results, e
+
+
 def build_summary(failed: list, partial: list, halted, retry_of: str | None,
                   weighting_scheme: str, inverse_vol_fallback: bool | None,
                   admin_removed: list, admin_filter_error: str | None,
                   equal_weight_target: dict | None = None,
                   rank_boundary: dict | None = None,
-                  over_boundary: dict | None = None) -> dict:
+                  over_boundary: dict | None = None,
+                  execution_halted: str | None = None) -> dict:
     """summary_json for pbr_live.db's pbr_rebalance row."""
     summary = {
         "failed": failed,
         "partial": partial,
-        "all_clear": not failed and not partial,
+        "all_clear": not failed and not partial and execution_halted is None,
         "halted": sorted(halted),
         "weighting_scheme": weighting_scheme,
         "inverse_vol_fallback": inverse_vol_fallback,
@@ -137,6 +151,8 @@ def build_summary(failed: list, partial: list, halted, retry_of: str | None,
         summary["over_boundary"] = over_boundary or {}
     if retry_of:
         summary["retry_of"] = retry_of
+    if execution_halted is not None:
+        summary["execution_halted"] = execution_halted
     return summary
 
 
@@ -405,13 +421,17 @@ def main():
             log.info("AUTO mode enabled. Skipping interactive prompt.")
             
         results = {}
+        halt = None
         if sells:
             log.info("Executing SELLS...")
-            results |= executor.execute(cfg["broker"], client, sells, final_prices)
+            results, halt = execute_until_halt(cfg["broker"], client, sells, final_prices)
             
         executed_orders = list(sells)
             
-        if buys:
+        # Buys are sized from what the sells raised - not knowable after a halt.
+        if buys and halt is not None:
+            log.error("SELLS halted; skipping BUYS this run")
+        if buys and halt is None:
             log.info("Recomputing BUYS based on actual cash after SELLS...")
             cash_after_sells = cfg["buying_power"](client, final_prices)
             
@@ -438,8 +458,14 @@ def main():
             log.info(f"Revised BUYS: {len(revised_buys)} orders")
             if revised_buys:
                 log.info("Executing revised BUYS...")
-                results |= executor.execute(cfg["broker"], client, revised_buys, final_prices)
+                buy_results, halt = execute_until_halt(cfg["broker"], client, revised_buys,
+                                                       final_prices)
+                results |= buy_results
                 executed_orders.extend(revised_buys)
+
+        if halt is not None:
+            # Orders after the halt were never sent; record only those that were.
+            executed_orders = [o for o in executed_orders if o.symbol in results]
             
         log.info("Execution complete.")
         
@@ -460,7 +486,8 @@ def main():
                                      equal_weight_target=shadow,
                                      rank_boundary={s: float(b) for s, b in boundary.items()
                                                     if s in target_weights},
-                                     over_boundary=over_boundary)
+                                     over_boundary=over_boundary,
+                                     execution_halted=str(halt) if halt else None)
 
         target_dict = {sym: float(w) for sym, w in target_weights.items()}
         
@@ -490,13 +517,18 @@ def main():
             print(f"[전량 미체결 종목]: {', '.join(failed)}")
         if partial:
             print(f"[부분 체결 종목]: {', '.join(partial)}")
-        if not failed and not partial:
+        if not failed and not partial and halt is None:
             print("[모든 종목 정상 체결 완료]")
             
         if args.auto:
             # Here we could theoretically send a Slack/Telegram message if the project has one.
             # But the user said "구체적 알림 방식은 momentum이 쓰는 방식이 있다면 그걸 재사용, 없다면 로그 파일 + 터미널 출력으로 충분"
             log.info("Summary logged to pbr_live.db successfully.")
+
+        if halt is not None:
+            log.error("execution halted: %s - recorded only confirmed fills; check the "
+                      "order in the broker app before running again", halt)
+            return 1
             
     else:
         print("\n(DRY_RUN mode: No actual orders were placed. Run with TOSS_DRY_RUN=false to execute.)")

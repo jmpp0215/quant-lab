@@ -3,12 +3,14 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
+from quant import executor
 from quant.stock_factors.portfolio_construction import PBRConfig
 from quant.stock_factors.scripts import pbr_storage
 from quant.stock_factors.scripts.run_pbr_live import (
     apply_admin_filter,
     build_summary,
     equal_weight_shadow,
+    execute_until_halt,
     filter_admin_stocks,
     inverse_vol_fell_back,
     over_rank_boundary,
@@ -190,6 +192,45 @@ class TestBuildSummary:
         s = build_summary([], [], set(), "2026-09-14", "replayed", None, [], None)
         assert s["retry_of"] == "2026-09-14"
         assert s["all_clear"] is True
+
+    def test_execution_halt_is_never_all_clear(self):
+        s = build_summary([], [], set(), None, "equal", None, [], None,
+                          execution_halted="000670: no terminal state")
+        assert s["all_clear"] is False
+        assert s["execution_halted"] == "000670: no terminal state"
+
+    def test_no_halt_key_without_a_halt(self):
+        assert "execution_halted" not in build_summary([], [], set(), None, "equal",
+                                                       None, [], None)
+
+
+class TestExecuteUntilHalt:
+    def test_passes_results_through_when_nothing_halts(self, monkeypatch):
+        monkeypatch.setattr(executor, "execute",
+                            lambda *a: {"A": {"filled": True, "filled_quantity": 3}})
+        results, halt = execute_until_halt("toss", None, [], {})
+        assert results == {"A": {"filled": True, "filled_quantity": 3}}
+        assert halt is None
+
+    def test_halt_returns_confirmed_results_instead_of_raising(self, monkeypatch):
+        settled = {"A": {"filled": True, "filled_quantity": 3},
+                   "B": {"filled": False, "filled_quantity": 1}}
+
+        def halting(*a):
+            raise executor.ExecutionHalted("B: no terminal state", settled)
+
+        monkeypatch.setattr(executor, "execute", halting)
+        results, halt = execute_until_halt("kis", None, [], {})
+        assert results == settled
+        assert isinstance(halt, executor.ExecutionHalted)
+
+    def test_other_execution_errors_still_raise(self, monkeypatch):
+        def failing(*a):
+            raise executor.ExecutionError("A: no ask in the book")
+
+        monkeypatch.setattr(executor, "execute", failing)
+        with pytest.raises(executor.ExecutionError, match="no ask"):
+            execute_until_halt("kis", None, [], {})
 
 
 class TestEqualWeightShadow:
