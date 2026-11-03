@@ -94,12 +94,14 @@ def classify(series: list[Step]) -> list[dict]:
     out = []
     for i, s in enumerate(series):
         u = s.unexplained
-        if abs(u) <= TRADE_TOLERANCE * s.traded + TRADE_FLOOR:
-            continue
+        # Before the trade tolerance: on a rebalance day a dividend is smaller
+        # than 3% of the traded value and would be dropped as fill noise.
         lo, hi = DIVIDEND_RANGE
         if s.dividends > 0 and lo * s.dividends <= u <= hi * s.dividends + TRADE_FLOOR:
             out.append({"date": s.date, "prev_date": s.prev_date, "amount": u,
                         "kind": "dividend"})
+            continue
+        if abs(u) <= TRADE_TOLERANCE * s.traded + TRADE_FLOOR:
             continue
         if abs(u) < THRESHOLD:
             continue

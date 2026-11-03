@@ -126,6 +126,22 @@ class TestDividends:
             snap(d, 1159220, self.P) for d in ("d2", "d3", "d4", "d5")]
         assert kinds(snaps, dividends=[("d2", D(70000))]) == [("d2", "transfer", 1059220)]
 
+    def test_dividend_on_a_rebalance_day_is_still_a_dividend(self):
+        # kis-isa 2026-11-03: a tranche traded ~3.8M the day 55,154 of ISA
+        # dividends arrived. The dividend sits inside the 3% trade tolerance,
+        # so it used to be dropped as fill noise and never marked received.
+        before = [pos("091170", 343, 14140), pos("102110", 51, 91925), pos("379790", 312, 16620)]
+        after = [pos("091170", 356, 13925), pos("102110", 55, 89155),
+                 pos("133690", 10, 165885), pos("379790", 212, 16480)]
+        snaps = [snap("11-02", 787858, before), snap("11-03", 299511, after)]
+        assert kinds(snaps, dividends=[("11-03", D(55154))]) == [("11-03", "dividend", 60148)]
+
+    def test_trade_noise_without_a_dividend_is_still_ignored(self):
+        before = [pos("A", 100, 10000)]
+        after = [pos("A", 200, 10000)]
+        snaps = [snap("d1", 2000000, before), snap("d2", 1020000, after)]
+        assert kinds(snaps) == []
+
     def test_unannounced_small_distribution_is_under_the_threshold(self):
         snaps = [snap("d1", 100000, self.P), snap("d2", 120923, self.P),
                  snap("d3", 120923, self.P), snap("d4", 120923, self.P)]
