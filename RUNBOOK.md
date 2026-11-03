@@ -192,6 +192,25 @@ resting order (`rmn_qty` > 0) or a cancel accepted but not yet confirmed.
 If either reads differently, the status comes back None and the run halts
 rather than trading. Watch the first order of the next tranche.
 
+**First live KIS run: 2026-11-03, kis-isa tranche 0** (a catch-up for the
+11/2 slot). All four orders (ids 30-33, SELL 379790 ×100, BUY 091170 ×13,
+102110 ×4, 133690 ×10) filled at once, within 10 won of the planned
+price. The `orders.limit_price` column holds the plan's price; the
+executor re-prices from the touch when it sends. That is why 091170 shows
+a fill 10 won above it. The run
+finished without a halt. Afterwards the books summed to the live holdings
+with zero drift, and no orders were left resting. Because everything
+filled immediately, the resting and pending-cancel reads are still not
+seen live. Watch for them on a later tranche that times out.
+
+Two procedure notes from that run:
+- `KIS_DRY_RUN` was still `false`, left that way since the 10-19 run.
+  Step 6 had been skipped. Check the lock (step 4) before the dry run too,
+  not only before the real one.
+- `rebalance_run.py` can't run from Claude Code's `!` prefix. It has no
+  stdin, so the first confirm raises `EOFError`, before any order is sent.
+  Run it in a real terminal.
+
 **Toss: not yet checked.** Before the next `toss-bot` run, confirm that a
 cancelled order with zero fills carries `execution.filledQuantity` in the
 CLOSED list. Without it, every timeout cancel halts the run.
