@@ -16,6 +16,7 @@ one static-shaped file means the page could later be served from a
 static host with a daily-uploaded data.json and no code change.
 """
 
+import csv
 import json
 import logging
 import sqlite3
@@ -136,6 +137,10 @@ REGIME_HORIZON = 120
 
 # news_risk.py's daily picks (Claude + web search); the newest file is shown.
 NEWS_DIR = storage.DB_PATH.parent / "news_risk"
+# CNN's US fear & greed as the user reads it off CNN's page and records it
+# by hand (CNN refuses automated requests): date (US trading day), score, and
+# optionally its seven component scores. Compared against our approximation.
+CNN_FG = storage.DB_PATH.parent / "fear_greed" / "cnn.csv"
 
 LABELS = {"kis-isa": "ISA (KIS)", "kis-main": "KIS 국내",
           "kis-main-overseas": "KIS 해외", "toss-bot": "토스"}
@@ -288,6 +293,14 @@ def _regime() -> dict | None:
 def _news() -> dict | None:
     files = sorted(NEWS_DIR.glob("*.json")) if NEWS_DIR.exists() else []
     return json.loads(files[-1].read_text()) if files else None
+
+
+def _cnn_fg() -> list[dict]:
+    if not CNN_FG.exists():
+        return []
+    with CNN_FG.open(newline="") as f:
+        return [{"date": r["date"], "score": float(r["score"]) if r.get("score") else None}
+                for r in csv.DictReader(f)]
 
 
 def _grade(risk: dict, top_w: list, exp_rows: list[dict]) -> dict:
@@ -670,6 +683,7 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                         "WHERE kind = 'deposit' ORDER BY trade_date DESC, id DESC "
                         "LIMIT 10")]
 
+    us_fg = sentiment.fear_greed(series)
     risk = {
         "days": len(index),
         "max_drawdown": _num(tracker.max_drawdown(index)),
@@ -685,7 +699,8 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
         "stress": _stress(exp_rows, series, tickers),
         "news": _news(),
         "regime": _regime(),
-        "fear_greed": {"kr": sentiment.kr_fear_greed(series), "us": sentiment.fear_greed(series)},
+        "fear_greed": {"kr": sentiment.kr_fear_greed(series), "us": us_fg,
+                       "cnn": sentiment.cnn_compare(us_fg, _cnn_fg())},
         "liquidity": _liquidity(conn, latest.get(LIQUIDITY_ACCOUNT)),
     }
     risk["grade"] = _grade(risk, top_w, exp_rows)

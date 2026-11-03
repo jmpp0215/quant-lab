@@ -159,3 +159,16 @@ def kr_history(series: dict) -> list[list]:
         return []
     days, px = _aligned(series, "^KS11", KR_TICKERS)
     return _history(days, _kr_raw(days, px), KR_COMPONENTS, 0, KR_MIN_COMPONENTS)
+
+
+def cnn_compare(us: dict, cnn: list[dict]) -> dict | None:
+    """The latest CNN reading the user recorded by hand (data/fear_greed/cnn.csv
+    rows, {"date", "score"} at least), with our score on the same US trading
+    day and the gap ours - CNN. None without a reading."""
+    rows = [r for r in cnn if r.get("score") is not None]
+    if not rows:
+        return None
+    last = max(rows, key=lambda r: r["date"])
+    ours = dict(us.get("history") or []).get(last["date"])
+    return {"date": last["date"], "score": last["score"], "label": label(last["score"]),
+            "ours": ours, "gap": ours - last["score"] if ours is not None else None}

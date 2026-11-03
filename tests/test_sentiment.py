@@ -85,3 +85,24 @@ class TestKorea:
 
     def test_missing_input_is_empty(self):
         assert sentiment.kr_fear_greed({}) == {} and sentiment.kr_history({}) == []
+
+
+class TestCnnCompare:
+    US = {"history": [["2026-10-30", 17.5], ["2026-11-02", 6.3]]}
+
+    def test_no_reading_is_none(self):
+        assert sentiment.cnn_compare(self.US, []) is None
+        assert sentiment.cnn_compare(self.US, [{"date": "2026-11-02", "score": None}]) is None
+
+    def test_latest_reading_against_same_day(self):
+        out = sentiment.cnn_compare(self.US, [{"date": "2026-11-02", "score": 22.7},
+                                              {"date": "2026-10-30", "score": 30.8}])
+        assert out["date"] == "2026-11-02" and out["label"] == "극단적 공포"
+        assert out["ours"] == 6.3 and out["gap"] == pytest.approx(-16.4)
+
+    def test_day_we_have_no_score_for(self):
+        out = sentiment.cnn_compare(self.US, [{"date": "2026-11-03", "score": 50.0}])
+        assert out["ours"] is None and out["gap"] is None and out["label"] == "중립"
+
+    def test_empty_us_index(self):
+        assert sentiment.cnn_compare({}, [{"date": "2026-11-02", "score": 22.7}])["gap"] is None

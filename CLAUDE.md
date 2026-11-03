@@ -181,6 +181,9 @@ places orders.
     earnings-date page, cached in `data/earnings.json` since Nasdaq blanks a date around the
     report day. Index movers (Samsung, NVIDIA) are hand-maintained in
     `tracker_server.EARNINGS_EVENTS`, like `MACRO_EVENTS`.
+- CNN's US fear & greed is recorded by hand in `data/fear_greed/cnn.csv` (CNN refuses automated
+  requests; don't scrape it). The tracker shows it beside `quant/sentiment.py`'s approximation
+  (`sentiment.cnn_compare`); `scratch/fear_greed/compare.py` compares them per day.
 - LLM features run through the Claude Code CLI (`claude -p`, the user's subscription). There is no
   Anthropic API key. Follow `news_risk.py`: an empty temp dir, `--json-schema`, and
   `structured_output` in the reply. Send names and shares only, never amounts.

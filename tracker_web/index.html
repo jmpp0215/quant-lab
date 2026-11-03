@@ -356,7 +356,7 @@ section[hidden] { display: none; }
       <p class="fx-note" id="fgNoteKR" hidden>CNN 방식을 따라 직접 만든 지수예요. VKOSPI는 무료로 받을 수 없어 코스피 실현변동성으로 대신해요. 국고채 지표는 2009년 7월부터라 그 전에는 3개 지표 평균이에요.</p>
       <h3 class="stress-h">미국 (CNN 방식 근사)</h3>
       <div id="fearGreed"></div><div class="chart chart-sm" id="chartFG"></div>
-      <p class="fx-note" id="fgNote" hidden>CNN 원본 API는 자동 조회를 막아서 같은 방식으로 직접 계산해요. CNN이 쓰는 7개 중 무료 일별 시세로 되는 4개만 써서 CNN 숫자와 조금 다를 수 있어요.</p></div>
+      <p class="fx-note" id="fgNote" hidden>CNN 원본 API는 자동 조회를 막아서 같은 방식으로 직접 계산해요. CNN이 쓰는 7개 중 무료 일별 시세로 되는 4개만 써서 CNN 숫자와 다를 수 있어요. CNN 값은 페이지에서 보고 직접 기록한 거예요.</p></div>
     <div class="tiles">
       <div class="tile"><div class="label">최대 낙폭 (MDD)</div><div class="value" id="mdd">—</div></div>
       <div class="tile"><div class="label">현재 낙폭</div><div class="value" id="curdd">—</div></div>
@@ -843,7 +843,7 @@ function render() {
   renderGrade(r.grade);
   renderRegime(r.regime);
   renderFearGreed(r.fear_greed && r.fear_greed.kr, "fearGreedKR", "chartFGkr", "fgNoteKR", "코스피");
-  renderFearGreed(r.fear_greed && r.fear_greed.us, "fearGreed", "chartFG", "fgNote", "미국 장");
+  renderFearGreed(r.fear_greed && r.fear_greed.us, "fearGreed", "chartFG", "fgNote", "미국 장", r.fear_greed && r.fear_greed.cnn);
 
   renderSuspects(d);
   renderDividends(d);
@@ -1028,7 +1028,7 @@ function renderExpected(rows) {
   host.append(note);
 }
 
-function renderFearGreed(f, hostId, chartId, noteId, market) {
+function renderFearGreed(f, hostId, chartId, noteId, market, cnn) {
   const host = $(hostId); host.textContent = "";
   const chart = $(chartId);
   if (!f || f.score == null) { chart.hidden = true; $(noteId).hidden = true; emptyState(host, "지수 계산에 필요한 시세가 아직 없어요."); return; }
@@ -1046,6 +1046,12 @@ function renderFearGreed(f, hostId, chartId, noteId, market) {
   const r_ = v => v == null ? "—" : Math.round(v);
   past.textContent = `1주 전 ${r_(f.week_ago)} · 1달 전 ${r_(f.month_ago)} · ${f.date} ${market} 마감 기준`;
   host.append(head, gauge, ends, past);
+  if (cnn) {
+    const c = document.createElement("p"); c.className = "fx-note";
+    const gap = cnn.gap == null ? "그날 우리 값 없음" : `우리 ${Math.round(cnn.ours)}, 차이 ${cnn.gap > 0 ? "+" : ""}${Math.round(cnn.gap)}`;
+    c.textContent = `CNN ${Math.round(cnn.score)} ${cnn.label} (${cnn.date}) · ${gap}`;
+    host.append(c);
+  }
   const list = document.createElement("div"); list.className = "grade-list";
   for (const c of f.components) {
     const row = document.createElement("div"); row.className = "grade-row";
