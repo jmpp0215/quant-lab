@@ -320,8 +320,6 @@ section[hidden] { display: none; }
       <div class="sub">매매·배당·환율·결제 지연으로 설명되지 않는 현금 변화예요. 입출금이 맞으면 기록해 주세요.</div>
       <div id="suspects"></div></div>
     <div class="card"><h2>다가오는 일정</h2><div class="sub">30일 이내</div><div id="upcoming"></div></div>
-    <div class="card"><h2>밤사이 미장 복기</h2><div class="sub">오선의 미국 증시 라이브 자막을 Claude가 요약 · 매매 판단 아님</div>
-      <div id="usLive"></div></div>
     <div class="card" id="previewCard" hidden><h2 id="previewTitle"></h2>
       <div class="sub" id="previewSub"></div><div id="preview"></div></div>
     <div class="card"><h2>누적 수익률 (시간가중)</h2>
@@ -851,7 +849,6 @@ function render() {
   renderDividends(d);
   renderContrib(d);
   renderUpcoming(d);
-  renderUsLive(d.us_live);
   renderPreview(d);
   renderFlows(d);
   renderGoal(d);
@@ -1141,34 +1138,6 @@ function renderGrade(g) {
   const note = document.createElement("p"); note.className = "fx-note";
   note.textContent = `${g.items.length}개 항목을 각각 A+(4.3)~F(0)로 매겨 똑같은 비중으로 평균 냈어요. 의도한 집중(아마존)은 크기 대신 스스로 정한 한도를 지키는지로 매겨요(한도의 90% 이하 A+, 한도까지 A-, 넘으면 C~F). 기준은 규칙으로 정해져 있고, 위험 뉴스(AI 요약)는 점수에 넣지 않아요. 변동성은 아직 기록이 짧아 흔들릴 수 있어요. 유동성은 토스 PBR 계좌 기준이에요.`;
   host.append(note);
-}
-
-function renderUsLive(u) {
-  const host = $("usLive"); host.textContent = "";
-  if (!u) { emptyState(host, "아직 없어요. 화~토 아침에 지난밤 방송을 요약해요."); return; }
-  if (u.headline.length) {
-    const ul = document.createElement("ul"); ul.className = "regime-reasons"; ul.style.margin = "0 0 8px";
-    for (const h of u.headline) { const li = document.createElement("li"); li.textContent = h; ul.append(li); }
-    host.append(ul);
-  }
-  for (const r of u.issues) {
-    const item = document.createElement("div"); item.className = "news-item";
-    const top = document.createElement("div"); top.className = "news-top";
-    const title = document.createElement("strong"); title.textContent = r.title;
-    top.append(title);
-    const meta = document.createElement("div"); meta.className = "muted news-meta";
-    if (r.sec != null) {
-      const a = document.createElement("a"); a.href = `${u.url}&t=${r.sec}s`; a.target = "_blank"; a.rel = "noopener noreferrer";
-      a.textContent = r.time; a.style.color = "var(--accent)"; meta.append(a);
-    }
-    if (r.tickers.length) meta.append((r.sec != null ? " · " : "") + r.tickers.join(", "));
-    const why = document.createElement("p"); why.className = "news-why"; why.textContent = r.detail;
-    item.append(top, meta, why);
-    host.append(item);
-  }
-  const foot = document.createElement("p"); foot.className = "fx-note";
-  foot.textContent = `${u.date} · ${u.title} · ${u.model}. 자동 자막 기반이라 이름·숫자가 틀릴 수 있어요. 시각을 누르면 그 장면으로 가요.`;
-  host.append(foot);
 }
 
 function renderNews(n) {

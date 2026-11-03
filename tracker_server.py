@@ -136,8 +136,6 @@ REGIME_HORIZON = 120
 
 # news_risk.py's daily picks (Claude + web search); the newest file is shown.
 NEWS_DIR = storage.DB_PATH.parent / "news_risk"
-# us_live.py's morning recap of the overnight US-session stream; newest file.
-US_LIVE_DIR = storage.DB_PATH.parent / "us_live"
 
 LABELS = {"kis-isa": "ISA (KIS)", "kis-main": "KIS 국내",
           "kis-main-overseas": "KIS 해외", "toss-bot": "토스"}
@@ -289,11 +287,6 @@ def _regime() -> dict | None:
 
 def _news() -> dict | None:
     files = sorted(NEWS_DIR.glob("*.json")) if NEWS_DIR.exists() else []
-    return json.loads(files[-1].read_text()) if files else None
-
-
-def _us_live() -> dict | None:
-    files = sorted(US_LIVE_DIR.glob("*.json")) if US_LIVE_DIR.exists() else []
     return json.loads(files[-1].read_text()) if files else None
 
 
@@ -715,7 +708,6 @@ def build(conn: sqlite3.Connection, today: date) -> dict:
                         "stats": tracker.prediction_stats(predictions)},
         "rebalances": sorted(rebalances, key=lambda r: r["date"]),
         "upcoming": upcoming,
-        "us_live": _us_live(),
         "preview": preview,
         "suspects": suspects,
         "dividends": _dividends(conn, snaps, names, suspects_by_account),
