@@ -176,6 +176,9 @@ places orders.
     `data/regime/log/` for later scoring.
   - `fear_losers_log.py`: RESEARCH_LOG §50 forward record of fear-time losers (`quant/fear_losers.py`),
     logged to `data/fear_losers/log/`; `report` hides results until the pre-registered sample is reached.
+  - `value_spread_log.py`: RESEARCH_LOG §57-F forward record of the value spread (`quant/value_spread.py`),
+    every 10th KOSPI trading day from 2026-11-18, logged to `data/value_spread/`; `report` hides results until
+    3 non-overlapping 12-month results exist (about 2029-11), with no early-look option.
   - `backups.py`: daily database backups.
   - Earnings dates (`daily.upcoming_earnings`): `kis-main-overseas` holdings from Nasdaq's
     earnings-date page, cached in `data/earnings.json` since Nasdaq blanks a date around the

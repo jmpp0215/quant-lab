@@ -23,6 +23,7 @@ import fear_losers_log
 import news_risk
 import price_history
 import regime_check
+import value_spread_log
 from quant import (
     accounts,
     candles,
@@ -537,6 +538,12 @@ def main() -> int:
         except Exception as e:
             log.exception("fear losers log failed")
             problem_accounts.append(f"[fear losers] {e}")
+        try:
+            # Record only: section 57-F's forward record of the value spread.
+            value_spread_log.run(datetime.now(market.KST).date())
+        except Exception as e:
+            log.exception("value spread log failed")
+            problem_accounts.append(f"[value spread] {e}")
         try:
             backups.run(datetime.now(market.KST).date().isoformat())
         except Exception as e:
