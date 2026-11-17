@@ -251,11 +251,14 @@ deposit also raises the target.
 
 After any `tranche_init.py` run, verify the books tie out:
 
-    python -c "from quant import accounts, storage, tranche; \
-      cfg=accounts.resolve('<acct>'); snap=cfg['snapshot'](cfg['client']()); \
-      actual={p['symbol']:p['qty'] for p in snap.positions}; \
-      books=storage.load_all_tranche_holdings(storage.connect(),'<acct>'); \
-      print(tranche.reconcile(books, actual) or 'CLEAN')"
+    python -c "
+    from quant import accounts, storage, tranche
+    cfg = accounts.resolve('<acct>'); snap = cfg['snapshot'](cfg['client']())
+    actual = {p['symbol']: p['qty'] for p in snap.positions}
+    with storage.connect() as conn:
+        books = storage.load_all_tranche_holdings(conn, '<acct>')
+    print(tranche.reconcile(books, actual) or 'CLEAN')
+    "
 
 `backtest.run_tranched` sizes sleeves with the same `tranche.sleeve_budget`
 rule; it also seeds every sleeve up front (its `initial / n` split).
