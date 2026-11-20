@@ -380,6 +380,74 @@ class TestUnconfirmedFills:
         assert e.value.results["379790"]["filled_quantity"] == 0
 
 
+SECOND = Order(symbol="379790", name="KODEX 미국S&P500", side="BUY",
+               quantity=5, limit_price=Decimal("109620"))
+
+
+class TestBrokerErrorMidRun:
+    """A broker API error partway through must not lose fills already
+    confirmed: the caller records only what execute() hands back."""
+
+    def test_orderbook_error_keeps_earlier_fills(self):
+        b = FakeBroker(fill_on_attempt=1)
+        book = b.orderbook
+
+        def orderbook(client, symbol):
+            if symbol == "379790":
+                raise toss_client.TossApiError(503, "UNAVAILABLE", "down")
+            return book(client, symbol)
+
+        b.orderbook = orderbook
+        with pytest.raises(ExecutionHalted) as e:
+            executor.execute(b, FakeClient(), [order("BUY"), SECOND], PRICES)
+
+        assert e.value.results["102110"]["filled_quantity"] == 10
+        assert e.value.results["379790"]["filled_quantity"] == 0
+        assert [p["symbol"] for p in b.placed] == ["102110"]
+
+    def test_place_order_error_halts(self):
+        # The order may or may not have reached the exchange - nothing
+        # after it can be sized safely.
+        b = FakeBroker(fill_on_attempt=1)
+        place = b.place_order
+
+        def place_order(client, o, price):
+            if o.symbol == "379790":
+                raise KisApiError(500, "1", "EGW00500", "server error")
+            return place(client, o, price)
+
+        b.place_order = place_order
+        third = Order(symbol="091170", name="KODEX 은행", side="BUY",
+                      quantity=5, limit_price=Decimal("14550"))
+        with pytest.raises(ExecutionHalted) as e:
+            executor.execute(b, FakeClient(), [order("BUY"), SECOND, third],
+                             {**PRICES, "091170": Decimal("14550")})
+
+        assert e.value.results["102110"]["filled_quantity"] == 10
+        assert "091170" not in e.value.results
+
+    def test_error_on_reprice_keeps_the_partial_fill(self):
+        # Attempt 1 closes with 4 of 10 after the cancel; the reprice
+        # attempt's orderbook read fails. The 4 shares are real.
+        b = FakeBroker(fill_on_attempt=None,
+                       executions={"order-1": {"filledQuantity": "4"}})
+        book = b.orderbook
+
+        def orderbook(client, symbol):
+            if b.placed:
+                raise toss_client.TossApiError(503, "UNAVAILABLE", "down")
+            return book(client, symbol)
+
+        b.orderbook = orderbook
+        with pytest.raises(ExecutionHalted) as e:
+            executor.execute(b, FakeClient(), [order("BUY")], PRICES)
+
+        r = e.value.results["102110"]
+        assert r["filled_quantity"] == 4
+        assert not r["filled"]
+        assert r["order_id"] == "order-1"
+
+
 class TestExecutionAcrossAttempts:
     """results[symbol]["execution"] is what rebalance_run.record() stores
     as filled_qty / avg_fill_price / commission / tax, and what

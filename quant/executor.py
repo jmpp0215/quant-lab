@@ -113,7 +113,8 @@ TERMINAL = (OrderState.FILLED, OrderState.CANCELED)
 
 
 class ExecutionHalted(ExecutionError):
-    """An order's final state could not be confirmed.
+    """An order's final state could not be confirmed, or a broker call
+    failed while placing one.
 
     results holds every symbol settled before the halt, plus the halted
     symbol's fills from earlier attempts that were confirmed - what the
@@ -294,6 +295,19 @@ def execute(broker, client, orders: list[Order],
             except ExecutionError as e:
                 log.error("skipping %s: %s", order.symbol, e)
                 break
+            except ApiError as e:
+                # A failed book read sent nothing, but a failed place_order
+                # may or may not have reached the exchange. Either way stop,
+                # handing back every fill confirmed so far for the caller
+                # to record.
+                results[order.symbol] = _result(remaining, handle, fills,
+                                                last_execution, total_filled)
+                raise ExecutionHalted(
+                    f"{order.symbol}: broker error while placing: {e}; "
+                    "check the broker app for an order this run did not "
+                    "see",
+                    results,
+                ) from e
 
             if handle is None:      # dry run
                 total_filled = order.quantity
