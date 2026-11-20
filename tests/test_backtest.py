@@ -229,3 +229,20 @@ class TestSharpeRatio:
                     [None, "10000", "10000", "10000", "10000"])
         assert backtest.sharpe_ratio(h, Decimal(4)) is None
         assert "sharpe=  n/a" in backtest.summarise(h)
+
+
+def test_seed_return_and_signal_cutoff(monkeypatch):
+    days = ["2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07"]
+    data = {"A": [{"timestamp": d, "closePrice": p}
+                  for d, p in reversed(list(zip(days, ["99", "100", "120", "120"], strict=True)))]}
+    monkeypatch.setattr(backtest, "_tranche_schedule", lambda *_: [(days[1], 0), (days[2], 0)])
+    seen = []
+
+    def signal(cs, events):
+        seen.append(cs["A"][0]["timestamp"])
+        return strategy.Signal({"A": Decimal(1)}, Decimal(0), [])
+
+    monkeypatch.setattr(strategy, "evaluate", signal)
+    history = backtest.run_tranched(data, {}, Decimal(100), tranches=(0,))
+    assert seen == days[:2]
+    assert [r.value for r in history] == [100, 120, 120]

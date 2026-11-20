@@ -1,5 +1,6 @@
 import sys
 import logging
+from datetime import date
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
@@ -16,14 +17,13 @@ def main():
     # FinanceDataReader passes no timeout - see quant/common/http_timeout.py.
     from quant.common import http_timeout
     http_timeout.install()
-    # KOSPI 전체 종목 가져오기 (가장 최근 영업일 기준)
     
     # KRX 봇 차단 이슈로 인해 pykrx 대신 FinanceDataReader 사용
     import FinanceDataReader as fdr
     
     # KOSPI ALL
-    kospi_df = fdr.StockListing('KOSPI')
-    kospi_tickers = kospi_df['Code'].tolist()
+    from quant.pead.universe import kospi_history_sources
+    kospi_tickers = list(kospi_history_sources(fdr, "2020-01-01", date.today().isoformat()))
     
     # 팩터 시뮬레이션 시 시가총액 편향을 막기 위해 무작위로 섞어서 수집 (API 한도 도달 대비)
     import random

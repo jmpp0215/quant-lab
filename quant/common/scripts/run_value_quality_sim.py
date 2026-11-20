@@ -55,7 +55,7 @@ def main():
     config_gpa = FactorConfig(lookback_quarters=4) # 4 quarters rolling
     print("Preparing GPA Signals (Rolling 4Q)...")
     df_gpa_ffill = prepare_gpa_signals("20210101", config_gpa)
-    gpa_signal_func = get_gpa_signal_func(df_gpa_ffill, top_percentile=0.2)
+    gpa_signal_func = get_gpa_signal_func(df_gpa_ffill.where(df_price_pivot.notna()), top_percentile=0.2)
     
     print("Preparing PBR Signals (Latest Snapshot)...")
     df_bps_ffill = prepare_pbr_signals("20210101")

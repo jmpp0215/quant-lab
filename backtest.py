@@ -13,7 +13,7 @@ to see whether the ranking ever actually rotates.
 
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from quant import config, strategy, tranche
@@ -184,17 +184,20 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
                    for sym, cs in candles_by_symbol.items()}
     seed_prices = {s: p for s, p in seed_prices.items() if p is not None}
 
-    seed_sliced = {sym: slice_at(cs, first_date)
-                   for sym, cs in candles_by_symbol.items()}
-    seed_sliced_dividends = {
-        sym: slice_dividends_at(evs, first_date)
-        for sym, evs in dividend_events_by_symbol.items()
-    }
-    seed_signal = strategy.evaluate(seed_sliced, seed_sliced_dividends)
-    seed_weights = seed_signal.weights
-    if overlay:
-        seed_weights = strategy.apply_overlay(seed_sliced, seed_weights, overlay)
+    def weights_before(trade_date: str) -> dict[str, Decimal]:
+        cutoff = (date.fromisoformat(trade_date) - timedelta(days=1)).isoformat()
+        sliced = {sym: slice_at(cs, cutoff) for sym, cs in candles_by_symbol.items()}
+        events = {sym: slice_dividends_at(rows, cutoff)
+                  for sym, rows in dividend_events_by_symbol.items()}
+        signal = strategy.evaluate(sliced, events)
+        weights = signal.weights
+        if scheme != "equal" and weights:
+            scores = {s.symbol: s.momentum for s in signal.scores if s.momentum is not None}
+            weights = strategy._weights_by_scheme(sliced, list(weights), scheme, scores)
+        return strategy.apply_overlay(sliced, weights, overlay) if overlay else weights
 
+    seed_weights = weights_before(first_date)
+    history.append(Rebalance(first_date, seed_weights, seed_prices, initial))
     per_sleeve = initial / n
     for t in tranches:
         books[t] = {
@@ -216,24 +219,7 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
         prices = {s: p for s, p in prices.items() if p is not None}
         prices["cash"] = Decimal("1.0")
 
-        sliced = {
-            sym: slice_at(cs, trade_date)
-            for sym, cs in candles_by_symbol.items()
-        }
-        sliced_dividends = {
-            sym: slice_dividends_at(evs, trade_date)
-            for sym, evs in dividend_events_by_symbol.items()
-        }
-        signal = strategy.evaluate(sliced, sliced_dividends)
-
-        weights = signal.weights
-        if scheme != "equal" and weights:
-            scores = {s.symbol: s.momentum for s in signal.scores
-                      if s.momentum is not None}
-            weights = strategy._weights_by_scheme(
-                sliced, list(weights), scheme, scores)
-        if overlay:
-            weights = strategy.apply_overlay(sliced, weights, overlay)
+        weights = weights_before(trade_date)
 
         book = books[which]
         sleeve_value = tranche.sleeve_budget(books, which, prices, cash,
@@ -270,6 +256,8 @@ def run_tranched(candles_by_symbol: dict[str, list[dict]],
 
     last = max(_date_of(c) for c in
                candles_by_symbol[next(iter(config.UNIVERSE))])
+    if history[-1].date == last:
+        return history
     final_prices = {sym: close_at(cs, last)
                     for sym, cs in candles_by_symbol.items()}
     total = cash + sum(

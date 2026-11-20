@@ -29,6 +29,8 @@ quant/allocation.py.
     python -m quant.stock_factors.scripts.pbr_cost_sweep
 """
 
+import argparse
+import csv
 import sqlite3
 import sys
 from pathlib import Path
@@ -36,6 +38,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from quant.common.price_guard import DEFAULT_ANOMALY_THRESHOLD
 from quant.stock_factors.value import get_pbr_signal_func, prepare_pbr_signals
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -82,8 +85,9 @@ def _turnover(w_now: dict[str, float], new: list[str], mode: str) -> tuple[float
     return sell, buy
 
 
-def simulate(trading_dates, price_pivot, signal_func, slippage, sell_tax, mode):
+def simulate(trading_dates, price_pivot, signal_func, slippage, sell_tax, mode, share_factors=None):
     """Return (gross_total_ret, net_total_ret, sell_turnover_log)."""
+    share_factors = share_factors or {}
     sim_dates = [d for d in trading_dates if d >= SIM_START]
     idx = pd.to_datetime(sim_dates)
 
@@ -102,7 +106,13 @@ def simulate(trading_dates, price_pivot, signal_func, slippage, sell_tax, mode):
                     p0 = price_pivot.at[prev, sym]
                     p1 = price_pivot.at[cur, sym]
                     if pd.notna(p0) and pd.notna(p1) and p0 > 0:
-                        r = (p1 - p0) / p0
+                        factor = share_factors.get((date, sym))
+                        r = p1 / p0 - 1
+                        if factor is not None:
+                            r = p1 * factor / p0 - 1
+                        elif abs(r) >= DEFAULT_ANOMALY_THRESHOLD:
+                            raise ValueError(f"{sym} {date}: supply a verified share factor "
+                                             "(1 for a confirmed market move)")
                 grown[sym] = w * (1 + r)
             day_ret = sum(grown.values()) - 1.0
             gross *= 1 + day_ret
@@ -126,6 +136,19 @@ def simulate(trading_dates, price_pivot, signal_func, slippage, sell_tax, mode):
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--share-factors", type=Path,
+                        help="CSV: date (YYYYMMDD),symbol,new_shares_per_old_share")
+    args = parser.parse_args()
+    factors = {}
+    if args.share_factors:
+        with args.share_factors.open(newline="") as stream:
+            for row in csv.DictReader(stream):
+                factor = float(row["new_shares_per_old_share"])
+                key = (row["date"], row["symbol"])
+                if not np.isfinite(factor) or factor <= 0 or key in factors:
+                    raise ValueError(f"invalid or duplicate share factor for {key}")
+                factors[key] = factor
     print("loading prices...")
     trading_dates, price_pivot = load_prices()
     print("preparing point-in-time PBR signal...")
@@ -133,7 +156,7 @@ def main() -> int:
     signal_func = get_pbr_signal_func(df_bps, price_pivot, top_percentile=TOP_PCT)
     span_years = (pd.Timestamp(trading_dates[-1]) - pd.Timestamp(SIM_START)).days / 365.25
 
-    gross, _, _ = simulate(trading_dates, price_pivot, signal_func, 0.0, 0.0, "full")
+    gross, _, _ = simulate(trading_dates, price_pivot, signal_func, 0.0, 0.0, "full", factors)
     print(f"\nPBR Top-{TOP_N}, {REBALANCE_DAYS}-day rebalance, equal weight")
     print(f"period : {SIM_START} -> {trading_dates[-1]}  (~{span_years:.1f}y)")
     print(f"gross total return (no costs): {gross * 100:+.1f}%  "
@@ -144,7 +167,7 @@ def main() -> int:
                   for s in SLIPPAGE_GRID if s]
 
     for mode in ("set-churn", "full"):
-        _, _, turns = simulate(trading_dates, price_pivot, signal_func, 0.0, 0.0, mode)
+        _, _, turns = simulate(trading_dates, price_pivot, signal_func, 0.0, 0.0, mode, factors)
         avg_turn = float(np.mean(turns[1:])) if len(turns) > 1 else 0.0
         print(f"\n--- turnover model: {mode}  "
               f"(avg one-way {avg_turn * 100:.0f}% / rebalance, "
@@ -154,7 +177,7 @@ def main() -> int:
               f"  {'net CAGR':>9}  {'cost/reb':>8}")
         for label, slip, tax in scenarios:
             _, net, _ = simulate(trading_dates, price_pivot, signal_func,
-                                 slip, tax, mode)
+                                 slip, tax, mode, factors)
             rt = 2 * avg_turn * (COMMISSION + slip) + avg_turn * tax
             net_ann = (1 + net) ** (1 / span_years) - 1
             print(f"  {label:<32} {net * 100:>+8.1f}%  {(net - gross) * 100:>+8.1f}%p"

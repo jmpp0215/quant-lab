@@ -46,6 +46,7 @@ def compute(snapshots: list[tuple[str, Decimal]],
     series = sorted(s for s in snapshots if start is None or s[0] >= start)
     if not series:
         return None
+    end = series[-1][0]
     if start is None:
         start, prev_value = series[0]
         series = series[1:]
@@ -59,7 +60,7 @@ def compute(snapshots: list[tuple[str, Decimal]],
     else:
         prev_value = money_in
 
-    deposits = sorted((d, a) for d, a, k in flows if k == "deposit" and d > start)
+    deposits = sorted((d, a) for d, a, k in flows if k == "deposit" and start < d <= end)
     if money_in is not None:
         money_in += sum((a for _, a in deposits), Decimal("0"))
 

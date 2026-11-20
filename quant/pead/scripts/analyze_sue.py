@@ -91,7 +91,8 @@ def main():
             continue
 
         # config.entry_timing(t+1/t+2)을 반영한 진입가/누적수익률 계산은 signal.py가 전담
-        timeline = build_event_timeline(sym, rcept_dt_str, price_series_by_sym[sym], config)
+        timeline = build_event_timeline(sym, rcept_dt_str, price_series_by_sym[sym], config,
+                                        market_dates=benchmark_price_series.index)
         if timeline is None or timeline['return_20d'] is None:
             continue
 

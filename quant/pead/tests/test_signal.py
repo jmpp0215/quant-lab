@@ -266,3 +266,11 @@ def test_build_event_timeline_computes_normal_return_when_no_anomaly():
     timeline = build_event_timeline("TEST", "20260101", price_series, config)
     assert timeline["entry_price"] == pytest.approx(101.0)
     assert timeline["return_5d"] == pytest.approx((106.0 - 101.0) / 101.0)
+
+
+def test_weekend_event_and_missing_market_session():
+    prices = {"20260105": 100, "20260106": 120}
+    timeline = build_event_timeline("A", "20260104", prices, PeadConfig())
+    assert timeline["entry_price"] == 100
+    assert build_event_timeline("A", "20260104", {"20260106": 120}, PeadConfig(),
+                                market_dates=prices.keys()) is None

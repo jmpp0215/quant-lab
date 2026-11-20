@@ -12,7 +12,7 @@ def simulate_portfolio(
     price_series_by_sym: Dict[str, Dict[str, float]],
     signal_func: Callable[[str], List[str]],
     rebalance_days: int = 20,
-    transaction_cost: float = 0.0000,  # Can be added later
+    transaction_cost: float = 0.0000,  # one-way cost per unit traded
     anomaly_threshold: float = DEFAULT_ANOMALY_THRESHOLD,
 ) -> pd.DataFrame:
     """
@@ -39,15 +39,15 @@ def simulate_portfolio(
         return pd.DataFrame()
 
     daily_returns = []
-    current_symbols = []
+    weights = {}
     rebalance_counter = 0
 
     for i, date in enumerate(trading_dates):
         # Calculate today's return BEFORE rebalancing (using yesterday's target symbols)
-        if i > 0 and current_symbols:
+        if i > 0 and weights:
             prev_date = trading_dates[i-1]
-            day_returns = []
-            for sym in current_symbols:
+            grown = {}
+            for sym, weight in weights.items():
                 p_prev = price_series_by_sym.get(sym, {}).get(prev_date)
                 p_curr = price_series_by_sym.get(sym, {}).get(date)
 
@@ -58,16 +58,22 @@ def simulate_portfolio(
                         "treating as 0 (likely unadjusted corporate action)",
                         sym, prev_date, date, (p_curr - p_prev) / p_prev * 100,
                     )
-                day_returns.append(ret if ret is not None else 0.0)
+                grown[sym] = weight * (1 + (ret or 0.0))
 
-            port_ret = np.mean(day_returns) if day_returns else 0.0
+            gross = sum(grown.values())
+            port_ret = gross - 1
+            weights = {sym: value / gross for sym, value in grown.items()}
         else:
             port_ret = 0.0
 
         # Rebalance at the end of the day (so tomorrow gets the new returns)
         if rebalance_counter == 0 or i == 0:
             new_symbols = signal_func(date)
-            current_symbols = new_symbols
+            target = {sym: 1 / len(new_symbols) for sym in new_symbols}
+            turnover = sum(abs(target.get(s, 0) - weights.get(s, 0))
+                           for s in weights.keys() | target.keys())
+            port_ret = (1 + port_ret) * (1 - turnover * transaction_cost) - 1
+            weights = target
             rebalance_counter = rebalance_days
             
         rebalance_counter -= 1
@@ -75,7 +81,7 @@ def simulate_portfolio(
         daily_returns.append({
             'date': date,
             'daily_ret': port_ret,
-            'n_holdings': len(current_symbols)
+            'n_holdings': len(weights)
         })
         
     df = pd.DataFrame(daily_returns)

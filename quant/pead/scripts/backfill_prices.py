@@ -41,8 +41,8 @@ def main():
     start_date = "2020-01-01"
     end_date = datetime.today().strftime("%Y-%m-%d")
     
-    kospi_df = fdr.StockListing('KOSPI')
-    kospi_tickers = kospi_df['Code'].tolist()
+    from quant.pead.universe import kospi_history_sources
+    sources = kospi_history_sources(fdr, start_date, end_date)
 
     CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
     completed = set()
@@ -51,18 +51,17 @@ def main():
             completed = set(json.load(f).get("completed", []))
     log.info(f"Loaded checkpoint. {len(completed)} tickers already fetched.")
 
-    log.info(f"Starting price backfill for {len(kospi_tickers)} tickers from {start_date} to {end_date}")
+    log.info(f"Starting price backfill for {len(sources)} tickers from {start_date} to {end_date}")
 
-    for ticker in kospi_tickers:
-        if ticker in completed:
+    for ticker, source in sources.items():
+        if source in completed:
             continue
 
         log.info(f"Fetching prices for {ticker}...")
         try:
-            df = fdr.DataReader(ticker, start_date, end_date)
+            df = fdr.DataReader(source, start_date, end_date)
             if df.empty:
-                completed.add(ticker)
-                _atomic_write_json(CHECKPOINT_FILE, {"completed": list(completed)})
+                log.warning("No prices for %s; leaving it pending", source)
                 continue
 
             records = []
@@ -93,7 +92,7 @@ def main():
             """, records)
             conn.commit()
 
-            completed.add(ticker)
+            completed.add(source)
             _atomic_write_json(CHECKPOINT_FILE, {"completed": list(completed)})
 
         except Exception as e:

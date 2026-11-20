@@ -94,3 +94,9 @@ class TestCompute:
 
     def test_no_snapshots_after_principal_means_no_result(self):
         assert returns.compute(snaps(("2026-08-25", 100)), PRINCIPAL) is None
+
+
+def test_deposit_after_last_valuation_is_excluded():
+    flows = PRINCIPAL + [("2026-09-01", D(100), "deposit")]
+    r = returns.compute(snaps(("2026-08-28", 100), ("2026-08-31", 110)), flows)
+    assert (r.money_in, r.principal_return, r.time_weighted) == (100, D(".1"), D(".1"))

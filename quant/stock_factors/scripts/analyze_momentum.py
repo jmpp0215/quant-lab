@@ -116,7 +116,8 @@ def main():
                     continue
                     
                 # Calculate Forward 20d Returns using build_event_timeline (PEAD code)
-                timeline = build_event_timeline(sym, r_date, price_series_by_sym[sym], config)
+                timeline = build_event_timeline(sym, r_date, price_series_by_sym[sym], config,
+                                        market_dates=benchmark_price_series.index)
                 if timeline is None or timeline['return_20d'] is None:
                     continue
                     

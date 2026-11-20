@@ -156,3 +156,17 @@ def test_get_pbr_signal_func_excludes_quarantined_symbol():
     selected = signal_func("20260601")
     assert "QUAR" not in selected
     assert "CLEAN" in selected
+
+
+def test_old_quarter_amendment_does_not_replace_current_bps(tmp_path, monkeypatch):
+    path = tmp_path / "pbr.db"
+    _create_minimal_schema(path)
+    monkeypatch.setattr(value, "DB_PATH", path)
+    with sqlite3.connect(path) as conn:
+        for day, quarter, equity in [("20260515", "11013", 1000), ("20260814", "11012", 2000),
+                                     ("20260901", "11013", 1100), ("20260902", "11012", 2100)]:
+            conn.execute("INSERT INTO pead_price_raw(date, symbol) VALUES (?, 'A')", (day,))
+            for metric, amount in [("total_equity", equity), ("issued_shares", 10)]:
+                conn.execute("INSERT INTO pead_quarterly_normalized VALUES "
+                             "('A', '2026', ?, ?, ?, 'CFS', ?, 1)", (day, quarter, metric, amount))
+    assert value.prepare_pbr_signals("20260101")["A"].sort_index().tolist() == [100, 200, 200, 210]

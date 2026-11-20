@@ -78,7 +78,7 @@ def main():
         
     # GPA Signal
     config_gpa = FactorConfig(lookback_quarters=4)
-    df_gpa_ffill = prepare_gpa_signals("20210101", config_gpa)
+    df_gpa_ffill = prepare_gpa_signals("20210101", config_gpa).where(df_price_pivot.notna())
     
     def get_gpa_signal(date_str: str, top_percentile=0.2) -> list:
         dt = pd.to_datetime(date_str)

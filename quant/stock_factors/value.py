@@ -35,7 +35,7 @@ def prepare_pbr_signals(start_date: str) -> pd.DataFrame:
     # 동일한 관례를 따른다. issued_shares는 dart.py에서 항상 basis='CFS'로만
     # 저장되므로 이 필터는 그쪽 동작을 바꾸지 않는다.
     query = """
-        SELECT symbol, rcept_dt as date, report_code, metric, quarterly_value
+        SELECT symbol, target_year, rcept_dt as date, report_code, metric, quarterly_value
         FROM pead_quarterly_normalized
         WHERE metric IN ('total_equity', 'issued_shares') AND basis = 'CFS'
         ORDER BY date
@@ -44,18 +44,20 @@ def prepare_pbr_signals(start_date: str) -> pd.DataFrame:
     conn.close()
     
     df_pivot = df.pivot_table(
-        index=['symbol', 'date', 'report_code'], 
+        index=['symbol', 'date', 'target_year', 'report_code'],
         columns='metric', 
         values='quarterly_value'
     ).reset_index()
     
     df_pivot = df_pivot.dropna(subset=['total_equity', 'issued_shares'])
     
-    # 동일 날짜에 2개 이상의 보고서가 접수된 경우 방지
-    df_pivot = df_pivot.sort_values(['symbol', 'date', 'report_code']).drop_duplicates(subset=['symbol', 'date'], keep='last')
-    
-    # 주식수가 0인 경우 방지
-    df_pivot = df_pivot[df_pivot['issued_shares'] > 0]
+    # Keep the newest fiscal period published by each date. A later
+    # amendment to an older period cannot replace the newer balance sheet.
+    quarters = df_pivot['report_code'].map({"11013": 1, "11012": 2, "11014": 3, "11011": 4})
+    df_pivot['period'] = df_pivot['target_year'].astype(int) * 4 + quarters
+    df_pivot = df_pivot[df_pivot['issued_shares'] > 0].sort_values(['symbol', 'date', 'period'])
+    latest = df_pivot.groupby('symbol')['period'].cummax()
+    df_pivot = df_pivot[df_pivot['period'] == latest].drop_duplicates(['symbol', 'date'], keep='last')
     df_pivot['bps'] = df_pivot['total_equity'] / df_pivot['issued_shares']
     
     df_pivot['date'] = pd.to_datetime(df_pivot['date'])

@@ -28,18 +28,18 @@ def test_simulate_portfolio():
     # Day 2 (0102): A is +10%, B is -10%. Equal weight average return = 0%
     assert df.iloc[1]['daily_ret'] == 0.0
     
-    # Day 3 (0103): Rebalance happened at end of Day 1 (but wait, rebalance_counter=2).
-    # i=0: rebalance counter=0 -> triggers rebalance. Current symbols = [A, B]. counter becomes 2.
-    # i=0 end: counter becomes 1.
-    # i=1 (0102): no rebalance. counter becomes 0.
-    # i=2 (0103): counter=0 -> triggers rebalance.
-    
-    # Let's check Day 3 return. A is +10%, B is -10%. Again, return = 0%
-    # (Since it's full rebalance, weights are reset to 50/50, so return is exactly 0).
-    # Wait, the code calculates `np.mean(day_returns)` which is explicitly equal weight.
-    # So every day the return is 0%.
-    assert df.iloc[2]['daily_ret'] == pytest.approx(0.0)
-    assert df.iloc[-1]['cum_ret'] == pytest.approx(0.0)
+    # After the first day A holds 55% and B 45%. Reset after day 3.
+    assert df.iloc[2]['daily_ret'] == pytest.approx(0.01)
+    assert df.iloc[-1]['cum_ret'] == pytest.approx(1.01 ** 2 - 1)
+
+
+def test_cost_charged_on_entry_rotation_and_exit():
+    dates = ["20230101", "20230102", "20230103"]
+    prices = {s: dict.fromkeys(dates, 100) for s in ("A", "B")}
+    target = dict(zip(dates, [["A"], ["B"], []], strict=True))
+    result = simulate_portfolio(dates, prices, target.get, 1, transaction_cost=0.01)
+    assert result.daily_ret.tolist() == pytest.approx([-0.01, -0.02, -0.01])
+
 
 def test_simulate_portfolio_dynamic():
     trading_dates = ["20230101", "20230102", "20230103"]
@@ -82,8 +82,8 @@ def test_simulate_portfolio_ignores_price_anomaly():
 
     # Day 3: A flat (0%), B's move is flagged and treated as 0% -> portfolio return 0%
     assert df.iloc[2]['daily_ret'] == pytest.approx(0.0)
-    # Day 4: A flat, B genuinely +10% (1210 -> 1331) -> portfolio return +5%
-    assert df.iloc[3]['daily_ret'] == pytest.approx(0.05)
+    # Day 4: A flat, B genuinely +10% (1210 -> 1331) at its drifted weight
+    assert df.iloc[3]['daily_ret'] == pytest.approx(0.1 * 55 / 105)
 
 
 def test_calculate_mdd():

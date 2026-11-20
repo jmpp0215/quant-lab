@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Iterable
 from typing import Dict
 from .config import PeadConfig
 from quant.common.price_guard import find_anomalies, DEFAULT_ANOMALY_THRESHOLD
@@ -187,6 +188,7 @@ def combine_signal(symbol: str, rcept_dt: str, config: PeadConfig) -> float:
 def build_event_timeline(
     symbol: str, rcept_dt: str, price_series: Dict[str, float], config: PeadConfig,
     anomaly_threshold: float = DEFAULT_ANOMALY_THRESHOLD,
+    *, market_dates: Iterable[str] | None = None,
 ) -> dict | None:
     """
     공시 접수일(t=0)을 기준으로 config.entry_timing(t+1/t+2)에 따른 진입 가격을 산출하고,
@@ -205,22 +207,25 @@ def build_event_timeline(
     Returns:
         pead_event_returns에 저장 가능한 형태의 dict, 또는 진입에 필요한 거래일이 부족하면 None.
     """
-    trading_dates = sorted(d for d in price_series if d >= rcept_dt)
+    calendar = price_series if market_dates is None else market_dates
+    trading_dates = sorted(d for d in calendar if d > rcept_dt)
     if not trading_dates:
         return None
 
-    entry_offset = {"t+1": 1, "t+2": 2}[config.entry_timing]
+    entry_offset = {"t+1": 0, "t+2": 1}[config.entry_timing]
     if len(trading_dates) <= entry_offset:
         return None
 
     entry_date = trading_dates[entry_offset]
-    entry_price = price_series[entry_date]
+    entry_price = price_series.get(entry_date)
+    if not entry_price:
+        return None
 
     horizons = {"return_5d": 5, "return_10d": 10, "return_20d": 20, "return_40d": 40, "return_60d": 60}
     returns = {}
     for field, horizon in horizons.items():
         target_idx = entry_offset + horizon
-        if target_idx < len(trading_dates):
+        if target_idx < len(trading_dates) and price_series.get(trading_dates[target_idx]):
             target_date = trading_dates[target_idx]
             anomalies = find_anomalies(
                 symbol, price_series, anomaly_threshold,

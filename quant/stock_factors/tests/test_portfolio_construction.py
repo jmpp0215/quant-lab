@@ -18,7 +18,9 @@ from quant.stock_factors.portfolio_construction import (
 )
 
 
-def test_calculate_diff():
+def test_calculate_diff(monkeypatch):
+    monkeypatch.setattr("quant.stock_factors.portfolio_construction.fdr.StockListing",
+                        lambda _: pd.DataFrame(columns=["Code", "Name"]))
     target_weights = {
         "A": Decimal("0.5"),
         "B": Decimal("0.5"),
