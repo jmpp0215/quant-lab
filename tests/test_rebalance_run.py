@@ -11,7 +11,8 @@ from decimal import Decimal
 import pytest
 
 from quant import tranche
-from rebalance_run import confirm, plan_for_tranche
+from quant.broker import OpenOrder, OrderHandle, OrderStatus
+from rebalance_run import clear_resting, confirm, plan_for_tranche
 
 # Real universe codes so config.is_etf() / config.UNIVERSE name lookups
 # behave as they do in production. All prices are multiples of the 5-won
@@ -159,3 +160,52 @@ class TestConfirm:
     def test_anything_else_aborts(self, monkeypatch, answer):
         monkeypatch.setattr("builtins.input", lambda _: answer)
         assert not confirm("Rebalance tranche 0?")
+
+
+class RestingBroker:
+    """Just enough of the broker interface for clear_resting."""
+
+    def __init__(self, resting: int):
+        self.orders = {f"o{i}": True for i in range(resting)}
+        self.cancelled: list[str] = []
+
+    def open_orders(self, client):
+        return [OpenOrder(handle=OrderHandle(order_id=oid), symbol="102110",
+                          quantity=1, filled_quantity=0)
+                for oid, open_ in self.orders.items() if open_]
+
+    def cancel(self, client, handle):
+        self.cancelled.append(handle.order_id)
+        self.orders[handle.order_id] = False
+
+    def order_status(self, client, handle):
+        return OrderStatus(quantity=1, filled_quantity=0,
+                           open=self.orders[handle.order_id], execution={})
+
+
+class TestClearResting:
+    """Resting orders are cancelled only once a tranche is due and the
+    user agrees - a run with nothing due, or a declined one, leaves them."""
+
+    def test_nothing_resting_asks_nothing(self, monkeypatch):
+        def no_input(_):
+            raise AssertionError("asked")
+        monkeypatch.setattr("builtins.input", no_input)
+        b = RestingBroker(0)
+        assert clear_resting(b, None)
+        assert b.cancelled == []
+
+    def test_declined_leaves_orders_resting(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+        b = RestingBroker(2)
+        assert not clear_resting(b, None)
+        assert b.cancelled == []
+
+    def test_agreed_cancels_them(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        b = RestingBroker(2)
+        assert clear_resting(b, None)
+        assert sorted(b.cancelled) == ["o0", "o1"]
+
+    def test_untraded_account_has_nothing_to_clear(self):
+        assert clear_resting(None, None)

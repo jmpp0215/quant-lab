@@ -41,6 +41,27 @@ def confirm(prompt: str) -> bool:
     return input(f"\n{prompt} [y/n]: ").strip().lower() == "y"
 
 
+def clear_resting(broker, client) -> bool:
+    """Cancel the account's resting orders after showing them and asking.
+
+    False if the user declined, in which case nothing was cancelled and
+    the run must not plan. broker is None for an account never traded.
+    """
+    if broker is None:
+        return True
+    resting = broker.open_orders(client)
+    if not resting:
+        return True
+    for entry in resting:
+        log.warning("resting order %s: %s %d (%d filled)",
+                    entry.handle.order_id, entry.symbol, entry.quantity,
+                    entry.filled_quantity)
+    if not confirm(f"Cancel {len(resting)} resting order(s) before planning?"):
+        return False
+    executor.cancel_open_orders(broker, client)
+    return True
+
+
 def plan_for_tranche(book: dict[str, int], targets: dict[str, int],
                      prices: dict[str, Decimal]) -> list[rebalance.Order]:
     """Orders that move one sleeve from `book` to `targets`."""
@@ -107,7 +128,6 @@ def main() -> int:
         log.error("closing auction has begun; no new orders")
         return 1
 
-    executor.cancel_open_orders(cfg["broker"], client)
 
     data = {
         sym: candles.get(market_data, sym, days=config.HISTORY_DAYS,
@@ -139,6 +159,12 @@ def main() -> int:
         return 0
 
     log.info("trading day %d: tranche %d is due", day_index + 1, which)
+
+    # Holdings must be final before planning, so nothing may stay resting -
+    # but only now that a tranche is due, and only with the user's say-so.
+    if not clear_resting(cfg["broker"], client):
+        log.info("resting orders left in place; not rebalancing")
+        return 0
 
     # The books drive every quantity below, so trading through a
     # discrepancy would compound it. One snapshot() call gives both

@@ -84,7 +84,9 @@ step 5 now sends real orders for `kis-isa` like any other account.
 
 **The script dies partway.** Nothing needs undoing. Re-running recomputes
 from current holdings, so a partial state is simply the new starting
-point. Cancel any resting orders first — the script does this at startup.
+point. Resting orders must be cancelled first. Once a tranche is due, the
+script lists them and asks before cancelling; if you decline, it stops
+without planning.
 
 **An order will not fill.** After three attempts the script gives up and
 logs it. The position stays off target until the next run; this is
