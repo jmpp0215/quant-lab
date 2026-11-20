@@ -126,6 +126,22 @@ def execute_until_halt(broker, client, orders, prices) -> tuple[dict, Exception 
         return e.results, e
 
 
+def unresolved(results: dict, planned: list[str]) -> tuple[list[str], list[str]]:
+    """(failed, partial) over every planned symbol, sent or not.
+
+    A symbol a halt kept from being sent has no entry in results and counts
+    as failed: --retry orders only failed + partial, so leaving it out
+    would skip it for good and could mark the retry all_clear.
+    """
+    failed, partial = [], []
+    for sym in planned:
+        r = results.get(sym, {})
+        if r.get("filled", False):
+            continue
+        (partial if r.get("filled_quantity", 0) > 0 else failed).append(sym)
+    return failed, partial
+
+
 def build_summary(failed: list, partial: list, halted, retry_of: str | None,
                   weighting_scheme: str, inverse_vol_fallback: bool | None,
                   admin_removed: list, admin_filter_error: str | None,
@@ -427,6 +443,9 @@ def main():
             results, halt = execute_until_halt(cfg["broker"], client, sells, final_prices)
             
         executed_orders = list(sells)
+        # What this run meant to trade - see unresolved(). Replaced by the
+        # revised buys below once the sells' cash is known.
+        planned_buys = buys
             
         # Buys are sized from what the sells raised - not knowable after a halt.
         if buys and halt is not None:
@@ -454,6 +473,7 @@ def main():
             revised_orders = calculate_diff(target_weights, positions_after_sells, final_prices, cash_after_sells,
                                             locked=halted, only=retry_only)
             revised_buys = [o for o in revised_orders if o.side == "BUY"]
+            planned_buys = revised_buys
             
             log.info(f"Revised BUYS: {len(revised_buys)} orders")
             if revised_buys:
@@ -477,8 +497,8 @@ def main():
             for p in snap_after.positions if p.get("currency", "KRW") == "KRW"
         )
         
-        failed = [sym for sym, r in results.items() if not r.get("filled", False) and r.get("filled_quantity", 0) == 0]
-        partial = [sym for sym, r in results.items() if not r.get("filled", False) and r.get("filled_quantity", 0) > 0]
+        failed, partial = unresolved(
+            results, [o.symbol for o in sells] + [o.symbol for o in planned_buys])
         
         summary_data = build_summary(failed, partial, halted, retry_of_date,
                                      weighting_scheme, fallback,

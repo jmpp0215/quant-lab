@@ -15,6 +15,7 @@ from quant.stock_factors.scripts.run_pbr_live import (
     inverse_vol_fell_back,
     over_rank_boundary,
     resolve_target_weights,
+    unresolved,
 )
 
 
@@ -231,6 +232,29 @@ class TestExecuteUntilHalt:
         monkeypatch.setattr(executor, "execute", failing)
         with pytest.raises(executor.ExecutionError, match="no ask"):
             execute_until_halt("kis", None, [], {})
+
+
+class TestUnresolved:
+    """Every planned symbol that didn't fully fill must stay unresolved,
+    including ones a halt kept from ever being sent: --retry orders only
+    this list, so a dropped symbol would never be traded."""
+
+    def test_unsent_symbols_after_a_halt_are_failed(self):
+        # Plan: SELL A, SELL B, BUY C. A halted with 2 filled; B and C
+        # were never sent.
+        results = {"A": {"filled": False, "filled_quantity": 2}}
+        failed, partial = unresolved(results, ["A", "B", "C"])
+        assert failed == ["B", "C"]
+        assert partial == ["A"]
+
+    def test_all_filled_is_clear(self):
+        results = {"A": {"filled": True, "filled_quantity": 5},
+                   "B": {"filled": True, "filled_quantity": 1}}
+        assert unresolved(results, ["A", "B"]) == ([], [])
+
+    def test_skipped_without_fill_is_failed(self):
+        results = {"A": {"filled": False, "filled_quantity": 0}}
+        assert unresolved(results, ["A"]) == (["A"], [])
 
 
 class TestEqualWeightShadow:
