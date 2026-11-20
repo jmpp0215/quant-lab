@@ -146,6 +146,9 @@ rather than trade through it.
 
 ## Working in this repo
 
+- **Read `HANDOFF.md` first** — current state, open threads and pitfalls, shared between the user
+  and Claude. Append a dated entry to its work log at the end of any session that changed code,
+  traded, or left something open.
 - Live trading has no paper environment — treat any change to `executor.py`, `rebalance.py`,
   `rebalance_run.py`, or `tranche.py` as touching real money. Prefer adding tests over manual
   verification, and don't change order-sizing or price logic without matching test coverage.
