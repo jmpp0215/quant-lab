@@ -11,6 +11,7 @@ healthy, and simply does not fill when it is not.
 import logging
 import time
 from dataclasses import replace
+from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
@@ -96,6 +97,11 @@ def check_depth(order: Order, touch: Touch) -> None:
 
 def auction_imminent(now_hhmm: str) -> bool:
     return now_hhmm >= AUCTION_START
+
+
+def now_hhmm() -> str:
+    """The KRX clock, for the per-order auction check in execute()."""
+    return datetime.now(market.KST).strftime("%H:%M")
 
 
 class OrderState(Enum):
@@ -287,6 +293,17 @@ def execute(broker, client, orders: list[Order],
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if remaining <= 0:
                 break
+
+            # Checked before every send, not just at start: a run begun at
+            # 15:10 can still be placing orders past 15:20.
+            if auction_imminent(now_hhmm()):
+                results[order.symbol] = _result(remaining, handle, fills,
+                                                last_execution, total_filled)
+                raise ExecutionHalted(
+                    f"{order.symbol}: closing auction has begun; no new "
+                    "orders",
+                    results,
+                )
 
             try:
                 handle = place(broker, client,

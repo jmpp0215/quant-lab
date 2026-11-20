@@ -155,6 +155,9 @@ class FakeTime:
 @pytest.fixture(autouse=True)
 def fake_clock(monkeypatch):
     monkeypatch.setattr(executor, "time", FakeTime())
+    # Mid-session by default, so the auction guard in execute() doesn't
+    # depend on when the suite runs.
+    monkeypatch.setattr(executor, "now_hhmm", lambda: "10:00")
 
 
 PRICES = {"102110": Decimal("109615"), "379790": Decimal("109615")}
@@ -446,6 +449,44 @@ class TestBrokerErrorMidRun:
         assert r["filled_quantity"] == 4
         assert not r["filled"]
         assert r["order_id"] == "order-1"
+
+
+class TestAuctionDuringRun:
+    """The 15:20 cutoff applies to every order sent, not just to when the
+    run started: one order can wait FILL_TIMEOUT x MAX_ATTEMPTS."""
+
+    def test_no_order_after_the_auction_starts(self, monkeypatch):
+        b = FakeBroker(fill_on_attempt=1)
+        place = b.place_order
+
+        def place_then_auction(client, o, price):
+            handle = place(client, o, price)
+            monkeypatch.setattr(executor, "now_hhmm", lambda: "15:20")
+            return handle
+
+        b.place_order = place_then_auction
+        with pytest.raises(ExecutionHalted, match="closing auction"):
+            executor.execute(b, FakeClient(), [order("BUY"), SECOND], PRICES)
+
+        assert [p["symbol"] for p in b.placed] == ["102110"]
+
+    def test_no_reprice_after_the_auction_starts(self, monkeypatch):
+        # Attempt 1 rests and closes with 4 filled after the cancel; by
+        # then it is 15:20, so the remaining 6 are not reissued.
+        b = FakeBroker(fill_on_attempt=None,
+                       executions={"order-1": {"filledQuantity": "4"}})
+        cancel = b.cancel
+
+        def cancel_then_auction(client, handle):
+            cancel(client, handle)
+            monkeypatch.setattr(executor, "now_hhmm", lambda: "15:21")
+
+        b.cancel = cancel_then_auction
+        with pytest.raises(ExecutionHalted) as e:
+            executor.execute(b, FakeClient(), [order("BUY")], PRICES)
+
+        assert len(b.placed) == 1
+        assert e.value.results["102110"]["filled_quantity"] == 4
 
 
 class TestExecutionAcrossAttempts:
