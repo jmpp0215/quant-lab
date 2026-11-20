@@ -211,6 +211,27 @@ Two procedure notes from that run:
   stdin, so the first confirm raises `EOFError`, before any order is sent.
   Run it in a real terminal.
 
+**2026-11-20: kis-isa tranche 10 and toss-bot PBR full rebalance, both
+clean.**
+- kis-isa tranche 10 (trading day 15), 13:49. Orders 38-40: SELL 091170 ×5,
+  SELL 379790 ×4, BUY 102110 ×2. All three filled on the first attempt,
+  within 60 won of the plan. Books CLEAN, no orders left resting.
+- toss-bot PBR full rebalance (20 trading days after 10-16), 13:49-13:53.
+  The target went from 46 names to 44: 41 kept, 5 dropped (000210, 002320,
+  016710, 027410, 058650), 3 added (005010, 012160, 025750). The live
+  guardrail removed 6 ADMIN stocks. There were 37 orders (7 SELL, 30 BUY),
+  all filled on the first attempt, `all_clear=True`. Holdings match the
+  44-name target, with each weight within ±0.5pp. Cash afterwards was
+  16,431 won. Planning warned "buy notional exceeds cash" because cash was
+  measured before the sells. The sells ran first, so nothing was refused.
+- This run was triggered by accident. `check_pbr_due.py` is not read-only:
+  when the rebalance is due, it starts `run_pbr_live.py --auto` itself, and
+  `TOSS_DRY_RUN` was `false` in `.env`. To find out whether PBR is due, read
+  `pbr_storage.get_latest_full_rebalance_date()` and compare it against
+  `FULL_REBALANCE_TRADING_DAYS`. Don't run the script for that.
+- Again nothing timed out, so neither the resting-order nor the cancel read
+  has been seen live yet, on KIS or on Toss.
+
 **Toss: not yet checked.** Before the next `toss-bot` run, confirm that a
 cancelled order with zero fills carries `execution.filledQuantity` in the
 CLOSED list. Without it, every timeout cancel halts the run.
