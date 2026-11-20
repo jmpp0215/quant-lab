@@ -60,6 +60,24 @@ def test_get_latest_full_rebalance_date_skips_retry_rows(tmp_path, monkeypatch):
         assert pbr_storage.get_latest_full_rebalance_date(conn) == "2026-09-07"
 
 
+def test_full_rebalance_date_survives_a_same_day_retry(tmp_path, monkeypatch):
+    # A same-day --retry replaces the full rebalance's row (trade_date is
+    # the key). The 20-trading-day clock must still start at that day,
+    # not fall back to an older full rebalance or to None.
+    _make_db(tmp_path, monkeypatch)
+    with pbr_storage.connect() as conn:
+        pbr_storage.save_rebalance(
+            conn, "2026-11-20", 50, Decimal("100"), Decimal("100"),
+            Decimal("10"), Decimal("10"), {"005930": 1.0},
+            {"failed": ["005930"], "partial": [], "all_clear": False})
+        pbr_storage.save_rebalance(
+            conn, "2026-11-20", 50, Decimal("100"), Decimal("100"),
+            Decimal("10"), Decimal("10"), {"005930": 1.0},
+            {"failed": [], "partial": [], "all_clear": True,
+             "retry_of": "2026-11-20"})
+        assert pbr_storage.get_latest_full_rebalance_date(conn) == "2026-11-20"
+
+
 def test_save_rebalance_same_day_rerun_does_not_crash_and_overwrites(tmp_path, monkeypatch):
     """Regression test for the PK-collision bug: re-running save_rebalance for
     the same trade_date used to raise sqlite3.IntegrityError (INSERT with no

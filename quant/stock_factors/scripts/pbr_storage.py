@@ -120,15 +120,20 @@ def get_latest_full_rebalance_date(conn: sqlite3.Connection) -> str | None:
     NOT a retry of an earlier rebalance - summary_json has no "retry_of").
     This is what the 20-trading-day full-cycle gate paces off of, so that
     retry attempts (see get_latest_rebalance) don't push the next full
-    rebalance later."""
-    rows = conn.execute(
-        "SELECT trade_date, summary_json FROM pbr_rebalance ORDER BY trade_date DESC"
-    ).fetchall()
-    for row in rows:
-        summary = json.loads(row["summary_json"]) if row["summary_json"] else {}
-        if not summary.get("retry_of"):
-            return row["trade_date"]
-    return None
+    rebalance later.
+
+    Read from the newest row: a retry row names its full rebalance in
+    retry_of. That matters for a same-day retry, which replaces the full
+    rebalance's own row (trade_date is the key) - skipping retry rows then
+    lost the date and restarted the clock from an older one or None."""
+    row = conn.execute(
+        "SELECT trade_date, summary_json FROM pbr_rebalance "
+        "ORDER BY trade_date DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return None
+    summary = json.loads(row["summary_json"]) if row["summary_json"] else {}
+    return summary.get("retry_of") or row["trade_date"]
 
 def save_rebalance(conn: sqlite3.Connection, trade_date: str, target_n: int,
                    assets_before: Decimal, assets_after: Decimal,
