@@ -113,6 +113,15 @@ CREATE TABLE IF NOT EXISTS tranche_holdings (
     updated_at  TEXT NOT NULL,
     PRIMARY KEY (tranche, account, symbol)
 );
+-- A live tranche run that needed no orders (book already at target).
+-- Counts as that month's rebalance alongside orders rows - see
+-- tranches_done_this_month.
+CREATE TABLE IF NOT EXISTS tranche_noop_runs (
+    account       TEXT NOT NULL,
+    tranche       INTEGER NOT NULL,
+    executed_date TEXT NOT NULL,
+    PRIMARY KEY (account, tranche, executed_date)
+);
 
 CREATE TABLE IF NOT EXISTS dividend_events (
     symbol       TEXT NOT NULL,
@@ -317,13 +326,31 @@ def tranches_done_this_month(conn: sqlite3.Connection, account: str,
 
     Drives the catch-up rule: a tranche that missed its scheduled day
     runs at the next opportunity instead of skipping the month.
+
+    A run that needed no orders (tranche_noop_runs) counts too: otherwise
+    a sleeve already at target stays "due" every day and the later sleeves
+    never get their turn that month.
     """
+    month = f"{today[:7]}%"
     rows = conn.execute(
-        "SELECT DISTINCT tranche FROM orders "
-        "WHERE account = ? AND executed_date LIKE ? AND tranche IS NOT NULL",
-        (account, f"{today[:7]}%"),
+        "SELECT tranche FROM orders "
+        "WHERE account = ? AND executed_date LIKE ? AND tranche IS NOT NULL "
+        "UNION "
+        "SELECT tranche FROM tranche_noop_runs "
+        "WHERE account = ? AND executed_date LIKE ?",
+        (account, month, account, month),
     ).fetchall()
     return {r["tranche"] for r in rows}
+
+
+def save_tranche_noop(conn: sqlite3.Connection, account: str, tranche: int,
+                      executed_date: str) -> None:
+    """Record a live tranche run that ended with nothing to trade."""
+    conn.execute(
+        "INSERT OR IGNORE INTO tranche_noop_runs "
+        "(account, tranche, executed_date) VALUES (?, ?, ?)",
+        (account, tranche, executed_date),
+    )
 
 def rebalanced_this_month(conn: sqlite3.Connection, trade_date: str) -> bool:
     """True if any order was already placed in the same calendar month.

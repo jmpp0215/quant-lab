@@ -170,6 +170,7 @@ def main() -> int:
         # itself wants no positions - nothing to price, nothing to trade.
         log.info("tranche %d: no holdings and no signal weights, nothing "
                  "to do", which)
+        record_noop(client, account, which, today)
         return 0
 
     # Size against no-미수 buying power (KIS nrcvb_buy_amt / Toss available
@@ -197,6 +198,7 @@ def main() -> int:
 
     if not orders:
         log.info("nothing to do")
+        record_noop(client, account, which, today)
         return 0
 
     if not confirm(f"Rebalance tranche {which}?"):
@@ -295,6 +297,16 @@ def apply_fills(book: dict[str, int], orders: list[rebalance.Order],
         delta = filled if order.side == "BUY" else -filled
         updated[order.symbol] = updated.get(order.symbol, 0) + delta
     return {s: q for s, q in updated.items() if q > 0}
+
+
+def record_noop(client, account: str, which: int, today: str) -> None:
+    """Mark the sleeve done for the month though nothing was traded, so
+    due_today moves on to the next sleeve. A dry run records nothing, the
+    same as for orders."""
+    if client.dry_run:
+        return
+    with storage.connect() as conn:
+        storage.save_tranche_noop(conn, account, which, today)
 
 
 def record(account: str, trade_date: str, which: int,

@@ -133,6 +133,39 @@ class TestTranchesDoneThisMonth:
                 conn, "test-acc", "2026-09-02")
         assert done == {2}
 
+    def test_a_no_order_run_counts_as_done(self, tmp_path):
+        # A sleeve already at target sends no orders. Unless that run is
+        # recorded, due_today keeps picking it and the later sleeves never
+        # get their turn that month.
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_tranche_noop(conn, "test-acc", 0, "2026-09-01")
+            done = storage.tranches_done_this_month(
+                conn, "test-acc", "2026-09-08")
+            other_month = storage.tranches_done_this_month(
+                conn, "test-acc", "2026-10-01")
+            other_account = storage.tranches_done_this_month(
+                conn, "other-acc", "2026-09-08")
+        assert done == {0}
+        assert other_month == set()
+        assert other_account == set()
+
+    def test_no_order_runs_and_orders_combine(self, tmp_path):
+        db = tmp_path / "test.db"
+        storage.init(db)
+        with storage.connect(db) as conn:
+            storage.save_tranche_noop(conn, "test-acc", 0, "2026-09-01")
+            storage.save_tranche_noop(conn, "test-acc", 0, "2026-09-02")
+            storage.save_order(
+                conn, "2026-09-07", "2026-09-08T10:00:00", "test-acc",
+                "102110", "BUY", 10, Decimal("109620"), "order-1",
+                filled=True, tranche=5, executed_date="2026-09-08",
+            )
+            done = storage.tranches_done_this_month(
+                conn, "test-acc", "2026-09-08")
+        assert done == {0, 5}
+
 
 class TestDividendEvents:
     def test_round_trips(self, tmp_path):
