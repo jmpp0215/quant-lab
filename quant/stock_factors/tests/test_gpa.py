@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 from quant.stock_factors import gpa
 from quant.stock_factors.config import FactorConfig
 
@@ -72,3 +74,30 @@ def test_prepare_gpa_signals_uses_cfs_not_mean_of_cfs_and_ofs(tmp_path, monkeypa
     actual_gpa = df_gpa.loc["2026-09-01", symbol]
     assert actual_gpa == expected_gpa
     assert actual_gpa != mean_gpa
+
+
+def test_amendment_replaces_its_quarter_instead_of_adding_one(tmp_path, monkeypatch):
+    # Q1 (GPA 0.1) and Q2 (0.3) filed, then a late Q1 amendment (0.2).
+    # The rolling mean is over quarters, so the amendment replaces Q1:
+    # (0.2 + 0.3) / 2, not a third entry (0.1 + 0.3 + 0.2) / 3.
+    db_path = tmp_path / "test.db"
+    _create_minimal_schema(db_path)
+    monkeypatch.setattr(gpa, "DB_PATH", db_path)
+    conn = sqlite3.connect(db_path)
+    for day in ("20260515", "20260814", "20260901"):
+        conn.execute("INSERT INTO pead_price_raw (date, symbol, close) "
+                     "VALUES (?, 'A', 1000)", (day,))
+    for day, code, gp in (("20260515", "11013", 10), ("20260814", "11012", 30),
+                          ("20260901", "11013", 20)):
+        for metric, amount in (("gross_profit", gp), ("total_assets", 100)):
+            conn.execute(
+                "INSERT INTO pead_quarterly_normalized (symbol, target_year, "
+                "rcept_dt, report_code, metric, basis, quarterly_value) "
+                "VALUES ('A', '2026', ?, ?, ?, 'CFS', ?)", (day, code, metric, amount))
+    conn.commit()
+    conn.close()
+
+    df = gpa.prepare_gpa_signals("20260101", FactorConfig(lookback_quarters=4,
+                                                          min_periods=2))
+    assert df.loc["2026-08-14", "A"] == pytest.approx(0.2)
+    assert df.loc["2026-09-01", "A"] == pytest.approx(0.25)

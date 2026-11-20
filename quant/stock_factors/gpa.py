@@ -17,7 +17,7 @@ def prepare_gpa_signals(start_date: str, config: FactorConfig) -> dict:
     # basis='CFS' 고정 - value.py::prepare_pbr_signals와 동일한 이유
     # (CFS/OFS 미필터링 시 pivot_table의 mean aggfunc가 total_assets를 오염시킴).
     query = """
-        SELECT symbol, rcept_dt as date, report_code, metric, quarterly_value
+        SELECT symbol, target_year, rcept_dt as date, report_code, metric, quarterly_value
         FROM pead_quarterly_normalized
         WHERE metric IN ('gross_profit', 'total_assets') AND basis = 'CFS'
         ORDER BY date
@@ -27,7 +27,7 @@ def prepare_gpa_signals(start_date: str, config: FactorConfig) -> dict:
     
     # 분기별 스냅샷 생성
     df_pivot = df.pivot_table(
-        index=['symbol', 'date', 'report_code'], 
+        index=['symbol', 'date', 'target_year', 'report_code'],
         columns='metric', 
         values='quarterly_value'
     ).reset_index()
@@ -35,16 +35,23 @@ def prepare_gpa_signals(start_date: str, config: FactorConfig) -> dict:
     # 데이터 부족 시 제외
     df_pivot = df_pivot.dropna(subset=['gross_profit', 'total_assets'])
     
-    # 동일 날짜에 2개 이상의 보고서(report_code)가 접수된 경우 최신 보고서 하나만 유지
-    df_pivot = df_pivot.sort_values(['symbol', 'date', 'report_code']).drop_duplicates(subset=['symbol', 'date'], keep='last')
-    
     df_pivot['gpa_raw'] = df_pivot['gross_profit'] / df_pivot['total_assets']
-    
-    # 종목별 롤링 평균 적용
-    df_pivot = df_pivot.sort_values(['symbol', 'date'])
-    df_pivot['gpa_rolling'] = df_pivot.groupby('symbol')['gpa_raw'].transform(
-        lambda x: x.rolling(config.lookback_quarters, min_periods=config.min_periods).mean()
-    )
+    quarters = df_pivot['report_code'].map({"11013": 1, "11012": 2, "11014": 3, "11011": 4})
+    df_pivot['period'] = df_pivot['target_year'].astype(int) * 4 + quarters
+    df_pivot = df_pivot.sort_values(['symbol', 'date', 'period'])
+
+    # Rolling mean over the latest lookback_quarters *quarters* known on each
+    # filing date. An amendment replaces its quarter's value rather than
+    # entering the window as an extra quarter (value.py has the same rule).
+    rolled = []
+    for _, filings in df_pivot.groupby('symbol', sort=False):
+        known = {}
+        for date, day in filings.groupby('date', sort=False):
+            known.update(zip(day['period'], day['gpa_raw'], strict=True))
+            window = [known[p] for p in sorted(known)[-config.lookback_quarters:]]
+            mean = sum(window) / len(window) if len(window) >= config.min_periods else None
+            rolled.append((day['symbol'].iloc[0], date, mean))
+    df_pivot = pd.DataFrame(rolled, columns=['symbol', 'date', 'gpa_rolling'])
     df_pivot = df_pivot.dropna(subset=['gpa_rolling'])
     
     # 날짜별로 조회 가능한 형태 (dict)로 변환
