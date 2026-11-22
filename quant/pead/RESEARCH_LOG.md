@@ -48,6 +48,7 @@
   섹션 본문에 적는다(§57 이후 방식).
 - 재실행 전에는 이전 출력을 `scratch/<주제>/out/pre_<커밋>/` 같은 곳에 옮겨 둔다(예: `scratch/momproxy/out/pre_0563373/`).
 - 실행 환경은 레포의 `.venv`(Python 3.14)이고, 레포 루트에서 실행한다.
+- **2026-11-22부터 모멘텀 신호에 고정 현금 비중(`config.CASH_FLOOR` 15%)이 들어간다.** `backtest.run_tranched`도 같은 `strategy.evaluate`를 쓰므로, 그 전의 모멘텀 연구 수치를 재현하려면 스크립트에서 `config.CASH_FLOOR = Decimal("0")`으로 둔다(`momproxy/s64.py`, `nov_review/cash_weight.py`는 그렇게 고쳤다).
 
 **섹션별 스크립트 색인** (2026-11-22 기준, 본문이 인용한 `scratch/` 경로에서 뽑았다. 모두 이 맥에 있다.)
 

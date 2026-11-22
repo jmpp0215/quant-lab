@@ -286,6 +286,22 @@ After any `tranche_init.py` run, verify the books tie out:
 `backtest.run_tranched` sizes sleeves with the same `tranche.sleeve_budget`
 rule; it also seeds every sleeve up front (its `initial / n` split).
 
+## Cash floor (kis-isa, from 2026-11-22)
+
+`config.CASH_FLOOR` is the share of every sleeve always parked in 497880, whatever the signal.
+Decided at the 2026-11 review (`reviews/2026-11-review.md`): **15%, allowed range 10-20%.**
+It cuts gains and losses about equally; it is a risk budget, not a timing signal.
+
+Changing it (the only discretionary input in the strategy, so it is fenced and measured):
+1. **When**: at most once a month, decided **before** that month's first trading day
+   (tranche 0). Never on a tranche day itself, and never mid-month.
+2. **How much**: at most ±5 percentage points per change, always inside 10-20%.
+3. **Record first**: add a row to `reviews/cash-floor-log.md` (date, old → new, reason, what you
+   expect to happen) before editing `config.py`, and commit both together.
+4. It applies per sleeve on that sleeve's own day, so a change phases in over the month.
+5. Each review, compare against "fixed 15% all along" (the log explains how) to see whether
+   the changes helped.
+
 ## Notes
 
 - `ordered_today` blocks a second rebalance on the same trading date. It

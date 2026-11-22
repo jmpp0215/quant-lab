@@ -103,6 +103,10 @@ rather than trade through it.
 - Momentum lookups resolve to the last trading day at or before a target date, never by
   candle index — symbols don't share one trading calendar, and index-based lookup once
   silently shifted an entire ranking when the cache added one candle.
+- `config.CASH_FLOOR` (15% since 2026-11-22) is parked in the cash proxy on every signal: each pick
+  gets `(1 - CASH_FLOOR) / TOP_N`. It is the user's risk budget, changed only by the RUNBOOK "Cash floor"
+  procedure (range 10-20%, logged in `reviews/cash-floor-log.md`) — never tune it from a backtest. The
+  backtest uses it too; research scripts reproducing earlier numbers pin it to 0.
 - Absolute momentum compares against a cash-proxy ETF (`config.CASH_SYMBOL`), not against
   zero — a small positive return isn't worth holding if cash yields more. The proxy must be
   in `config.UNIVERSE` (evaluate only scores UNIVERSE; outside it the hurdle silently

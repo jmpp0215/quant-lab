@@ -99,6 +99,16 @@ CASH_SYMBOL = "497880"
 # How many positions to hold, equally weighted.
 TOP_N = 3
 
+# Share of every sleeve always parked in CASH_SYMBOL, whatever the signal:
+# each pick gets (1 - CASH_FLOOR) / TOP_N. A static cash weight is the only
+# downside lever left after 15 dynamic rules failed (RESEARCH_LOG, momentum
+# studies 2026-10); it cuts gains and losses about equally. Decided at the
+# 2026-11 review (reviews/2026-11-review.md): 15%, allowed range 10-20%,
+# changed only by the procedure in RUNBOOK.md ("Cash floor"). The backtest
+# uses it too - set it to Decimal("0") to reproduce research numbers from
+# before 2026-11-22.
+CASH_FLOOR = Decimal("0.15")
+
 # Lookback in months for the momentum ranking.
 LOOKBACK_MONTHS = 12
 

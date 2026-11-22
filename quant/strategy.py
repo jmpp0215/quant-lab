@@ -76,7 +76,10 @@ def evaluate(candles_by_symbol: dict[str, list[dict]],
     ]
     selected = eligible[:config.TOP_N]
 
-    weight = Decimal("1") / config.TOP_N
+    floor = config.CASH_FLOOR
+    if not Decimal("0") <= floor < Decimal("1"):
+        raise ValueError(f"config.CASH_FLOOR must be in [0, 1), got {floor}")
+    weight = (Decimal("1") - floor) / config.TOP_N
     weights = {s.symbol: weight for s in selected}
 
     cash_weight = Decimal("1") - sum(weights.values(), Decimal("0"))
@@ -84,8 +87,9 @@ def evaluate(candles_by_symbol: dict[str, list[dict]],
     # point is not a real cash allocation.
     if abs(cash_weight) < Decimal("0.0001"):
         cash_weight = Decimal("0")
-    # Slots nothing beat cash for are parked in the cash proxy itself rather
-    # than left as idle account cash, which earns next to nothing in the ISA.
+    # Slots nothing beat cash for, and the CASH_FLOOR share, are parked in the
+    # cash proxy itself rather than left as idle account cash, which earns
+    # next to nothing in the ISA.
     if cash_weight > 0:
         weights[config.CASH_SYMBOL] = cash_weight
         cash_weight = Decimal("0")

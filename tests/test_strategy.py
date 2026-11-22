@@ -31,6 +31,7 @@ class TestEvaluateHurdle:
         monkeypatch.setattr(config, "TOP_N", 3)
         monkeypatch.setattr(config, "LOOKBACK_MONTHS", 12)
         monkeypatch.setattr(config, "SKIP_MONTHS", 0)
+        monkeypatch.setattr(config, "CASH_FLOOR", Decimal("0"))
 
     def test_symbols_must_beat_cash_not_zero(self):
         data = {
@@ -88,6 +89,65 @@ class TestEvaluateHurdle:
 
         for v in strategy.variants(data, {}, signal):
             assert "CASH" not in v.weights, v.name
+
+
+class TestCashFloor:
+    """config.CASH_FLOOR: a fixed share always parked in the cash proxy."""
+
+    @pytest.fixture(autouse=True)
+    def _small_universe(self, monkeypatch):
+        monkeypatch.setattr(config, "UNIVERSE",
+                            {"A": "a", "B": "b", "C": "c", "CASH": "cash"})
+        monkeypatch.setattr(config, "CASH_SYMBOL", "CASH")
+        monkeypatch.setattr(config, "TOP_N", 3)
+        monkeypatch.setattr(config, "LOOKBACK_MONTHS", 12)
+        monkeypatch.setattr(config, "SKIP_MONTHS", 0)
+        monkeypatch.setattr(config, "CASH_FLOOR", Decimal("0.15"))
+
+    def test_full_selection_keeps_the_floor_in_the_cash_proxy(self):
+        data = {"A": candles("100", "120"), "B": candles("100", "115"),
+                "C": candles("100", "110"), "CASH": candles("100", "103")}
+
+        signal = strategy.evaluate(data, {})
+
+        each = Decimal("0.85") / 3
+        assert signal.weights["A"] == signal.weights["B"] == signal.weights["C"] == each
+        assert signal.weights["CASH"] == Decimal("1") - 3 * each
+        assert abs(signal.weights["CASH"] - Decimal("0.15")) < Decimal("1e-20")
+        assert sum(signal.weights.values()) == Decimal("1")
+        assert signal.cash_weight == Decimal("0")
+
+    def test_empty_slots_add_to_the_floor(self):
+        # One pick: it gets its 85%/3 share, the cash proxy holds the rest.
+        data = {"A": candles("100", "110"), "B": candles("100", "102"),
+                "C": candles("100", "95"), "CASH": candles("100", "103")}
+
+        signal = strategy.evaluate(data, {})
+
+        assert signal.weights == {"A": Decimal("0.85") / 3,
+                                  "CASH": Decimal("1") - Decimal("0.85") / 3}
+
+    def test_nothing_beats_cash_is_still_all_cash_proxy(self):
+        data = {s: candles("100", "90") for s in "ABC"} | {"CASH": candles("100", "103")}
+
+        assert strategy.evaluate(data, {}).weights == {"CASH": Decimal("1")}
+
+    def test_variants_ignore_the_floor(self, monkeypatch):
+        # Variants re-weight the picks themselves; the floor is not a pick.
+        data = {"A": candles("100", "120"), "B": candles("100", "115"),
+                "C": candles("100", "110"), "CASH": candles("100", "103")}
+        signal = strategy.evaluate(data, {})
+
+        for v in strategy.variants(data, {}, signal):
+            assert "CASH" not in v.weights, v.name
+
+    @pytest.mark.parametrize("floor", ["-0.01", "1", "1.5"])
+    def test_out_of_range_floor_is_refused(self, monkeypatch, floor):
+        monkeypatch.setattr(config, "CASH_FLOOR", Decimal(floor))
+        data = {s: candles("100", "120") for s in "ABC"} | {"CASH": candles("100", "103")}
+
+        with pytest.raises(ValueError, match="CASH_FLOOR"):
+            strategy.evaluate(data, {})
 
 
 def daily(closes: list[str]) -> list[dict]:
