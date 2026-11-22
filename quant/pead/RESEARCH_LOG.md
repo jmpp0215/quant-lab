@@ -7,6 +7,80 @@
 `quant/pead/` 각 모듈의 docstring을 참고할 것 — 이 문서는 "무엇을 검증했고 왜 이 결론에
 도달했는지"에 집중한다.
 
+## 0. 이 로그를 쓰는 법 (2026-11-22 정리)
+
+이 파일은 PEAD 연구(§1~§5)로 시작했지만, 지금은 이 레포의 모든 연구 기록이 여기에 쌓인다. 맨 위의
+"연구 종료"는 PEAD에만 해당한다. 아래 규칙은 §30 이후 실제로 지켜 온 방식을 글로 옮긴 것이다.
+
+**순서**
+1. **사전 등록**: 결과를 보기 전에 새 섹션을 쓴다. 제목은
+   `## N. 주제 — 사전 등록 (YYYY-MM-DD, 결과 전 기록, 연구 전용)`으로 하고, 번호는 마지막 번호에 이어 붙인다.
+   관찰만 하는 섹션이면 `관찰 (날짜, 설명용·미등록)`이라고 적는다.
+2. 사전 등록 섹션을 **먼저 커밋한 뒤** 스크립트를 실행한다. 커밋 시각이 "결과 전에 정했다"는 증거다.
+3. **결과는 같은 섹션 아래에** `**결과 (날짜)**`로 덧붙인다. 위에 쓴 가설, 기준, 설정은 고치지 않는다.
+   판정 기준을 바꾸고 싶으면 새 번호로 다시 등록한다(예: §61은 §58 재시도).
+4. **재실행**(코드 수정이나 데이터 정정 뒤)도 원래 섹션 끝에 `**재실행 (날짜, 이유·커밋)**`으로 덧붙인다.
+   이전 숫자와 새 숫자를 나란히 적고, 판정이 바뀌었는지 적는다(예: §35·§37의 2026-11-21 재실행).
+5. 결과가 좋아도 실거래 규칙은 바뀌지 않는다. 바꿀지는 사람이 따로 정하고, 정하면 `HANDOFF.md`에 남긴다.
+6. **전방 기록**(§50, §57-F처럼 앞으로 쌓이는 실제 데이터로 판정하는 것)은 정한 표본이나 기간이 차기 전에
+   결과를 보지 않는다. `--force`로 미리 보지 않는다.
+
+**사전 등록에 적을 것**
+- 질문 한 줄, 그리고 왜 지금 묻는지
+- 데이터: 출처, 기간, 유니버스, 표본 안과 밖의 구분
+- 방법: 신호, 진입과 청산 시점, 비용, 비교 대상(동일가중, 현금, KOSPI 등)
+- **판정 기준**: 숫자로 쓴 통과, 기각, 판단 불가 조건(예: "Sharpe 차이 +0.1 이상이고 하위 기간 3개 중 2개 이상")
+- 스크립트 경로와 출력 파일 경로(아래 "재현" 참고)
+
+**자주 걸린 함정** (재실행으로 숫자가 바뀐 원인들)
+- 신호를 체결일 종가로 만들고 같은 종가에 체결하면 미래 정보가 들어간다. 신호는 직전 거래일까지의
+  데이터로 만든다(§23, `0563373`).
+- 재무 데이터는 그 날짜에 공시된 것만 쓴다. 이전 분기의 정정 공시가 최신 분기를 덮어쓰거나, 새 분기로
+  한 번 더 세어지면 안 된다(`0563373`, `19742e2`).
+- 현재 상장 종목만 쓰면 생존편향이 생긴다. 상장폐지 종목을 포함한다(§22).
+- 종가 데이터 출처가 바뀌거나 장중 값이 남으면 수익률이 오염된다(§24).
+
+**재현 (이 맥 기준)**
+- 연구 스크립트와 출력은 레포의 `scratch/`에 있다. 이 폴더는 **gitignore되어 커밋되지 않고, 이 맥에만
+  있으며, `backups.py`의 일일 백업 대상도 아니다**(백업 대상은 `data/quant.db`, `data/pbr_live.db`뿐이다).
+  이 맥의 디스크를 잃으면 아래 스크립트도 함께 잃는다.
+- 새 섹션은 스크립트를 `scratch/<주제>/sNN.py`에, 출력을 `scratch/<주제>/sNN_out.txt`에 두고, 두 경로를
+  섹션 본문에 적는다(§57 이후 방식).
+- 재실행 전에는 이전 출력을 `scratch/<주제>/out/pre_<커밋>/` 같은 곳에 옮겨 둔다(예: `scratch/momproxy/out/pre_0563373/`).
+- 실행 환경은 레포의 `.venv`(Python 3.14)이고, 레포 루트에서 실행한다.
+
+**섹션별 스크립트 색인** (2026-11-22 기준, 본문이 인용한 `scratch/` 경로에서 뽑았다. 모두 이 맥에 있다.)
+
+| 섹션 | 스크립트·데이터 |
+|---|---|
+| §1~§16, §21, §27 | 본문에 `scratch/` 경로가 없다. 레포 안 코드(`quant/pead/`, `quant/stock_factors/`)로 돌렸거나 경로를 남기지 않았다. |
+| §17, §20 | `run_pbr_circuit_breaker_test.py`, `run_pbr_stoploss_test.py` |
+| §18 | `run_pbr_stoploss_test.py` |
+| §19 | `run_pbr_invvol_test.py`, `run_pbr_invvol_robustness.py` |
+| §22 | `survivorship_backfill.py`, `survivorship_classify.py`, `survivorship_sim.py`, DB `_survivorship.db` |
+| §23 | `pbr_dividend_sim.py` |
+| §24 | `recollect_prices.py` |
+| §25 | `reverify.py`, 로그 `_reverify_*.log` |
+| §26 | `cv_filter_validation.py`, 로그 `_cv_validation.log` |
+| §28 | `reverify_invvol.py`, 로그 `_reverify_invvol.log` |
+| §29 | `pbr_band_test.py`, `pbr_boundary_cap_check.py`, `pbr_boundary_margin.py`, `pbr_retry_sim.py` |
+| §30, §32 | `pbr_sector/` (`describe.py`, `sectors.py`, `validate.py`, `leader_events.py`) |
+| §31, §33, §34 | `sector_pbr/` (`validate.py`, `validate_cm.py`, `leaders_long.py`, 데이터 `raw/`) |
+| §35 | `combo/value_momentum.py`, 곡선 `_out_pbr_baseline_equity.csv`(§23 정정 전 신호, `HANDOFF.md` 3절 참고) |
+| §36 | `pbr_oos/validate.py`, 데이터 `pbr_oos/data/` |
+| §37 | `momproxy/build.py`, `momproxy/loo.py` |
+| §38~§42, §49, §50 | `fear_reversal/` (`validate.py`, `beta.py`, `fetch_oos.py`, `combo.py`, `combo2.py`, `sector_split.py`, `s50_reference.py`) |
+| §43~§48, §53, §54 | `market_map/` (`build.py`, `breadth_slope.py`, `fetch_kosdaq.py`, `stage2.py`, `deposit_rule.py`, `s53.py`, `s54.py`) |
+| §51 | `midterm/s51.py` |
+| §52 | `value_trap/validate.py` |
+| §55 | `midcheck/validate.py` |
+| §56 | `rebal_period/validate.py` |
+| §57~§59, §61 | `value_spread/s57.py`, `s58.py`, `s59.py`, `s61.py` (출력 `sNN_out.txt`) |
+| §60 | `pbr_factors/s60.py` |
+| §62 | `sector_rel/fetch.py`, `sector_rel/s62.py` |
+
+경로는 모두 `scratch/` 기준이다. 새 섹션을 쓰면 이 표에 한 줄을 추가한다.
+
 ## 1. 가설
 
 한국 KOSPI 상장 종목에서, 실적 서프라이즈(SUE, Standardized Unexpected Earnings) 발표
