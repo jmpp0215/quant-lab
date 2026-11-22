@@ -12,7 +12,16 @@ UNIVERSE = {
     "091170": "KODEX 은행",
     "133690": "TIGER 미국나스닥100",
     "379790": "RISE 유로스탁스50",
-    "371160": "TIGER 차이나항셍테크",
+    # 2026-11-23 review: replaced 371160 (TIGER 차이나항셍테크, now WATCH_ONLY).
+    # RESEARCH_LOG §74: swapping it for gold was non-inferior in both test
+    # periods (Sharpe +0.12 / +0.17); most of the gain came from dropping
+    # 371160, which kept getting picked right after spikes. Gold is the one
+    # asset class the universe lacked; it mostly takes the bond/cash slots.
+    "132030": "KODEX 골드선물(H)",
+    # Same review: added alongside gold (§74 S3, 371160 -> Japan + gold, also
+    # non-inferior). Unhedged, so it carries JPY. The user's call: regional
+    # breadth for regimes the backtest window never saw.
+    "241180": "TIGER 일본니케이225",
     "484790": "KODEX 미국30년국채액티브(H)",
     "497880": "SOL CD금리&머니마켓액티브",
 }
@@ -22,8 +31,9 @@ UNIVERSE = {
 # so holding both added little diversification. Keeping its candles lets us
 # check later whether that call cost us anything.
 WATCH_ONLY = {
+    # Left the universe at the 2026-11 review (RESEARCH_LOG §74).
+    "371160": "TIGER 차이나항셍테크",
     "487240": "KODEX AI전력핵심설비",
-    "241180": "TIGER 일본니케이225",
     "195930": "TIGER 유로스탁스50(합성H)",
     "459580": "KODEX CD금리액티브(합성)",
     # Listed 2026-03-17, so only ~5 months of candles exist (as of
@@ -76,7 +86,11 @@ HALF_SPREAD = {
     "091170": Decimal("0.00016"),   # 16,175 grid, 5-won tick
     "133690": Decimal("0.00003"),   # 187,985 grid
     "379790": Decimal("0.00030"),
-    "371160": Decimal("0.00069"),   # 7,270 / 7,280 - widest in the universe
+    "371160": Decimal("0.00069"),   # 7,270 / 7,280 - widest in the universe (watch-only since 2026-11-23)
+    # Estimate, not measured: one 5-won tick at the 2026-11-20 close of 19,815.
+    # Replace with a live order-book reading at the next trading session.
+    "132030": Decimal("0.00013"),
+    "241180": Decimal("0.00009"),   # estimate: one 5-won tick at the 2026-11-20 close of 28,790; measure live
     "484790": Decimal("0.00030"),
     "497880": Decimal("0.00005"),
 }
@@ -85,7 +99,7 @@ DEFAULT_HALF_SPREAD = Decimal("0.0005")
 # Korean-listed ETFs tracking foreign assets are taxed at 15.4% on
 # realised gains; domestic equity ETFs are exempt. Which side of that line
 # a symbol falls on drives most of the cost of extra rebalancing.
-FOREIGN_ETF = {"133690", "379790", "371160", "484790"}
+FOREIGN_ETF = {"133690", "379790", "371160", "484790", "132030", "241180"}
 
 GAINS_TAX_RATE = Decimal("0.154")
 

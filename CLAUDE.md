@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A dual momentum trading system built on the Toss Securities and KIS (한국투자증권) Open
-APIs. Ranks a universe of eight Korea-listed ETFs by risk-adjusted momentum and
+APIs. Ranks a universe of nine Korea-listed ETFs by risk-adjusted momentum and
 rebalances a live brokerage account monthly, in staggered tranches. Personal research
 project, not a library — there is no paper trading environment, so all safety comes from
 code structure, not from a sandbox.
@@ -159,8 +159,9 @@ rather than trade through it.
 - `RUNBOOK.md` documents the actual manual rebalance procedure (timing windows, dry-run
   unlock/lock sequence, reconciliation checklist) — read it before changing anything in that
   workflow's code path.
-- The universe is frozen until November 2026 per `RUNBOOK.md`; don't suggest adding or
-  removing symbols from `config.UNIVERSE` casually.
+- The universe changed at the 2026-11 review (371160 out to `WATCH_ONLY`; 132030 gold and 241180 Japan in,
+  RESEARCH_LOG §73-§74, `reviews/2026-11-review.md`). It changes only at a review, with a pre-registered study
+  behind the change; don't suggest adding or removing symbols from `config.UNIVERSE` casually.
 
 ## Asset tracker and research side jobs
 

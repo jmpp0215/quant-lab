@@ -306,7 +306,8 @@ Changing it (the only discretionary input in the strategy, so it is fenced and m
 
 - `ordered_today` blocks a second rebalance on the same trading date. It
   reads the `orders` table, so dry runs must not be recorded there.
-- The universe is frozen until November. Do not adjust it on the day.
+- The universe changes only at a review, with a pre-registered study behind it (last change 2026-11-23:
+  371160 out, 132030 gold and 241180 Japan in; RESEARCH_LOG §74). Do not adjust it on the day.
 - Toss issues **one active token per credential set**: authenticating a
   second `TossClient` silently invalidates the first one's token. Entry
   points reuse a single instance rather than creating one per role.
