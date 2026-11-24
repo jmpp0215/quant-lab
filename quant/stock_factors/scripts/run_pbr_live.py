@@ -22,7 +22,7 @@ from quant.stock_factors.portfolio_construction import (
     price_data_is_stale,
     MAX_STALE_TRADING_DAYS,
 )
-from quant.stock_factors.scripts import pbr_storage
+from quant.stock_factors.scripts import pbr_storage, rights_offerings
 import FinanceDataReader as fdr
 
 # Configured in main() via logging_config.setup() (logs/bot.log + console),
@@ -148,7 +148,8 @@ def build_summary(failed: list, partial: list, halted, retry_of: str | None,
                   equal_weight_target: dict | None = None,
                   rank_boundary: dict | None = None,
                   over_boundary: dict | None = None,
-                  execution_halted: str | None = None) -> dict:
+                  execution_halted: str | None = None,
+                  rights_banned: dict | None = None) -> dict:
     """summary_json for pbr_live.db's pbr_rebalance row."""
     summary = {
         "failed": failed,
@@ -165,6 +166,8 @@ def build_summary(failed: list, partial: list, halted, retry_of: str | None,
     if rank_boundary:
         summary["rank_boundary"] = rank_boundary
         summary["over_boundary"] = over_boundary or {}
+    if rights_banned is not None:
+        summary["rights_banned"] = rights_banned
     if retry_of:
         summary["retry_of"] = retry_of
     if execution_halted is not None:
@@ -186,7 +189,8 @@ def over_rank_boundary(target_weights: dict, boundary: dict[str, Decimal],
 
 
 def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
-                           conn) -> tuple[dict[str, Decimal], dict[str, Decimal]]:
+                           conn, exclude: frozenset[str] = frozenset(),
+                           ) -> tuple[dict[str, Decimal], dict[str, Decimal]]:
     """Target weights for today's run, plus each symbol's rank-boundary
     price (construct_target_portfolio_with_boundary; empty on a retry).
 
@@ -198,6 +202,9 @@ def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
     don't sit exactly at target once prices move, and they would get
     top-ups too. Refused once the last full rebalance is more than
     pbr_storage.RETRY_WINDOW_TRADING_DAYS weekdays old.
+
+    `exclude` (the rights-offering ban) applies to a fresh ranking only; a
+    retry replays the earlier run's target as it was.
     """
     if retry:
         latest = pbr_storage.get_latest_rebalance(conn)
@@ -219,7 +226,7 @@ def resolve_target_weights(today_str: str, pbr_config: PBRConfig, retry: bool,
                 "retry window; wait for the next full rebalance"
             )
         return {sym: Decimal(str(w)) for sym, w in latest["target_portfolio"].items()}, {}
-    return construct_target_portfolio_with_boundary(today_str, pbr_config)
+    return construct_target_portfolio_with_boundary(today_str, pbr_config, exclude)
 
 
 def main():
@@ -292,6 +299,23 @@ def main():
         return 1
 
     pbr_config = PBRConfig(target_n_stocks=50, weighting_scheme="inverse_vol")
+
+    # 유상증자 보유 금지 (quant/stock_factors/rights_offering.py): banned names
+    # are left out of the ranking, so a held one is sold by the diff. Without
+    # the DART check the run stops rather than trade without the ban.
+    rights_banned = None
+    if not args.retry:
+        try:
+            rights_banned = rights_offerings.banned_symbols(now.date())
+        except Exception as e:
+            log.error("rights-offering ban check failed (%s: %s); refusing to rebalance "
+                      "without it", type(e).__name__, e)
+            return 1
+        log.info("Rights-offering ban: %d KOSPI symbols", len(rights_banned))
+        for sym in sorted(set(rights_banned) & set(positions)):
+            log.warning("%s: held but under the rights-offering ban (%s) - sold this run",
+                        sym, rights_banned[sym])
+
     with pbr_storage.connect() as conn:
         latest_for_retry = pbr_storage.get_latest_rebalance(conn) if args.retry else None
         if args.retry:
@@ -299,7 +323,8 @@ def main():
         else:
             log.info(f"Constructing Target Portfolio (Top {pbr_config.target_n_stocks}) as of {today_str}...")
         try:
-            target_weights, boundary = resolve_target_weights(today_str, pbr_config, args.retry, conn)
+            target_weights, boundary = resolve_target_weights(
+                today_str, pbr_config, args.retry, conn, frozenset(rights_banned or ()))
         except ValueError as e:
             log.error(str(e))
             return 1
@@ -507,7 +532,8 @@ def main():
                                      rank_boundary={s: float(b) for s, b in boundary.items()
                                                     if s in target_weights},
                                      over_boundary=over_boundary,
-                                     execution_halted=str(halt) if halt else None)
+                                     execution_halted=str(halt) if halt else None,
+                                     rights_banned=rights_banned)
 
         target_dict = {sym: float(w) for sym, w in target_weights.items()}
         

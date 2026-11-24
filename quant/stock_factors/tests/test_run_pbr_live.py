@@ -120,9 +120,10 @@ def test_resolve_target_weights_non_retry_builds_fresh_portfolio(pbr_db, monkeyp
 
     called_with = {}
 
-    def fake_construct(today_str, config):
+    def fake_construct(today_str, config, exclude=frozenset()):
         called_with["today_str"] = today_str
         called_with["config"] = config
+        called_with["exclude"] = exclude
         return {"005930": Decimal("1")}, {"005930": Decimal("1100")}
 
     monkeypatch.setattr(run_pbr_live, "construct_target_portfolio_with_boundary", fake_construct)
@@ -133,6 +134,22 @@ def test_resolve_target_weights_non_retry_builds_fresh_portfolio(pbr_db, monkeyp
     assert weights == {"005930": Decimal("1")}
     assert boundary == {"005930": Decimal("1100")}
     assert called_with["today_str"] == "2026-09-08"
+
+
+def test_resolve_target_weights_passes_the_rights_ban_to_the_ranking(pbr_db, monkeypatch):
+    import quant.stock_factors.scripts.run_pbr_live as run_pbr_live
+
+    seen = {}
+
+    def fake_construct(today_str, config, exclude=frozenset()):
+        seen["exclude"] = exclude
+        return {"005930": Decimal("1")}, {}
+
+    monkeypatch.setattr(run_pbr_live, "construct_target_portfolio_with_boundary", fake_construct)
+    with pbr_storage.connect() as conn:
+        resolve_target_weights("2026-09-14", PBRConfig(), retry=False, conn=conn,
+                               exclude=frozenset({"210980"}))
+    assert seen["exclude"] == frozenset({"210980"})
 
 
 class TestApplyAdminFilter:

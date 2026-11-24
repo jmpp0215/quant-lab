@@ -248,6 +248,29 @@ still the lower-stakes place to try an execution-path change against real
 fills before trusting it on `kis-isa`. Invoke every script with
 `--account toss-bot` explicitly - it is no longer the default.
 
+### PBR: rights-offering hold ban (from 2026-11-24)
+
+`run_pbr_live.py` checks DART before every fresh ranking
+(`quant/stock_factors/scripts/rights_offerings.py`). A KOSPI company that has
+filed its own 유상증자 decision is left out of the ranking until a report whose
+balance sheet includes the new equity and shares is received, so a held one is
+sold by the diff (log line `held but under the rights-offering ban`, summary
+key `rights_banned`). A withdrawal (a correction of the decision whose 정정사항
+says 철회) lifts it. If the DART check fails the run stops: rerun it later,
+never edit around it. `--retry` replays the earlier target without the check.
+
+- To see today's list without trading:
+  `python quant/stock_factors/scripts/rights_offerings.py [--date YYYY-MM-DD]`.
+- `납입일 미확인` means no version of the filing states a payment date that
+  could be read: the ban stays until a person reads the filing on DART.
+- **Rights left in the account.** A holding sold after the 배정기준일 leaves
+  신주인수권증서 in the account. Within the 증서 trading window, sell them
+  by hand (whether the Toss app can is not yet checked), or let them lapse if
+  they're worth less than the fees. Note the choice in HANDOFF's work log. Do
+  not subscribe: the ban means we don't want the new shares. Until they're
+  gone, check the dry-run plan: the diff treats any holding outside the
+  target as a SELL, so the 증서 may show up as one.
+
 ## Starting a new account, or adding/removing a tranche
 
 A rebalancing sleeve sizes itself to **1/N of the whole account** (every

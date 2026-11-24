@@ -161,7 +161,7 @@ def construct_target_portfolio(as_of_date: str, config: PBRConfig) -> dict[str, 
 
 
 def construct_target_portfolio_with_boundary(
-    as_of_date: str, config: PBRConfig,
+    as_of_date: str, config: PBRConfig, exclude: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Decimal], dict[str, Decimal]]:
     """construct_target_portfolio plus each selected symbol's rank-boundary
     price: BPS_i * PBR of the first name past the cut (rank N+1, after the
@@ -173,6 +173,9 @@ def construct_target_portfolio_with_boundary(
     slippage, and buying near-boundary names at a premium showed no
     measurable difference from not buying them. It is kept to see how often
     the gap between the ranking close and the live price crosses it.
+
+    `exclude` symbols are dropped before ranking, so the next names fill
+    the Top N (the rights-offering hold ban, rights_offering.banned()).
     """
     as_of_date_stripped = as_of_date.replace("-", "")
     
@@ -220,7 +223,8 @@ def construct_target_portfolio_with_boundary(
     }
     quarantine = compute_quarantine_windows(price_series_by_sym, load_issued_shares_rcept_dts())
 
-    base_func = get_pbr_signal_func(df_bps, df_price_pivot, top_percentile=0.2, quarantine=quarantine)
+    base_func = get_pbr_signal_func(df_bps, df_price_pivot, top_percentile=0.2, quarantine=quarantine,
+                                     exclude=exclude)
     selected_symbols = base_func(target_date_str)
     
     # Apply Suspension Filter

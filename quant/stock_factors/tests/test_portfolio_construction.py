@@ -411,6 +411,26 @@ class TestRankBoundary:
         assert all(boundary[f"{i:06d}"] == Decimal("1100") for i in range(1, 10))
         assert weights == portfolio_construction.construct_target_portfolio("2026-09-04", config)
 
+    def test_excluded_symbol_is_dropped_before_the_cut(self, tmp_path, monkeypatch):
+        """Rights-offering ban: the cheapest name is excluded and rank 11
+        moves into the Top 10 - the basket stays full."""
+        db_path = tmp_path / "test.db"
+        _create_minimal_pbr_schema(db_path)
+        monkeypatch.setattr(portfolio_construction, "DB_PATH", db_path)
+        monkeypatch.setattr(value, "DB_PATH", db_path)
+        _insert_linear_universe(db_path, "20260904", 60)
+
+        config = PBRConfig(target_n_stocks=10)
+        base, _ = portfolio_construction.construct_target_portfolio_with_boundary(
+            "2026-09-04", config)
+        cheapest = min(base)
+        weights, _ = portfolio_construction.construct_target_portfolio_with_boundary(
+            "2026-09-04", config, exclude=frozenset({cheapest}))
+
+        assert cheapest in base and cheapest not in weights
+        assert len(weights) == 10
+        assert set(base) - {cheapest} < set(weights)
+
     def test_empty_without_a_rank_n_plus_1(self, tmp_path, monkeypatch):
         db_path = tmp_path / "test.db"
         _create_minimal_pbr_schema(db_path)

@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from quant.common.price_guard import DEFAULT_ANOMALY_THRESHOLD, find_anomalies
+from quant.stock_factors.rights_offering import PERIOD_END
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +94,28 @@ def load_issued_shares_rcept_dts() -> dict[str, list[str]]:
     return result
 
 
+def load_bps_reports() -> dict[str, list[tuple[str, str]]]:
+    """종목별 BPS를 계산할 수 있는 보고서(CFS total_equity와 issued_shares가 둘 다 있는 것)의
+    (rcept_dt, 회계기간 말일 YYYYMMDD) 목록. prepare_pbr_signals와 같은 조건이다.
+
+    rights_offering.banned()가 증자가 반영된 첫 보고서를 찾는 데 쓴다.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT symbol, rcept_dt, target_year, report_code FROM pead_quarterly_normalized "
+        "WHERE basis = 'CFS' AND metric IN ('total_equity', 'issued_shares') "
+        "AND quarterly_value > 0 "
+        "GROUP BY symbol, rcept_dt, target_year, report_code "
+        "HAVING COUNT(DISTINCT metric) = 2"
+    ).fetchall()
+    conn.close()
+    result: dict[str, list[tuple[str, str]]] = {}
+    for symbol, rcept_dt, year, code in rows:
+        if code in PERIOD_END:
+            result.setdefault(symbol, []).append((rcept_dt, f"{year}{PERIOD_END[code]}"))
+    return result
+
+
 def _next_confirming_rcept_dt(event_date: str, rcept_dts: list[str]) -> str | None:
     return next((r for r in rcept_dts if r >= event_date), None)
 
@@ -173,6 +196,7 @@ def get_pbr_signal_func(
     df_price_pivot: pd.DataFrame,
     top_percentile: float = 0.2,
     quarantine: dict[str, list[tuple[str, str | None]]] | None = None,
+    exclude: frozenset[str] = frozenset(),
 ):
     """
     주어진 날짜에 PBR 팩터 하위 N% (저평가) 종목을 반환하는 함수
@@ -180,6 +204,8 @@ def get_pbr_signal_func(
     - 팩터 방향: 작을수록 좋음 (가치주)
     - quarantine: compute_quarantine_windows()의 결과. 해당 날짜가 종목 자신의 격리 구간에
       들어있으면 랭킹 전에 후보군에서 제외한다.
+    - exclude: 날짜와 상관없이 랭킹 전에 제외할 종목 (유상증자 보유 금지,
+      rights_offering.banned()의 결과).
     """
     quarantine = quarantine or {}
 
@@ -208,6 +234,8 @@ def get_pbr_signal_func(
         common_idx = bps.index.intersection(price.index)
         if quarantine:
             common_idx = [s for s in common_idx if not _is_quarantined(s, date_str)]
+        if exclude:
+            common_idx = [s for s in common_idx if s not in exclude]
         pbr = price[common_idx] / bps[common_idx]
 
         # PBR 하위 N% 매수 (값이 작을수록 저평가)
