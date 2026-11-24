@@ -107,7 +107,7 @@ def inverse_vol_fell_back(target_weights: dict, weighting_scheme: str) -> bool |
 def equal_weight_shadow(target_weights: dict) -> dict[str, float]:
     """What equal weight would have held on the same names - recorded next
     to an inverse_vol target so the two can be compared run by run while
-    the weighting decision (RESEARCH_LOG section 27 (b)) is open. Selection
+    the weighting decision (research/pbr.md section 27 (b)) is open. Selection
     doesn't depend on the scheme, only the weights do."""
     n = len(target_weights)
     return {sym: round(1 / n, 6) for sym in sorted(target_weights)} if n else {}

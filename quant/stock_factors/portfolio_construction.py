@@ -216,7 +216,7 @@ def construct_target_portfolio_with_boundary(
     # 3. Apply Signal Function
     # 발행주식수 급변(무상감자/유상증자 등) 이벤트 이후, 다음 분기보고서로 확정되기 전까지는
     # BPS가 신구 데이터를 섞어 계산되어 PBR이 왜곡될 수 있다 - 그 구간엔 후보에서 제외한다.
-    # (RESEARCH_LOG.md 섹션 15 참고, 에이프로젠 007460/003060 사례로 발견.)
+    # (research/pbr.md 섹션 15 참고, 에이프로젠 007460/003060 사례로 발견.)
     price_series_by_sym = {
         sym: {d.strftime('%Y%m%d'): v for d, v in df_price_pivot[sym].dropna().items()}
         for sym in df_price_pivot.columns

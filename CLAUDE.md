@@ -160,7 +160,7 @@ rather than trade through it.
   unlock/lock sequence, reconciliation checklist) — read it before changing anything in that
   workflow's code path.
 - The universe changed at the 2026-11 review (371160 out to `WATCH_ONLY`; 132030 gold and 241180 Japan in,
-  RESEARCH_LOG §73-§74, `reviews/2026-11-review.md`). It changes only at a review, with a pre-registered study
+  `research/momentum_etf.md` §73-§74, `reviews/2026-11-review.md`). It changes only at a review, with a pre-registered study
   behind the change; don't suggest adding or removing symbols from `config.UNIVERSE` casually.
 
 ## Asset tracker and research side jobs
@@ -175,16 +175,16 @@ places orders.
 - Pure logic lives in `quant/tracker.py` (returns, FX split, exposure, account risk, 4.3-scale
   `risk_grade`), `quant/stress.py` (crisis replay on current holdings, holdings-based return range),
   `quant/sentiment.py` (US fear & greed approximation and our own Korean index), and
-  `quant/regime.py` (RESEARCH_LOG §47 narrow-market warning).
+  `quant/regime.py` (`research/market_regime.md` §47 narrow-market warning).
 - Side jobs `daily.py` runs after the close, each display-only and failure-isolated (a failure is
   reported as a short Korean phone line through `quant/notify.py`, never fails the trading part):
   - `price_history.py`: Yahoo history for current holdings and proxies (`data/price_history/`).
   - `news_risk.py`: riskiest recent news, `claude -p` with Sonnet.
   - `regime_check.py`: KOSPI PBR from KRX, breadth, and a weekly `claude -p` read logged to
     `data/regime/log/` for later scoring.
-  - `fear_losers_log.py`: RESEARCH_LOG §50 forward record of fear-time losers (`quant/fear_losers.py`),
+  - `fear_losers_log.py`: `research/fear_losers.md` §50 forward record of fear-time losers (`quant/fear_losers.py`),
     logged to `data/fear_losers/log/`; `report` hides results until the pre-registered sample is reached.
-  - `value_spread_log.py`: RESEARCH_LOG §57-F forward record of the value spread (`quant/value_spread.py`),
+  - `value_spread_log.py`: `research/value_spread.md` §57-F forward record of the value spread (`quant/value_spread.py`),
     every 10th KOSPI trading day from 2026-11-18, logged to `data/value_spread/`; `report` hides results until
     3 non-overlapping 12-month results exist (about 2029-11), with no early-look option.
   - `backups.py`: daily database backups.
@@ -198,8 +198,8 @@ places orders.
 - LLM features run through the Claude Code CLI (`claude -p`, the user's subscription). There is no
   Anthropic API key. Follow `news_risk.py`: an empty temp dir, `--json-schema`, and
   `structured_output` in the reply. Send names and shares only, never amounts.
-- Research history is `quant/pead/RESEARCH_LOG.md` (§30–§48 are from 2026-10-23/24). Every test is
-  pre-registered in the log and committed before it runs, and results are appended under the same
+- Research history is `research/`, one file per track, indexed by `research/INDEX.md` (§ numbers are one
+  sequence across files; §30–§48 are from 2026-10-23/24). Every test is pre-registered in the log and committed before it runs, and results are appended under the same
   section. Research never changes live trading on its own; the user decides.
 - Research scripts live in `scratch/` (gitignored, local only), e.g. `scratch/market_map/`,
   `scratch/fear_reversal/`, `scratch/momproxy/`, `scratch/pbr_oos/`. Cached KRX snapshots sit next

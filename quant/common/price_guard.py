@@ -8,7 +8,7 @@ day-over-day return computed across such a date is not a real return - e.g.
 a 15:1 reverse split reads as a ~+1,450% day even though a continuing holder
 saw roughly no change in value. This is not specific to any sector: it has
 been observed in pharma, brokerage, construction, and auto-parts names alike
-(see RESEARCH_LOG.md section 15).
+(see research/pbr.md section 15).
 
 DEFAULT_ANOMALY_THRESHOLD of 50% is a heuristic, not a precise boundary -
 callers that want to check sensitivity should sweep the threshold param.

@@ -1,4 +1,4 @@
-"""Daily check of the "expensive but narrow" market warning (RESEARCH_LOG
+"""Daily check of the "expensive but narrow" market warning (research/market_regime.md
 section 47, quant/regime.py) - display only, for the tracker's risk tab.
 
     python regime_check.py      run now (daily.py does this after the close)

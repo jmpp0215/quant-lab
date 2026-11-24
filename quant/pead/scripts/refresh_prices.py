@@ -13,7 +13,7 @@ official KRX close. It used to be FinanceDataReader's default (Naver
 fchart), which from 2026-09-14 started reporting the integrated
 (KRX + after-hours) close instead: ~80% of symbols a day differed from
 the KRX close by ~1% on average, sometimes outside the KRX day's range,
-while volume stayed KRX's (RESEARCH_LOG section 24). Naver also had no
+while volume stayed KRX's (research/pbr.md section 24). Naver also had no
 request timeout, which hung a run for 22 hours on 2026-10-05.
 
 Today's bar is never stored: launchd runs this at 09:30 (12:30 until

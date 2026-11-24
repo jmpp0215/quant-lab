@@ -12,15 +12,15 @@ survivors live on a personal brokerage account.
 
 | Track | Location | Status |
 |---|---|---|
-| Dual momentum — eight Korea-listed ETFs, monthly staggered rebalance | repo root + `quant/` | **Live** on `kis-isa` (see `RUNBOOK.md`) |
+| Dual momentum — nine Korea-listed ETFs (universe changed 2026-11-23), monthly staggered rebalance | repo root + `quant/` | **Live** on `kis-isa` (see `RUNBOOK.md`) |
 | Asset tracker — read-only PWA over every account, plus display-only research side jobs | `tracker_server.py`, `tracker_web/`, `quant/tracker.py` | Running daily; never places orders |
 | Value / quality stock factors — PBR, GPA | `quant/stock_factors/` | Live execution path exists (`scripts/run_pbr_live.py`), `DRY_RUN`-gated |
-| Post-earnings announcement drift (PEAD) | `quant/pead/` | Research concluded, not traded — see `quant/pead/RESEARCH_LOG.md` |
+| Post-earnings announcement drift (PEAD) | `quant/pead/` | Research concluded, not traded — see `research/pead_early.md` |
 | AMZN data collection + accumulation timing | `quant/amzn/` | Notify-only daily check, no execution; timing backtest found no rule beats buying on the month's first day — see `quant/amzn/README.md` |
 
 The rest of this document covers dual momentum — the most developed track. The other tracks
 each carry their own README / research log; the research history across tracks is in
-`quant/pead/RESEARCH_LOG.md`, where every test is pre-registered before it runs.
+`research/` (start at `research/INDEX.md`), where every test is pre-registered before it runs.
 
 ### Accounts
 

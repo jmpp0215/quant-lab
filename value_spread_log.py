@@ -1,4 +1,4 @@
-"""Value spread forward record (RESEARCH_LOG section 57-F, quant/value_spread.py)
+"""Value spread forward record (research/value_spread.md section 57-F, quant/value_spread.py)
 - record only, never trades.
 
     python value_spread_log.py           record any due grid days (daily.py does this after the close)
@@ -158,7 +158,7 @@ def report() -> None:
     p2 = vs.null_boot_p(df.y.to_numpy(), df.x.to_numpy(), 50, 10_000, rng)
     print(f"b {b * 100:+.2f}%p per 100 percentile pts, NW(25) t {t:.2f} p {p_nw:.4f}, "
           f"null block bootstrap p {p1:.4f} (25) / {p2:.4f} (50)")
-    print("판정은 RESEARCH_LOG §57 기준으로 사람이 기록 (전향 표본만, 반기·위상 기준은 표본이 작아 보고만)")
+    print("판정은 research/value_spread.md §57 기준으로 사람이 기록 (전향 표본만, 반기·위상 기준은 표본이 작아 보고만)")
 
 
 if __name__ == "__main__":

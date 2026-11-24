@@ -13,7 +13,7 @@ UNIVERSE = {
     "133690": "TIGER 미국나스닥100",
     "379790": "RISE 유로스탁스50",
     # 2026-11-23 review: replaced 371160 (TIGER 차이나항셍테크, now WATCH_ONLY).
-    # RESEARCH_LOG §74: swapping it for gold was non-inferior in both test
+    # research/momentum_etf.md §74: swapping it for gold was non-inferior in both test
     # periods (Sharpe +0.12 / +0.17); most of the gain came from dropping
     # 371160, which kept getting picked right after spikes. Gold is the one
     # asset class the universe lacked; it mostly takes the bond/cash slots.
@@ -31,7 +31,7 @@ UNIVERSE = {
 # so holding both added little diversification. Keeping its candles lets us
 # check later whether that call cost us anything.
 WATCH_ONLY = {
-    # Left the universe at the 2026-11 review (RESEARCH_LOG §74).
+    # Left the universe at the 2026-11 review (research/momentum_etf.md §74).
     "371160": "TIGER 차이나항셍테크",
     "487240": "KODEX AI전력핵심설비",
     "195930": "TIGER 유로스탁스50(합성H)",
@@ -115,7 +115,7 @@ TOP_N = 3
 
 # Share of every sleeve always parked in CASH_SYMBOL, whatever the signal:
 # each pick gets (1 - CASH_FLOOR) / TOP_N. A static cash weight is the only
-# downside lever left after 15 dynamic rules failed (RESEARCH_LOG, momentum
+# downside lever left after 15 dynamic rules failed (research/, momentum
 # studies 2026-10); it cuts gains and losses about equally. Decided at the
 # 2026-11 review (reviews/2026-11-review.md): 15%, allowed range 10-20%,
 # changed only by the procedure in RUNBOOK.md ("Cash floor"). The backtest

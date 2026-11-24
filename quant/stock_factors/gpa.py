@@ -79,7 +79,7 @@ def get_gpa_signal_func(df_gpa_ffill: pd.DataFrame, top_percentile: float = 0.2)
 
     TODO: value.py::get_pbr_signal_func는 무상감자/유상증자 등으로 발행주식수가 급변한
     직후~다음 분기보고서 확정 전 구간을 격리(quarantine)해 후보에서 제외한다
-    (RESEARCH_LOG.md 섹션 15/16). GPA = gross_profit/total_assets는 주당가격이나
+    (research/pbr.md 섹션 15/16). GPA = gross_profit/total_assets는 주당가격이나
     발행주식수를 쓰지 않아 같은 경로로 직접 오염되진 않지만, total_assets 자체가 급변하는
     이벤트(합병/분할 등)에 유사하게 노출될 가능성은 검토되지 않았음 - 이번 스코프에서 제외.
     """

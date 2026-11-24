@@ -1,4 +1,4 @@
-"""The "expensive but narrow" market warning (RESEARCH_LOG section 47), pure.
+"""The "expensive but narrow" market warning (research/market_regime.md section 47), pure.
 
 KOSPI's PBR in the top 30% of its last 5 years while 30% or fewer KOSPI
 stocks trade above their 200-day average. Four past cases, three followed by a

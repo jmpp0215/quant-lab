@@ -6,7 +6,7 @@
 # same .venv/bin/python would have died with them. This uses only zsh and
 # system binaries (sqlite3, launchctl, plutil, ps, osascript, perl).
 #
-# Checks (RESEARCH_LOG section 26/27 for background):
+# Checks (research/pbr.md section 26/27 for background):
 #   1. python boot  - every interpreter the configured jobs launch runs
 #                     `-c pass` and exits 0 (bounded by a timeout)
 #   2. launchctl    - each job is loaded, its last exit code is 0, and it

@@ -1,4 +1,4 @@
-"""Value spread forward record (RESEARCH_LOG section 57-F) - pure.
+"""Value spread forward record (research/value_spread.md section 57-F) - pure.
 
 Section 57 re-checked section 46 (a wide value spread is followed by a
 larger PBR Top 50 excess over the next 12 months) on the data it was found

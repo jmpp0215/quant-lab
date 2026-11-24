@@ -1,4 +1,4 @@
-"""Forward record of fear-time losers (RESEARCH_LOG section 50,
+"""Forward record of fear-time losers (research/fear_losers.md section 50,
 quant/fear_losers.py) - record only, never trades.
 
     python fear_losers_log.py            record any due days (daily.py does this after the close)

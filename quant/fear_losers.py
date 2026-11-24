@@ -1,4 +1,4 @@
-"""Fear-time losers, forward record (RESEARCH_LOG section 50) - pure.
+"""Fear-time losers, forward record (research/fear_losers.md section 50) - pure.
 
 Section 49 found the losers reversal in extreme fear is within-sector: a
 loser's rebound is the part it fell more than its own sector, while a

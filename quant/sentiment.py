@@ -8,7 +8,7 @@ this rebuilds the four components free daily prices can carry (CNN also
 uses NYSE breadth, 52-week highs/lows and the put/call ratio).
 
 Korea: our own, in CNN's spirit, from series Yahoo has since 2004 so it
-reaches back through 2008 (RESEARCH_LOG section 38 uses its history). VKOSPI isn't
+reaches back through 2008 (research/fear_losers.md section 38 uses its history). VKOSPI isn't
 on Yahoo or pykrx's index lists, so KOSPI's realized volatility stands in.
 The bond leg (114260, KOSEF 국고채3년) only starts 2009-07; before that
 the index is the mean of the other three.

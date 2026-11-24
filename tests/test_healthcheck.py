@@ -267,7 +267,7 @@ class TestAlerting:
 
 class TestDefaultLabels:
     def test_pbrcheck_is_checked_by_default(self, env):
-        # Reloaded 2026-10-06 after being held (RESEARCH_LOG section 27); it
+        # Reloaded 2026-10-06 after being held (research/pbr.md section 27); it
         # auto-runs run_pbr_live.py on a due day, so it must be watched.
         for label in ["checkdue", "amzncheck", "tossmorning", "disclosureflag"]:
             env.plist(label, env.python_ok)
