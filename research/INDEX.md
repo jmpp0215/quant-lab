@@ -114,6 +114,7 @@ git show 50543d4:quant/pead/RESEARCH_LOG.md        # 분할 직전의 원본 전
 | §74 | [momentum_etf.md](momentum_etf.md) | 371160(항셍테크)을 일본·금으로 바꾸기 — 비열등성 판정 — 사전 등록 (2026-11-23, §73 결과를 본 뒤 기록, 결과 전, 연구 전용) |
 | §75 | [momentum_etf.md](momentum_etf.md) | 점수 차이 무거래 구간 — 보유 종목을 조금 차이로는 안 바꾸기 — 사전 등록 (2026-11-23, 결과 전 기록, 연구 전용) |
 | §76 | [fear_losers.md](fear_losers.md) | 미국판 업종 대비 급락주 — S&P 500, 실전 기록으로만 판정 — 사전 등록 (2026-11-24, 기록 시작 전·결과 전, 연구 전용) |
+| §77 | [momentum_etf.md](momentum_etf.md) | 꺾인 1위의 비중을 3개월 모멘텀 1위로 옮기기 (+ `correction_half` 전향 기록) — 사전 등록 (2026-11-26, 결과 전 기록, 연구 전용) |
 | — | [pead_early.md](pead_early.md) | 결론 |
 | — | [value_spread.md](value_spread.md) | 57~60 종합 — §36·§46·§48 결론 수정 (2026-11-17) |
 | — | [cross.md](cross.md) | 신주 발행 정정 일괄 재실행 (2026-11-22) |
@@ -128,6 +129,7 @@ git show 50543d4:quant/pead/RESEARCH_LOG.md        # 분할 직전의 원본 전
 |---|---|
 | §75 | `momproxy/s75.py`, `momproxy/out/s75_*.txt` |
 | §76 | `us_fear_losers/ref.py` (참고 결과만, 전방 기록 없음) |
+| §77 | `momproxy/s77.py`(백테스트), `momproxy/s77_fwd.py`(전향, 2027-12), `momproxy/out/s77_*.txt` |
 
 ## 0. 이 로그를 쓰는 법 (2026-11-22 정리)
 
