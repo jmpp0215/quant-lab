@@ -102,7 +102,9 @@ def public(path: Path) -> None:
 
 
 def private_final() -> None:
-    if datetime.now(KST).date().isoformat() <= h.DEADLINE:
+    now = datetime.now(KST)
+    closed = h.CLOSED_AT and now >= datetime.fromisoformat(h.CLOSED_AT)
+    if now.date().isoformat() <= h.DEADLINE and not closed:
         raise SystemExit(f"비공개 채점은 마감({h.DEADLINE}) 다음 날부터입니다.")
     data = {s: h.load(s) for s in ("train", "private")}
     data["public"] = data["private"]

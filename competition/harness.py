@@ -18,6 +18,8 @@ PRIVATE = Path.home() / ".quant-comp-private"
 TRAIN_END = "2013-12-31"   # train: labels end on or before this date (handed out)
 PUBLIC_END = "2016-12-31"  # public leaderboard: decisions after TRAIN_END, labels <= this
 DEADLINE = "2026-11-30"    # last day to change FINAL.txt; private scoring from the next day
+# All participants agreed to close early (RULES.md change log): scoring opens at this KST time.
+CLOSED_AT = "2026-11-26T23:50:00+09:00"
 TOP_N = 50                 # universe size: lowest PBR
 HOLD = 2                   # label = next 2 snapshots (about 20 trading days)
 WARMUP = 25                # first decision needs 25 snapshots (about 250 days) of history
