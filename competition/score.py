@@ -124,6 +124,8 @@ def private_final() -> None:
             ok = p["ic"] > 0 and p["ic_t"] >= 2 and lag["ic"] > 0
             new = ok and p["inc_ic"] > 0 and p["inc_ic_t"] >= 2
             verdict = "새 정보" if new else ("통과" if ok else "미통과")
+            if lag["fallback_days"]:
+                verdict += f" (지연 점검 {lag['fallback_days']}일 보정)"
             rows.append((p["ic"], f"| {folder.name} | {name} | `{_sha(path)}` | "
                          f"{res['train']['ic']:+.4f} | {res['public']['ic']:+.4f} | "
                          f"**{p['ic']:+.4f}** (t {p['ic_t']:+.2f}) | {lag['ic']:+.4f} | "

@@ -134,7 +134,19 @@ def run(path: Path, split: str, lag: int = 0, data=None) -> pd.DataFrame:
         hist = panel.iloc[:snap_end[view + 1]].copy()
         as_of = hist["date"].max()
         k = kospi[kospi["date"] <= as_of].copy()
-        score = _clean(sub.predict(hist, codes, as_of, k, ext_dir), codes, path)
+        fallback = False
+        try:
+            raw = sub.predict(hist, codes, as_of, k, ext_dir)
+        except Exception:
+            # Delay check only: the universe comes from snapshot s but history stops
+            # at s-1, so a stock listed or resumed at s is absent from hist. Retry once
+            # with the stocks hist has; the rest score neutral. RULES.md change log.
+            if lag == 0:
+                raise
+            present = set(hist.loc[hist["snap"] == view, "code"])
+            raw = sub.predict(hist, [c for c in codes if c in present], as_of, k, ext_dir)
+            fallback = True
+        score = _clean(raw, codes, path)
         b = _clean(base.predict(hist.copy(), codes, as_of, k, ext_dir), codes, path)
         fwd = forward_return(panel, s, codes).dropna()
         if len(fwd) < MIN_LABELS:
@@ -146,7 +158,7 @@ def run(path: Path, split: str, lag: int = 0, data=None) -> pd.DataFrame:
             "date": at["date"].iloc[0].date(), "n": len(fwd),
             "ic": _rank_ic(score, fwd),
             "inc_ic": _rank_ic(_residual(score, b), fwd),
-            "spread": fwd[top].mean() - fwd.mean(),
+            "spread": fwd[top].mean() - fwd.mean(), "fallback": fallback,
         })
     return pd.DataFrame(rows)
 
@@ -167,4 +179,5 @@ def summary(per_date: pd.DataFrame) -> dict:
         "hit": float((per_date["ic"] > 0).mean()),
         "inc_ic": float(per_date["inc_ic"].mean()), "inc_ic_t": t(per_date["inc_ic"]),
         "spread_ann_pp": float(per_date["spread"].mean() * PERIODS_PER_YEAR * 100),
+        "fallback_days": int(per_date["fallback"].sum()),
     }
