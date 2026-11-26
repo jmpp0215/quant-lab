@@ -209,6 +209,12 @@
 
 형식: `### 날짜 — 작업자` 다음에 한 일, 커밋, 다음 사람이 알아야 할 것.
 
+### 2026-11-27 — 사용자 + Claude (§78 경연 종료, 비공개 채점)
+- 11-26 23:50 전원 동의로 조기 종료, 상태 고정 커밋 후 비공개 채점. 1위 carbon four_pillar_orth (private IC +0.058, t 3.12),
+  공식 8개 중 5개 "새 정보". 결과와 해석은 research/pbr.md §78 아래, 표는 competition/LEADERBOARD.md.
+- 1차 채점이 jongmin/ridge24.py 지연 점검 하루(2023-08-24, 신규 편입 092790)에서 멈춤 → 보정 규칙 추가 `d2ad22d`, 재채점. 호스트=jongmin 이해충돌 기록.
+- **열린 일**: "새 정보" 제출 간 상관·비용 반영 성과 확인 후, 남길 것을 새 절로 사전 등록해 전향 기록. 실전 변경 없음.
+
 ### 2026-11-26 — 사용자 + Claude (§78 저PBR 종목 고르기 경연 준비)
 - `competition/`을 만들었다: 룰북 `RULES.md`, 데이터 빌더 `prepare_data.py`, 채점 `harness.py`·`score.py`, 등록 `register.py`, `LEADERBOARD.md`,
   참가자 템플릿과 기준선(60일 반전). 숨긴 데이터는 레포 밖 `~/.quant-comp-private/`(제출 기록 `submissions.jsonl`도 거기), 외부 배포용 zip은 `competition/data/dist/`.
