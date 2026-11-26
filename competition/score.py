@@ -1,6 +1,7 @@
 """Scoring CLI (RULES.md §7).
 
   python competition/score.py train   participants/<id>/<file>.py   # anyone, unlimited
+  python competition/score.py cv      participants/<id>/<file>.py   # anyone, unlimited
   python competition/score.py public  participants/<id>/<file>.py   # own id, 3 per KST day
   python competition/score.py private --final                       # host, after DEADLINE
 """
@@ -18,6 +19,9 @@ KST = ZoneInfo("Asia/Seoul")
 LOG = h.PRIVATE / "submissions.jsonl"
 BOARD = h.ROOT / "LEADERBOARD.md"
 PUBLIC_PER_DAY = 3
+# One-off extra public submissions for every id on a KST day (RULES.md change log).
+EXTRA_PUBLIC = {"2026-11-26": 1}
+CV_BLOCKS = [(2006, 2007), (2008, 2009), (2010, 2011), (2012, 2013)]
 MAX_FINAL = 2
 
 
@@ -55,6 +59,24 @@ def train(path: Path) -> None:
     print(per.groupby("year")["ic"].agg(["count", "mean"]).round(4).to_string())
 
 
+def cv(path: Path) -> None:
+    """Train-only cross-check: two-year blocks, plus the one-snapshot delay check."""
+    data = h.load("train")
+    per = h.run(path, "train", data=data)
+    per["year"] = [d.year for d in per["date"]]
+    print(f"{'블록':<11}{'dates':>6}{'IC':>9}{'t':>7}{'증분 IC':>9}{'t':>7}{'%p/년':>8}")
+    ics = []
+    for a, b in CV_BLOCKS:
+        m = h.summary(per[per["year"].between(a, b)].reset_index(drop=True))
+        ics.append(m["ic"])
+        print(f"{a}-{b:<6}{m['n_dates']:>6}{m['ic']:>+9.4f}{m['ic_t']:>+7.2f}"
+              f"{m['inc_ic']:>+9.4f}{m['inc_ic_t']:>+7.2f}{m['spread_ann_pp']:>+8.2f}")
+    print(f"전체: {_fmt(h.summary(per))}")
+    print(f"양수 블록 {sum(x > 0 for x in ics)}/{len(ics)}, 가장 나쁜 블록 IC {min(ics):+.4f}")
+    lag = h.summary(h.run(path, "train", lag=1, data=data))
+    print(f"지연 점검(lag 1, train): IC {lag['ic']:+.4f} (t {lag['ic_t']:+.2f})")
+
+
 def public(path: Path) -> None:
     pid = _participant(path)
     now = datetime.now(KST)
@@ -62,17 +84,20 @@ def public(path: Path) -> None:
     past = [json.loads(x) for x in LOG.read_text().splitlines()] if LOG.exists() else []
     used = sum(1 for r in past if r["id"] == pid and r["split"] == "public"
                and r["time"][:10] == today)
-    if used >= PUBLIC_PER_DAY:
-        raise SystemExit(f"{pid}: 오늘 public 제출 {PUBLIC_PER_DAY}회를 다 썼습니다.")
+    limit = PUBLIC_PER_DAY + EXTRA_PUBLIC.get(today, 0)
+    if used >= limit:
+        raise SystemExit(f"{pid}: 오늘 public 제출 {limit}회를 다 썼습니다.")
     m = h.summary(h.run(path, "public"))
     rec = {"id": pid, "split": "public", "time": now.isoformat(timespec="seconds"),
-           "file": path.name, "sha": _sha(path), "ic": round(m["ic"], 4)}
+           "file": path.name, "sha": _sha(path), "ic": round(m["ic"], 4),
+           "t": round(m["ic_t"], 2)}
     LOG.parent.mkdir(parents=True, exist_ok=True)
     with LOG.open("a") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     _append_row("PUBLIC", f"| {pid} | {rec['time'][:16]} | {path.name} | "
-                          f"`{rec['sha']}` | {m['ic']:+.4f} |")
-    print(f"public IC {m['ic']:+.4f}  (오늘 {used + 1}/{PUBLIC_PER_DAY}회)")
+                          f"`{rec['sha']}` | {m['ic']:+.4f} | {m['ic_t']:+.2f} |")
+    print(f"public IC {m['ic']:+.4f} (t {m['ic_t']:+.2f}, 결정일 {m['n_dates']}개)  "
+          f"(오늘 {used + 1}/{limit}회)")
 
 
 def private_final() -> None:
@@ -113,7 +138,7 @@ def private_final() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("split", choices=["train", "public", "private"])
+    ap.add_argument("split", choices=["train", "cv", "public", "private"])
     ap.add_argument("path", nargs="?", type=Path)
     ap.add_argument("--final", action="store_true")
     a = ap.parse_args()
@@ -125,6 +150,8 @@ def main() -> None:
         raise SystemExit("제출 파일 경로를 주세요.")
     elif a.split == "train":
         train(a.path)
+    elif a.split == "cv":
+        cv(a.path)
     else:
         public(a.path)
 

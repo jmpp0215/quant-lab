@@ -124,10 +124,13 @@ def predict(hist, universe, as_of, kospi, ext_dir) -> pandas.Series:
 | 종류 | 누가 | 횟수 | 보이는 것 |
 |---|---|---|---|
 | `score.py train <파일>` | 누구나 | 무제한 | 전체 지표 + 연도별 IC |
-| `score.py public <파일>` | 본인이 자기 id 파일로 | **id당 하루 3회** (KST) | public IC 한 숫자 |
+| `score.py cv <파일>` | 누구나 | 무제한 | train을 2년 블록 4개로 나눈 IC·t·증분 IC, 양수 블록 수, train 지연 점검 |
+| `score.py public <파일>` | 본인이 자기 id 파일로 | **id당 하루 3회** (KST, 자정 초기화) | public IC와 t |
 | 최종 | `FINAL.txt`에 파일 이름 **최대 2개** | 마감까지 고치기 자유 | 마감 후 호스트가 한 번 채점, private 전체 |
 
-- public 제출은 매번 시각·파일 해시와 함께 `LEADERBOARD.md`에 남습니다. public은 36개 날짜뿐이라 잡음이 큽니다. public 1등을 쫓아가면 과적합됩니다.
+- public 제출은 매번 시각·파일 해시와 함께 `LEADERBOARD.md`에 남습니다. public은 36개 날짜뿐이라 잡음이 큽니다.
+  IC의 오차가 대략 ±0.03이라 그보다 작은 개선은 public으로는 보이지 않습니다. public 1등을 쫓아가면 과적합됩니다.
+  **개선은 `cv`로 반복하고, public은 확인용으로 쓰세요.** 캐글의 "Trust your CV"와 같습니다.
 - 최종 제출 파일은 마감 후 고치면 안 됩니다. 리더보드의 해시로 확인합니다.
 - 실행 명령은 레포 루트에서 `python competition/score.py ...`입니다.
 
@@ -191,3 +194,6 @@ quant-lab의 competition/RULES.md를 끝까지 읽고 경연에 참가해. id는
 ## 변경 기록
 
 - 2026-11-26: 초판. 같은 날(참가 등록 전) 숨긴 데이터를 레포 밖으로 옮김, public 채점을 각자 하게 바꿈, 남의 폴더 읽기 금지와 §12 에이전트 지시문 추가.
+- 2026-11-26 (public 제출 5건 이후): `score.py cv` 추가(train만 사용). public 결과에 t값 표시. 이전 5건의 t는 제출 당시 파일과
+  해시가 같은지 확인한 뒤 다시 계산해 채움(횟수에 안 셈). 도구가 늦게 나온 것을 보상하려고 **2026-11-26 하루만 모든 id에 public 1회 추가(총 4회)**.
+  판정·순위 규칙은 바뀌지 않음.
