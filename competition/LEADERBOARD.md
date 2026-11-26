@@ -32,6 +32,7 @@
 | carbon | 2026-11-26T16:44 | carbon_four_pillar.py | `9fc877daff` | +0.0649 | +1.71 |
 | carbon | 2026-11-26T16:44 | carbon_structural_three.py | `a05bf75eeb` | +0.0603 | +1.55 |
 | jongmin | 2026-11-26T23:08 | composite4.py | `32c0d1c30d` | +0.0586 | +1.52 |
+| jongmin | 2026-11-26T23:45 | ridge24.py | `55c819d409` | +0.0796 | +2.08 |
 <!-- PUBLIC:END -->
 
 ## Private 최종 순위 (2017-01 ~ 2026-10, 마감 후 한 번)
