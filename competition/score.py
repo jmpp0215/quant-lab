@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -105,7 +106,7 @@ def private_final() -> None:
         raise SystemExit(f"비공개 채점은 마감({h.DEADLINE}) 다음 날부터입니다.")
     data = {s: h.load(s) for s in ("train", "private")}
     data["public"] = data["private"]
-    rows = []
+    rows, official = [], set()
     for folder in sorted((h.ROOT / "participants").iterdir()):
         final = folder / "FINAL.txt"
         if folder.name.startswith("_") or not final.exists():
@@ -113,6 +114,7 @@ def private_final() -> None:
         names = [x.strip() for x in final.read_text().splitlines() if x.strip()]
         for name in names[:MAX_FINAL]:
             path = folder / name
+            official.add((folder.name, _sha(path)))
             res = {s: h.summary(h.run(path, s, data=data[s]))
                    for s in ("train", "public", "private")}
             lag = h.summary(h.run(path, "private", lag=1, data=data["private"]))
@@ -133,6 +135,81 @@ def private_final() -> None:
     rows.sort(key=lambda r: -r[0])
     body = "".join(f"| {i} |{r[1][1:]}\n" for i, r in enumerate(rows, 1))
     BOARD.write_text(_replace(BOARD.read_text(), "PRIVATE", body))
+    print(body)
+    reference(data, official)
+
+
+def _from_git(path: Path, sha: str) -> bytes | None:
+    """The committed version of `path` whose content hash starts with `sha`."""
+    top = subprocess.run(["git", "-C", str(h.ROOT), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True).stdout.strip()
+    if not top:
+        return None
+    rel = path.resolve().relative_to(top).as_posix()
+    commits = subprocess.run(["git", "-C", top, "log", "--all", "--format=%H", "--", rel],
+                             capture_output=True, text=True).stdout.split()
+    for c in commits:
+        blob = subprocess.run(["git", "-C", top, "show", f"{c}:{rel}"],
+                              capture_output=True).stdout
+        if blob and hashlib.sha256(blob).hexdigest()[:10] == sha:
+            return blob
+    return None
+
+
+def reference(data: dict, official: set) -> None:
+    """RULES.md §7 참고 채점: every public-submitted version and every .py left in a
+    participant folder at the deadline, minus the official finals. No verdicts."""
+    items = {}  # (id, sha) -> (file name, source, content or None)
+    past = [json.loads(x) for x in LOG.read_text().splitlines()] if LOG.exists() else []
+    for r in past:
+        if r["split"] != "public":
+            continue
+        path = h.ROOT / "participants" / r["id"] / r["file"]
+        if path.exists() and _sha(path) == r["sha"]:
+            blob = path.read_bytes()
+        else:
+            blob = _from_git(path, r["sha"])
+        items.setdefault((r["id"], r["sha"]), (r["file"], "public", blob))
+    for folder in sorted((h.ROOT / "participants").iterdir()):
+        if folder.name.startswith("_") or not folder.is_dir():
+            continue
+        for path in sorted(folder.glob("*.py")):
+            items.setdefault((folder.name, _sha(path)),
+                             (path.name, "폴더", path.read_bytes()))
+    rows, failed = [], []
+    for (pid, sha), (name, source, blob) in sorted(items.items()):
+        if (pid, sha) in official:
+            continue
+        if blob is None:
+            failed.append(f"{pid}/{name} `{sha}`: 해시가 같은 버전을 찾지 못함")
+            continue
+        if b"def predict" not in blob:
+            continue  # helper module, not a submission
+        tmp = h.ROOT / "participants" / pid / f".ref_{sha}_{name}"
+        tmp.write_bytes(blob)
+        try:
+            res = {s: h.summary(h.run(tmp, s, data=data[s]))
+                   for s in ("train", "public", "private")}
+            lag = h.summary(h.run(tmp, "private", lag=1, data=data["private"]))
+        except (Exception, SystemExit) as e:  # one broken file must not stop the rest
+            failed.append(f"{pid}/{name} `{sha}`: 실행 실패 ({type(e).__name__}: {e})")
+            continue
+        finally:
+            tmp.unlink(missing_ok=True)
+        p = res["private"]
+        rows.append((p["ic"], f"| {pid} | {name} | `{sha}` | {source} | "
+                     f"{res['train']['ic']:+.4f} | {res['public']['ic']:+.4f} | "
+                     f"{p['ic']:+.4f} (t {p['ic_t']:+.2f}) | {lag['ic']:+.4f} | "
+                     f"{p['inc_ic']:+.4f} (t {p['inc_ic_t']:+.2f}) |"))
+    rows.sort(key=lambda r: -r[0])
+    n = len(rows)
+    body = (f"파일 {n}개. 효과가 전혀 없어도 t ≥ 2는 우연히 약 {n * 0.023:.1f}개 나옵니다. "
+            f"판정 없음, 다음 연구 후보로만 씁니다.\n\n"
+            "| id | 파일 | sha | 출처 | train IC | public IC | private IC | 지연 IC | 증분 IC |\n"
+            "|---|---|---|---|---|---|---|---|---|\n"
+            + "".join(r[1] + "\n" for r in rows)
+            + "".join(f"\n- {x}" for x in failed) + ("\n" if failed else ""))
+    BOARD.write_text(_replace(BOARD.read_text(), "REFERENCE", body))
     print(body)
 
 

@@ -25,6 +25,11 @@
 | claude1 | 2026-11-26T15:48 | issuance.py | `425c5d7bd2` | +0.0837 | +2.62 |
 | claude1 | 2026-11-26T15:48 | issuance_rev.py | `0a5f51fc70` | +0.0378 | +1.07 |
 | codex | 2026-11-26T15:50 | dividend_turnover_vol.py | `6d7f19158f` | +0.0338 | +0.89 |
+| codex | 2026-11-26T16:05 | dividend_turnover_size.py | `d85cc52828` | +0.0422 | +1.14 |
+| claude1 | 2026-11-26T16:06 | issuance_illiq.py | `54cace5390` | +0.0692 | +2.22 |
+| carbon | 2026-11-26T16:43 | carbon_four_pillar_orth.py | `f1abddde67` | +0.0612 | +1.84 |
+| carbon | 2026-11-26T16:44 | carbon_four_pillar.py | `9fc877daff` | +0.0649 | +1.71 |
+| carbon | 2026-11-26T16:44 | carbon_structural_three.py | `a05bf75eeb` | +0.0603 | +1.55 |
 <!-- PUBLIC:END -->
 
 ## Private 최종 순위 (2017-01 ~ 2026-10, 마감 후 한 번)
@@ -33,3 +38,10 @@
 |---|---|---|---|---|---|---|---|---|---|---|
 <!-- PRIVATE:START -->
 <!-- PRIVATE:END -->
+
+## 참고 채점 (판정 없음, 마감 후 공식 채점과 같이 한 번)
+
+public에 낸 모든 버전과 마감 때 참가자 폴더에 있는 `.py` 전부(공식 최종 제출 제외). RULES.md §7.
+
+<!-- REFERENCE:START -->
+<!-- REFERENCE:END -->
