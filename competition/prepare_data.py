@@ -55,10 +55,14 @@ def load_snapshots() -> pd.DataFrame:
             cap = pd.read_csv(cap_path, dtype={"티커": str})
             fund = pd.read_csv(folder / f"fund_{cap_path.stem[4:]}.csv",
                                dtype={"티커": str})
+            # KRX lists a ticker twice once (033270 on 2007-10-23, BPS 2667 / 2743;
+            # the next snapshot has 2667). Keep the first. RULES.md change log.
+            fund = fund.drop_duplicates("티커", keep="first")
             df = cap.merge(fund, on="티커", how="left").rename(columns=COLS)
             df["date"] = day
             frames.append(df[["date", *COLS.values()]])
     panel = pd.concat(frames, ignore_index=True)
+    assert not panel.duplicated(["date", "code"]).any(), "duplicate (date, code)"
     panel["code"] = panel["code"].str.zfill(6)
     panel = panel.sort_values(["code", "date"]).reset_index(drop=True)
     # KRX returns every BPS/EPS as 0 on 2008-08-14 .. 2008-11-25 (8 snapshots).
