@@ -10,7 +10,10 @@
 #   1. python boot  - every interpreter the configured jobs launch runs
 #                     `-c pass` and exits 0 (bounded by a timeout)
 #   2. launchctl    - each job is loaded, its last exit code is 0, and it
-#                     isn't still running past QL_MAX_RUN_SECS (a hang)
+#                     isn't still running past QL_MAX_RUN_SECS (a hang).
+#                     A job stuck at spawn (OS_REASON_CODESIGNING) is
+#                     re-registered (bootout + bootstrap) and reported as
+#                     healed, not as a problem, when that clears it
 #   3. daily        - weekdays from 16:00: today's daily.py run is in
 #                     cron.log/bot.log, and a runs row exists if the market
 #                     was open
@@ -69,11 +72,12 @@ notify() {  # notify TITLE MESSAGE [PHONE_TEXT]
 }
 
 phone_text() {  # phone_text PROBLEM... -> short Korean lines for the iMessage copy
-    local -aU spawn failed hung unloaded other
+    local -aU spawn failed hung unloaded other fixed
     local daily=0 prices=0 boot=0 p label
     for p in "$@"; do
         label=${p%%:*}
         case $p in
+            "healed "*) fixed+=(${p#healed }) ;;
             *"spawn failed"*|*OS_REASON_CODESIGNING*|*"terminating signal"*) spawn+=($label) ;;
             *"last exit code"*) failed+=($label) ;;
             *"still running"*) hung+=($label) ;;
@@ -85,8 +89,10 @@ phone_text() {  # phone_text PROBLEM... -> short Korean lines for the iMessage c
         esac
     done
     local out="헬스체크 이상"
+    (( ${#fixed} && ${#fixed} == $# )) && out="헬스체크 자동 복구"
+    (( ${#fixed} )) && out+=$'\n'"• 시작 실패 작업 자동 재등록함: ${(j:, :)fixed} (이미 놓친 실행은 다시 안 돌림)"
     (( boot )) && out+=$'\n'"• 파이썬 실행 실패 (모든 작업 영향)"
-    (( ${#spawn} )) && out+=$'\n'"• 자동 작업 시작 실패: ${(j:, :)spawn} (파이썬 업데이트 영향일 수 있음 → 작업 재등록)"
+    (( ${#spawn} )) && out+=$'\n'"• 자동 작업 시작 실패: ${(j:, :)spawn} (자동 재등록으로 안 고쳐짐 → 확인 필요)"
     (( ${#failed} )) && out+=$'\n'"• 작업 오류 종료: ${(j:, :)failed}"
     (( ${#hung} )) && out+=$'\n'"• 작업이 멈춘 듯: ${(j:, :)hung}"
     (( ${#unloaded} )) && out+=$'\n'"• 작업 미등록: ${(j:, :)unloaded}"
@@ -128,12 +134,39 @@ for label in $LABELS; do
     (( rc != 0 )) && add "python boot failed: $prog -c pass exited $rc"
 done
 
+codesign_stuck() {  # codesign_stuck PRINT_OUTPUT -> 0 if the job is stuck at spawn
+    print -r -- "$1" | grep -qE $'^\t(last exit reason = OS_REASON_CODESIGNING|job state = spawn failed)$'
+}
+
+# A job stuck at spawn with OS_REASON_CODESIGNING stays stuck until it is
+# re-registered (seen 2026-10-06, 11-16, 11-25 - after reboots/OS updates and
+# also without one). Re-registering is safe: none of LABELS has RunAtLoad, so
+# it only reloads the schedule and runs nothing. Skipped when an interpreter
+# fails to boot - that is a broken Python, which re-registering can't fix.
+healed=()
+python_ok=1
+for p in $problems; do [[ $p == "python boot failed"* ]] && python_ok=0; done
+
 # 2. launchctl - loaded, last exit 0, not hung.
 for label in $LABELS; do
     out=$("$LAUNCHCTL" print "$DOMAIN/$PREFIX.$label" 2>/dev/null)
     if (( $? != 0 )) || [[ -z $out ]]; then
         add "$label: not loaded in launchd"
         continue
+    fi
+    if (( python_ok )) && codesign_stuck "$out" \
+       && [[ -f $PLIST_DIR/$PREFIX.$label.plist ]] \
+       && ! print -r -- "$out" | grep -qx $'\tstate = running'; then
+        "$LAUNCHCTL" bootout "$DOMAIN/$PREFIX.$label" >/dev/null 2>&1
+        "$LAUNCHCTL" bootstrap "$DOMAIN" "$PLIST_DIR/$PREFIX.$label.plist" >/dev/null 2>&1
+        after=$("$LAUNCHCTL" print "$DOMAIN/$PREFIX.$label" 2>/dev/null)
+        if (( $? == 0 )) && [[ -n $after ]] && ! codesign_stuck "$after"; then
+            healed+=($label)
+            continue
+        fi
+        add "$label: re-register did not fix spawn failure"
+        [[ -z $after ]] && { add "$label: not loaded in launchd"; continue }
+        out=$after
     fi
     last=$(print -r -- "$out" | sed -n $'s/^\tlast exit code = //p' | head -1)
     if [[ -n $last && $last != 0 && $last != "(never exited)" ]]; then
@@ -195,19 +228,20 @@ fi
 
 stamp=$(date "+%Y-%m-%d %H:%M:%S")
 new=()
-for p in $problems; do
+for p in ${healed/#/healed } $problems; do
     key="$TODAY $p"
     if ! grep -qxF -- "$key" "$ALERTED" 2>/dev/null; then
         print -r -- "$key" >> "$ALERTED"
         new+=("$p")
     fi
 done
+for l in $healed; do print -r -- "$stamp HEALED $l: re-registered after spawn failure" >> "$HEALTH_LOG"; done
 if (( ${#problems} )); then
     for p in $problems; do print -r -- "$stamp PROBLEM $p" >> "$HEALTH_LOG"; done
-    (( ${#new} )) && notify "quant-lab health" "${(j:; :)new}" "$(phone_text "${new[@]}")"
 else
     print -r -- "$stamp OK" >> "$HEALTH_LOG"
 fi
+(( ${#new} )) && notify "quant-lab health" "${(j:; :)new}" "$(phone_text "${new[@]}")"
 
 date +%s > "$HEARTBEAT"
 (( ${#problems} == 0 ))

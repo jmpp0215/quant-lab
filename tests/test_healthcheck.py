@@ -48,8 +48,18 @@ class Env:
         self.db = tmp / "quant.db"
         self.python_ok = executable(tmp / "python_ok", "exit 0\n")
         self.python_bad = executable(tmp / "python_bad", "exit 9\n")
-        executable(tmp / "launchctl",
-                   'f="$FAKE_LC/${2##*/}"; [[ -f $f ]] || exit 113; cat "$f"\n')
+        # print: canned output. bootout/bootstrap: logged to lc/calls; bootstrap
+        # swaps in lc/<label>.after if a test provided one, else the job stays
+        # as it was (re-registering didn't help).
+        executable(tmp / "launchctl", """\
+case $1 in
+    print) f="$FAKE_LC/${2##*/}"; [[ -f $f ]] || exit 113; cat "$f" ;;
+    bootout) print -r -- "bootout $2" >> "$FAKE_LC/calls" ;;
+    bootstrap) print -r -- "bootstrap $2 $3" >> "$FAKE_LC/calls"
+               l=${${3:t}%.plist}
+               [[ -f $FAKE_LC/$l.after ]] && mv "$FAKE_LC/$l.after" "$FAKE_LC/$l" ;;
+esac
+""")
         executable(tmp / "notify", f'print -r -- "$1|$2" >> "{self.notes}"\n'
                                    f'print -r -- "$3" >> "{self.notes}.phone"\n')
         conn = sqlite3.connect(self.db)
@@ -70,6 +80,17 @@ class Env:
 
     def job(self, label, **kw):
         (self.lc / f"{PREFIX}.{label}").write_text(launchctl_print(**kw))
+
+    def job_after_reregister(self, label, **kw):
+        (self.lc / f"{PREFIX}.{label}.after").write_text(launchctl_print(**kw))
+
+    def lc_calls(self):
+        f = self.lc / "calls"
+        return f.read_text().splitlines() if f.exists() else []
+
+    def phone(self):
+        f = self.tmp / "notes.txt.phone"
+        return f.read_text() if f.exists() else ""
 
     def unload(self, label):
         (self.lc / f"{PREFIX}.{label}").unlink()
@@ -312,3 +333,77 @@ class TestPhoneText:
         assert "자동 작업 시작 실패: daily, pricerefresh" in phone
         assert "오늘 daily 기록 없음" in phone
         assert "OS_REASON" not in phone
+
+
+STUCK = ("\tlast exit reason = OS_REASON_CODESIGNING", "\tjob state = spawn failed")
+
+
+class TestSelfHeal:
+    # 2026-11-25/26: daily and disclosureflag stuck at spawn with
+    # OS_REASON_CODESIGNING until bootout + bootstrap.
+    def test_stuck_job_is_reregistered_and_not_a_problem(self, env):
+        env.job("daily", last=None, extra=STUCK)
+        env.job_after_reregister("daily", last=None)
+        assert env.run() == 0
+        assert env.lc_calls() == [
+            "bootout gui/%d/%s.daily" % (os.getuid(), PREFIX),
+            "bootstrap gui/%d %s/%s.daily.plist" % (os.getuid(), env.plists, PREFIX),
+        ]
+        assert "HEALED daily" in env.health()
+        assert "PROBLEM" not in env.health()
+        phone = env.phone()
+        assert phone.startswith("헬스체크 자동 복구")
+        assert "자동 재등록함: daily" in phone
+
+    def test_healthy_jobs_are_left_alone(self, env):
+        assert env.run() == 0
+        assert env.lc_calls() == []
+
+    def test_failed_exit_code_alone_is_not_reregistered(self, env):
+        env.job("daily", last="1")
+        assert env.run() == 1
+        assert env.lc_calls() == []
+
+    def test_still_stuck_after_reregister_is_reported(self, env):
+        env.job("daily", last=None, extra=STUCK)
+        assert env.run() == 1
+        assert "daily: re-register did not fix spawn failure" in env.notes_text()
+        phone = env.phone()
+        assert phone.startswith("헬스체크 이상")
+        assert "자동 작업 시작 실패: daily (자동 재등록으로 안 고쳐짐" in phone
+
+    def test_unloaded_after_reregister_is_reported(self, env):
+        env.job("daily", last=None, extra=STUCK)
+        executable(env.tmp / "launchctl", """\
+case $1 in
+    print) f="$FAKE_LC/${2##*/}"; [[ -f $f ]] || exit 113; cat "$f" ;;
+    bootout) rm -f "$FAKE_LC/${2##*/}" ;;
+esac
+""")
+        assert env.run() == 1
+        assert "daily: not loaded in launchd" in env.notes_text()
+
+    def test_broken_python_is_not_reregistered(self, env):
+        env.plist("daily", env.python_bad)
+        env.job("daily", last=None, extra=STUCK)
+        env.job_after_reregister("daily", last=None)
+        assert env.run() == 1
+        assert env.lc_calls() == []
+
+    def test_heal_and_problem_share_one_message(self, env):
+        env.job("daily", last=None, extra=STUCK)
+        env.job_after_reregister("daily", last=None)
+        env.job("pricerefresh", last="1")
+        assert env.run() == 1
+        phone = env.phone()
+        assert phone.startswith("헬스체크 이상")
+        assert "자동 재등록함: daily" in phone
+        assert "작업 오류 종료: pricerefresh" in phone
+
+    def test_heal_notifies_once_a_day(self, env):
+        for _ in range(2):
+            env.job("daily", last=None, extra=STUCK)
+            env.job_after_reregister("daily", last=None)
+            env.run()
+        assert env.phone().count("자동 재등록함") == 1
+        assert env.health().count("HEALED daily") == 2
