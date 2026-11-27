@@ -135,6 +135,7 @@ git show 50543d4:quant/pead/RESEARCH_LOG.md        # 분할 직전의 원본 전
 | §76 | `us_fear_losers/ref.py` (참고 결과만, 전방 기록 없음) |
 | §77 | `momproxy/s77.py`(백테스트), `momproxy/s77_fwd.py`(전향, 2027-12), `momproxy/out/s77_*.txt` |
 | §79 | `pbr_carbon79/s79.py`, `pbr_carbon79/s79_out.txt` |
+| §81 | `pbr_ridge81/s81.py`, `pbr_ridge81/s81_out.txt` |
 
 ## 0. 이 로그를 쓰는 법 (2026-11-22 정리)
 
