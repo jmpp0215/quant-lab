@@ -118,6 +118,7 @@ git show 50543d4:quant/pead/RESEARCH_LOG.md        # 분할 직전의 원본 전
 | §78 | [pbr.md](pbr.md) | 저PBR 바구니 종목 고르기 경연 — 숨긴 구간 채점, 규칙은 `competition/RULES.md` — 사전 등록 (2026-11-26, 숨긴 구간 채점 전, 연구 전용) |
 | §79 | [pbr.md](pbr.md) | 경연 1위 점수(carbon four_pillar_orth)를 실전 PBR 규칙에 얹기 — 사전 등록 (2026-11-27, 결과 전 기록, 연구 전용) |
 | §80 | [pbr.md](pbr.md) | §79 T1 틸트 전향 기록 — 실전 옆에 기록만 — 사전 등록 (2026-11-27, 기록 시작 전, 연구 전용) |
+| §81 | [pbr.md](pbr.md) | 경연 2위 점수(jongmin ridge24)를 실전 PBR 규칙에 얹기, carbon과 맞대결 — 사전 등록 (2026-11-27, 결과 전 기록, 연구 전용) |
 | — | [pead_early.md](pead_early.md) | 결론 |
 | — | [value_spread.md](value_spread.md) | 57~60 종합 — §36·§46·§48 결론 수정 (2026-11-17) |
 | — | [cross.md](cross.md) | 신주 발행 정정 일괄 재실행 (2026-11-22) |
