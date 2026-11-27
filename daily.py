@@ -21,6 +21,7 @@ import requests
 import backups
 import fear_losers_log
 import news_risk
+import pbr_tilt_log
 import price_history
 import regime_check
 import value_spread_log
@@ -544,6 +545,13 @@ def main() -> int:
         except Exception as e:
             log.exception("value spread log failed")
             problem_accounts.append(f"[value spread] {e}")
+        try:
+            # Record only: section 80's forward record of the T1 tilt beside the
+            # live PBR basket (research/pbr.md). Never trades.
+            pbr_tilt_log.run(datetime.now(market.KST).date())
+        except Exception as e:
+            log.exception("pbr tilt log failed")
+            problem_accounts.append(f"[pbr tilt] {e}")
         try:
             backups.run(datetime.now(market.KST).date().isoformat())
         except Exception as e:

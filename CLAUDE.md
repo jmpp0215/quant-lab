@@ -187,6 +187,9 @@ places orders.
   - `value_spread_log.py`: `research/value_spread.md` §57-F forward record of the value spread (`quant/value_spread.py`),
     every 10th KOSPI trading day from 2026-11-18, logged to `data/value_spread/`; `report` hides results until
     3 non-overlapping 12-month results exist (about 2029-11), with no early-look option.
+  - `pbr_tilt_log.py`: `research/pbr.md` §80 forward record of the §79 T1 tilt (carbon's frozen competition score,
+    `quant/pbr_tilt/`) beside each live PBR rebalance from 2026-12-18, logged to `data/pbr_tilt/`; reads `pbr_live.db`
+    read-only, never trades. `report` shows stage 1 (6 rebalances) and stage 2 (24) status at any time.
   - `backups.py`: daily database backups.
   - Earnings dates (`daily.upcoming_earnings`): `kis-main-overseas` holdings from Nasdaq's
     earnings-date page, cached in `data/earnings.json` since Nasdaq blanks a date around the
